@@ -24,7 +24,7 @@ export function SaveCardClient({ token }: { token: string }) {
 
         await loadScript(
           process.env.NEXT_PUBLIC_FORTIS_ELEMENTS_URL ||
-            "https://js.fortis.tech/commercehub-elements.js",
+            "https://js.fortis.tech/commercejs-v1.0.0.min.js",
         );
         if (cancelled) return;
 

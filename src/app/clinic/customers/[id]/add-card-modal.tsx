@@ -77,7 +77,7 @@ export function AddCardModal({
         // 2) Load Fortis Elements SDK if not already loaded.
         await loadScript(
           process.env.NEXT_PUBLIC_FORTIS_ELEMENTS_URL ||
-            "https://js.fortis.tech/commercehub-elements.js",
+            "https://js.fortis.tech/commercejs-v1.0.0.min.js",
         ).catch(() => {
           throw new Error("SDK_LOAD_FAILED");
         });
