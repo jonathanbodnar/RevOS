@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 
+
 export function SaveCardClient({ token }: { token: string }) {
   const [status, setStatus] = useState<
     "loading" | "ready" | "saving" | "done" | "error" | "sdk-missing"
@@ -28,22 +29,23 @@ export function SaveCardClient({ token }: { token: string }) {
         );
         if (cancelled) return;
 
-        const Commerce = window.Commerce;
+        const Commerce = (window as Window & {
+          Commerce?: { elements: new (token: string) => {
+            create(params: { container: HTMLElement | string; environment?: "sandbox" | "production"; showReceipt?: boolean; [key: string]: unknown }): void;
+            on(event: string, cb: (payload: unknown) => void): void;
+          }};
+        }).Commerce;
         if (!Commerce?.elements) {
           setStatus("sdk-missing");
           return;
         }
-        const elements = new Commerce.elements(intention.clientToken, {
-          appearance: { theme: "light" },
-        });
-        const card = elements.create("card");
-        if (mountRef.current) card.mount(mountRef.current);
-        card.on("done", async (payload: unknown) => {
+
+        const elements = new Commerce.elements(intention.clientToken);
+
+        elements.on("done", async (payload: unknown) => {
           const p = (payload ?? {}) as Record<string, unknown>;
           const ticketId =
-            (p.ticket_id as string) ||
-            (p.ticketId as string) ||
-            (p.token as string);
+            (p.ticket_id as string) || (p.id as string);
           const paymentMethod = (p.payment_method as "cc" | "ach") || "cc";
           if (!ticketId) {
             setStatus("error");
@@ -66,11 +68,24 @@ export function SaveCardClient({ token }: { token: string }) {
           }
           setStatus("done");
         });
-        card.on("error", (payload: unknown) => {
+
+        elements.on("error", (payload: unknown) => {
           const p = (payload ?? {}) as { message?: string };
           setStatus("error");
           setError(p.message || "Card entry failed.");
         });
+
+        if (mountRef.current) {
+          elements.create({
+            container: mountRef.current,
+            environment:
+              (process.env.NEXT_PUBLIC_FORTIS_ENVIRONMENT as
+                | "sandbox"
+                | "production") || "production",
+            showReceipt: false,
+          });
+        }
+
         setStatus("ready");
       } catch (e) {
         if (cancelled) return;

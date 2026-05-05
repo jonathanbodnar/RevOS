@@ -28,18 +28,21 @@ type IntentionResponse = {
 declare global {
   interface Window {
     Commerce?: {
-      elements: new (
-        token: string,
-        options?: Record<string, unknown>,
-      ) => {
-        create: (kind: string) => {
-          mount: (selector: string | HTMLElement) => void;
-          on: (event: string, cb: (payload: unknown) => void) => void;
-        };
-      };
+      elements: new (token: string) => FortisElements;
     };
-    FortisElements?: unknown;
   }
+}
+
+interface FortisElements {
+  create(params: {
+    container: HTMLElement | string;
+    environment?: "sandbox" | "production";
+    theme?: "default" | "dark";
+    showSubmitButton?: boolean;
+    showReceipt?: boolean;
+    [key: string]: unknown;
+  }): void;
+  on(event: string, cb: (payload: unknown) => void): void;
 }
 
 export function AddCardModal({
@@ -88,23 +91,16 @@ export function AddCardModal({
           return;
         }
 
-        // 3) Mount.
-        const elements = new window.Commerce.elements(intention.clientToken, {
-          appearance: { theme: "light" },
-        });
-        const card = elements.create("card");
-        if (mountRef.current) {
-          card.mount(mountRef.current);
-        }
-        card.on("done", async (payload) => {
-          // Fortis returns a ticket_id / token here.
+        // 3) Create elements instance and wire events.
+        const elements = new window.Commerce.elements(intention.clientToken);
+
+        elements.on("done", async (payload) => {
           const p = payload as {
             ticket_id?: string;
-            ticketId?: string;
-            token?: string;
+            id?: string;
             payment_method?: "cc" | "ach";
           };
-          const ticketId = p.ticket_id ?? p.ticketId ?? p.token;
+          const ticketId = p.ticket_id ?? p.id;
           if (!ticketId) {
             setStatus("error");
             setError("Card entry failed — no ticket returned.");
@@ -132,11 +128,24 @@ export function AddCardModal({
           }
           onSaved();
         });
-        card.on("error", (payload) => {
+
+        elements.on("error", (payload) => {
           const p = payload as { message?: string };
           setStatus("error");
           setError(p.message || "Card entry failed.");
         });
+
+        // 4) Mount the iframe into the container div.
+        if (mountRef.current) {
+          elements.create({
+            container: mountRef.current,
+            environment:
+              (process.env.NEXT_PUBLIC_FORTIS_ENVIRONMENT as
+                | "sandbox"
+                | "production") || "production",
+            showReceipt: false,
+          });
+        }
 
         setStatus("ready");
       } catch (e) {
