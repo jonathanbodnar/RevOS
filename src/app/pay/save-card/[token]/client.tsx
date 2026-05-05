@@ -33,7 +33,7 @@ export function SaveCardClient({ token }: { token: string }) {
           setStatus("sdk-missing");
           return;
         }
-        const elements = Commerce.elements(intention.clientToken, {
+        const elements = new Commerce.elements(intention.clientToken, {
           appearance: { theme: "light" },
         });
         const card = elements.create("payment", { fields: ["card"] });

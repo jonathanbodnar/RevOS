@@ -28,7 +28,10 @@ type IntentionResponse = {
 declare global {
   interface Window {
     Commerce?: {
-      elements: (token: string, options?: Record<string, unknown>) => {
+      elements: new (
+        token: string,
+        options?: Record<string, unknown>,
+      ) => {
         create: (
           kind: string,
           options?: Record<string, unknown>,
@@ -89,7 +92,7 @@ export function AddCardModal({
         }
 
         // 3) Mount.
-        const elements = window.Commerce.elements(intention.clientToken, {
+        const elements = new window.Commerce.elements(intention.clientToken, {
           appearance: { theme: "light" },
         });
         const card = elements.create("payment", {
