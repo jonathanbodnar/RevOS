@@ -47,8 +47,8 @@ async function request<T>(
   const text = await res.text();
   const json = text ? safeJson(text) : {};
   if (!res.ok) {
-    const msg =
-      (json as { error?: string })?.error || `LunarPay ${res.status}`;
+    const j = json as { error?: string; message?: string; errors?: unknown };
+    const msg = j?.error || j?.message || `LunarPay ${res.status}`;
     throw new LunarPayError(msg, res.status, json);
   }
   return json as T;

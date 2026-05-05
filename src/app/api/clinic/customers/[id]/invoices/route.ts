@@ -46,19 +46,19 @@ export async function POST(
     const lp = await lunarpay.createCheckoutSession({
       amount: cents / 100,
       description,
-      customer_email: customer.email ?? undefined,
+      customer_email: customer.email || undefined,
       customer_name:
         [customer.firstName, customer.lastName].filter(Boolean).join(" ") ||
         undefined,
       payment_methods: ["cc", "ach"],
       mode: "payment",
-      success_url: `${appUrl}/pay/success?session_id={CHECKOUT_SESSION_ID}`,
+      success_url: `${appUrl}/pay/success`,
       cancel_url: `${appUrl}/pay/cancel`,
       metadata: {
         clinicId,
         customerId: customer.id,
       },
-      expires_in: 60 * 60 * 24 * 7, // 7 days
+      expires_in: 60 * 60 * 24, // 24 hours
     });
 
     const session_ = await prisma.checkoutSession.create({
@@ -90,6 +90,8 @@ export async function POST(
   } catch (e) {
     const status = e instanceof LunarPayError ? e.status : 500;
     const msg = e instanceof Error ? e.message : "Failed to create invoice.";
-    return NextResponse.json({ error: msg }, { status });
+    const details = e instanceof LunarPayError ? e.details : undefined;
+    console.error("[invoices] LunarPay error:", msg, details);
+    return NextResponse.json({ error: msg, details }, { status });
   }
 }
