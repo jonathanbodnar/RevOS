@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useState, useTransition } from "react";
+import { useEffect, useState, useTransition } from "react";
 
 export function NewChargeForm({
   customerId,
@@ -16,6 +16,11 @@ export function NewChargeForm({
   const [description, setDescription] = useState("");
   const [paymentMethodId, setPaymentMethodId] = useState(methods[0]?.id ?? "");
   const [error, setError] = useState<string | null>(null);
+
+  // Sync when methods arrive after a card is added on the same page load
+  useEffect(() => {
+    if (!paymentMethodId && methods[0]?.id) setPaymentMethodId(methods[0].id);
+  }, [methods, paymentMethodId]);
 
   const disabled = methods.length === 0;
 
