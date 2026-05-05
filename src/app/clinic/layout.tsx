@@ -3,6 +3,8 @@ import { AppShell } from "@/components/app-shell";
 import { prisma } from "@/lib/prisma";
 import { ImpersonationBanner } from "../admin/impersonation-banner";
 
+export const dynamic = "force-dynamic";
+
 export default async function ClinicLayout({
   children,
 }: {

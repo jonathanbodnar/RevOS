@@ -2,6 +2,8 @@ import { requireSuperAdmin } from "@/lib/session";
 import { AppShell } from "@/components/app-shell";
 import { ImpersonationBanner } from "./impersonation-banner";
 
+export const dynamic = "force-dynamic";
+
 export default async function AdminLayout({
   children,
 }: {
