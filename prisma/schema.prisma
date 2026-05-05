@@ -1,0 +1,221 @@
+// RevOS — multi-tenant clinic + LunarPay billing platform.
+// Single LunarPay merchant shared across all clinics.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// Role values: "SUPER_ADMIN" | "CLINIC_ADMIN"
+// (SQLite doesn't support enums; migrate to Postgres enum in prod.)
+
+model User {
+  id             String   @id @default(cuid())
+  email          String   @unique
+  passwordHash   String
+  name           String?
+  role           String
+  clinicId       String?
+  clinic         Clinic?  @relation(fields: [clinicId], references: [id], onDelete: SetNull)
+  isActive       Boolean  @default(true)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@index([clinicId])
+}
+
+model Clinic {
+  id         String     @id @default(cuid())
+  name       String
+  slug       String     @unique
+  // Optional contact info
+  email      String?
+  phone      String?
+  address    String?
+  city       String?
+  state      String?
+  zip        String?
+  isActive   Boolean    @default(true)
+  createdAt  DateTime   @default(now())
+  updatedAt  DateTime   @updatedAt
+
+  users      User[]
+  customers  Customer[]
+  charges    Charge[]
+  subscriptions Subscription[]
+  schedules  PaymentSchedule[]
+  checkoutSessions CheckoutSession[]
+  auditLogs  AuditLog[]
+}
+
+// A customer belongs to a single clinic.
+// We mirror/cache LunarPay customer id so we can call the API.
+model Customer {
+  id                  String   @id @default(cuid())
+  clinicId            String
+  clinic              Clinic   @relation(fields: [clinicId], references: [id], onDelete: Cascade)
+
+  // LunarPay customer id (shared merchant). Nullable until first sync.
+  lunarpayCustomerId  Int?     @unique
+
+  firstName           String?
+  lastName            String?
+  email               String?
+  phone               String?
+  address             String?
+  city                String?
+  state               String?
+  zip                 String?
+
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  paymentMethods      PaymentMethod[]
+  charges             Charge[]
+  subscriptions       Subscription[]
+  schedules           PaymentSchedule[]
+  checkoutSessions    CheckoutSession[]
+
+  @@index([clinicId])
+  @@index([email])
+}
+
+// Cached LunarPay payment method (no raw card data ever stored)
+model PaymentMethod {
+  id                    String   @id @default(cuid())
+  customerId            String
+  customer              Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  lunarpayPaymentMethodId Int    @unique
+  sourceType            String   // "cc" | "ach"
+  lastDigits            String?
+  nameHolder            String?
+  expMonth              String?
+  expYear               String?
+  isDefault             Boolean  @default(false)
+  isActive              Boolean  @default(true)
+  createdAt             DateTime @default(now())
+
+  charges       Charge[]
+  subscriptions Subscription[]
+  schedules     PaymentSchedule[]
+
+  @@index([customerId])
+}
+
+model Charge {
+  id                   String   @id @default(cuid())
+  clinicId             String
+  clinic               Clinic   @relation(fields: [clinicId], references: [id], onDelete: Cascade)
+  customerId           String
+  customer             Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  paymentMethodId      String?
+  paymentMethod        PaymentMethod? @relation(fields: [paymentMethodId], references: [id], onDelete: SetNull)
+
+  // LunarPay charge id (they return a string id, e.g. "789")
+  lunarpayChargeId     String   @unique
+  fortisTransactionId  String?
+
+  amountCents          Int
+  refundedCents        Int      @default(0)
+  status               String   // "paid" | "pending" | "refunded" | "failed"
+  paymentMethodType    String?  // "cc" | "ach"
+  description          String?
+
+  createdAt            DateTime @default(now())
+
+  @@index([clinicId])
+  @@index([customerId])
+}
+
+model Subscription {
+  id                 String   @id @default(cuid())
+  clinicId           String
+  clinic             Clinic   @relation(fields: [clinicId], references: [id], onDelete: Cascade)
+  customerId         String
+  customer           Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  paymentMethodId    String?
+  paymentMethod      PaymentMethod? @relation(fields: [paymentMethodId], references: [id], onDelete: SetNull)
+
+  lunarpaySubscriptionId Int @unique
+  amountCents        Int
+  frequency          String   // weekly | monthly | quarterly | yearly
+  status             String   // active | cancelled
+  startOn            DateTime?
+  nextPaymentOn      DateTime?
+  description        String?
+
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  @@index([clinicId])
+  @@index([customerId])
+}
+
+model PaymentSchedule {
+  id                 String   @id @default(cuid())
+  clinicId           String
+  clinic             Clinic   @relation(fields: [clinicId], references: [id], onDelete: Cascade)
+  customerId         String
+  customer           Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  paymentMethodId    String?
+  paymentMethod      PaymentMethod? @relation(fields: [paymentMethodId], references: [id], onDelete: SetNull)
+
+  lunarpayScheduleId Int      @unique
+  status             String   // active | completed | cancelled
+  totalAmountCents   Int
+  paidAmountCents    Int      @default(0)
+  description        String?
+  // Individual dated payments are stored as JSON snapshot from LunarPay
+  paymentsJson       String?
+
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  @@index([clinicId])
+  @@index([customerId])
+}
+
+// Public invoice / payment-link (hosted checkout session)
+model CheckoutSession {
+  id                 String   @id @default(cuid())
+  clinicId           String
+  clinic             Clinic   @relation(fields: [clinicId], references: [id], onDelete: Cascade)
+  customerId         String?
+  customer           Customer? @relation(fields: [customerId], references: [id], onDelete: SetNull)
+
+  lunarpaySessionId  Int      @unique
+  token              String   @unique
+  url                String
+  amountCents        Int
+  description        String?
+  mode               String   // payment | subscription | installments
+  status             String   // open | completed | expired
+  metadataJson       String?
+
+  createdAt          DateTime @default(now())
+  completedAt        DateTime?
+
+  @@index([clinicId])
+}
+
+// Audit log: super-admin actions, impersonation, etc.
+model AuditLog {
+  id        String   @id @default(cuid())
+  actorId   String?  // user who did the action
+  actorRole String?
+  clinicId  String?
+  clinic    Clinic?  @relation(fields: [clinicId], references: [id], onDelete: SetNull)
+  action    String   // e.g. "clinic.create", "impersonate.start", "charge.create"
+  targetType String? // e.g. "Clinic", "Customer", "Charge"
+  targetId  String?
+  metadata  String?  // JSON
+  createdAt DateTime @default(now())
+
+  @@index([clinicId])
+  @@index([actorId])
+  @@index([action])
+}
