@@ -11,7 +11,8 @@ export function NewChargeForm({
   methods: { id: string; label: string }[];
 }) {
   const router = useRouter();
-  const [pending, startTransition] = useTransition();
+  const [, startTransition] = useTransition();
+  const [loading, setLoading] = useState(false);
   const [amount, setAmount] = useState("");
   const [description, setDescription] = useState("");
   const [paymentMethodId, setPaymentMethodId] = useState(methods[0]?.id ?? "");
@@ -27,23 +28,28 @@ export function NewChargeForm({
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
-    const res = await fetch(`/api/clinic/customers/${customerId}/charges`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        paymentMethodId,
-        amount,
-        description: description || undefined,
-      }),
-    });
-    if (!res.ok) {
-      const d = (await res.json().catch(() => ({}))) as { error?: string };
-      setError(d.error || "Charge failed.");
-      return;
+    setLoading(true);
+    try {
+      const res = await fetch(`/api/clinic/customers/${customerId}/charges`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          paymentMethodId,
+          amount,
+          description: description || undefined,
+        }),
+      });
+      if (!res.ok) {
+        const d = (await res.json().catch(() => ({}))) as { error?: string };
+        setError(d.error || "Charge failed.");
+        return;
+      }
+      setAmount("");
+      setDescription("");
+      startTransition(() => router.refresh());
+    } finally {
+      setLoading(false);
     }
-    setAmount("");
-    setDescription("");
-    startTransition(() => router.refresh());
   }
 
   return (
@@ -94,8 +100,8 @@ export function NewChargeForm({
               {error}
             </div>
           )}
-          <button className="btn-primary w-full" disabled={pending}>
-            {pending ? "Processing…" : "Charge"}
+          <button className="btn-primary w-full" disabled={loading}>
+            {loading ? "Processing…" : "Charge"}
           </button>
         </form>
       )}

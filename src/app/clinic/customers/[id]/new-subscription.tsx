@@ -11,7 +11,8 @@ export function NewSubscriptionForm({
   methods: { id: string; label: string }[];
 }) {
   const router = useRouter();
-  const [pending, startTransition] = useTransition();
+  const [, startTransition] = useTransition();
+  const [loading, setLoading] = useState(false);
   const [amount, setAmount] = useState("");
   const [frequency, setFrequency] = useState("monthly");
   const [startOn, setStartOn] = useState("");
@@ -28,27 +29,32 @@ export function NewSubscriptionForm({
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
-    const res = await fetch(
-      `/api/clinic/customers/${customerId}/subscriptions`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          paymentMethodId,
-          amount,
-          frequency,
-          startOn: startOn || undefined,
-        }),
-      },
-    );
-    if (!res.ok) {
-      const d = (await res.json().catch(() => ({}))) as { error?: string };
-      setError(d.error || "Failed to create subscription.");
-      return;
+    setLoading(true);
+    try {
+      const res = await fetch(
+        `/api/clinic/customers/${customerId}/subscriptions`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            paymentMethodId,
+            amount,
+            frequency,
+            startOn: startOn || undefined,
+          }),
+        },
+      );
+      if (!res.ok) {
+        const d = (await res.json().catch(() => ({}))) as { error?: string };
+        setError(d.error || "Failed to create subscription.");
+        return;
+      }
+      setAmount("");
+      setStartOn("");
+      startTransition(() => router.refresh());
+    } finally {
+      setLoading(false);
     }
-    setAmount("");
-    setStartOn("");
-    startTransition(() => router.refresh());
   }
 
   return (
@@ -112,8 +118,8 @@ export function NewSubscriptionForm({
               {error}
             </div>
           )}
-          <button className="btn-primary w-full" disabled={pending}>
-            {pending ? "Creating…" : "Start subscription"}
+          <button className="btn-primary w-full" disabled={loading}>
+            {loading ? "Processing…" : "Start subscription"}
           </button>
         </form>
       )}
