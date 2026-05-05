@@ -32,10 +32,7 @@ declare global {
         token: string,
         options?: Record<string, unknown>,
       ) => {
-        create: (
-          kind: string,
-          options?: Record<string, unknown>,
-        ) => {
+        create: (kind: string) => {
           mount: (selector: string | HTMLElement) => void;
           on: (event: string, cb: (payload: unknown) => void) => void;
         };
@@ -95,9 +92,7 @@ export function AddCardModal({
         const elements = new window.Commerce.elements(intention.clientToken, {
           appearance: { theme: "light" },
         });
-        const card = elements.create("payment", {
-          fields: ["card"],
-        });
+        const card = elements.create("card");
         if (mountRef.current) {
           card.mount(mountRef.current);
         }

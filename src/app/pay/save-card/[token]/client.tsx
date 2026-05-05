@@ -36,7 +36,7 @@ export function SaveCardClient({ token }: { token: string }) {
         const elements = new Commerce.elements(intention.clientToken, {
           appearance: { theme: "light" },
         });
-        const card = elements.create("payment", { fields: ["card"] });
+        const card = elements.create("card");
         if (mountRef.current) card.mount(mountRef.current);
         card.on("done", async (payload: unknown) => {
           const p = (payload ?? {}) as Record<string, unknown>;
