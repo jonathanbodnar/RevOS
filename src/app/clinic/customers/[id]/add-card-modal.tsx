@@ -95,17 +95,23 @@ export function AddCardModal({
         const elements = new window.Commerce.elements(intention.clientToken);
 
         elements.on("done", async (payload) => {
-          const p = payload as {
-            ticket_id?: string;
-            id?: string;
-            payment_method?: "cc" | "ach";
-          };
-          const ticketId = p.ticket_id ?? p.id;
+          console.log("Fortis done payload:", JSON.stringify(payload));
+          const p = payload as Record<string, unknown>;
+          // Try every known field name Fortis uses for the ticket/token
+          const ticketId =
+            (p.ticket_id as string) ??
+            (p.ticketId as string) ??
+            (p.id as string) ??
+            ((p as {data?: {ticket_id?: string}}).data?.ticket_id) ??
+            ((p as {token?: string}).token as string);
           if (!ticketId) {
             setStatus("error");
-            setError("Card entry failed — no ticket returned.");
+            setError(
+              `Card entry failed — no ticket returned. Payload keys: ${Object.keys(p).join(", ")}`,
+            );
             return;
           }
+          const paymentMethod = (p.payment_method as "cc" | "ach") || "cc";
           setStatus("saving");
           const saveRes = await fetch(
             `/api/clinic/customers/${customerId}/payment-methods`,
