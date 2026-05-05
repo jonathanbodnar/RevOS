@@ -123,17 +123,22 @@ export function SaveCardClient({ token }: { token: string }) {
           Loading secure form…
         </div>
       )}
-      <div
-        ref={mountRef}
-        className="rounded-md border border-slate-200 bg-slate-50 min-h-[200px] p-3"
-      />
-      {status === "saving" && (
-        <p className="text-xs text-slate-500 mt-3 text-center">Saving…</p>
-      )}
       {status === "error" && (
         <div className="text-sm text-red-700 bg-red-50 border border-red-100 rounded-md p-3 mt-3">
           {error}
         </div>
+      )}
+      {/* Always in DOM so mountRef is available when create() fires */}
+      <div
+        ref={mountRef}
+        className={
+          status === "ready" || status === "saving"
+            ? "rounded-md border border-slate-200 min-h-[300px] overflow-hidden"
+            : "hidden"
+        }
+      />
+      {status === "saving" && (
+        <p className="text-xs text-slate-500 mt-3 text-center">Saving…</p>
       )}
     </div>
   );
