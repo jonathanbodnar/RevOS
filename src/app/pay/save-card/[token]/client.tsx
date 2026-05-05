@@ -43,10 +43,10 @@ export function SaveCardClient({ token }: { token: string }) {
         const elements = new Commerce.elements(intention.clientToken);
 
         elements.on("done", async (payload: unknown) => {
-          const p = (payload ?? {}) as Record<string, unknown>;
-          const ticketId =
-            (p.ticket_id as string) || (p.id as string);
-          const paymentMethod = (p.payment_method as "cc" | "ach") || "cc";
+          // Fortis payload shape: { "@type": "done", "data": { "id": "<ticketId>", ... } }
+          const p = payload as { data?: { id?: string } };
+          const ticketId = p.data?.id;
+          const paymentMethod: "cc" | "ach" = "cc";
           if (!ticketId) {
             setStatus("error");
             setError("No ticket returned.");
