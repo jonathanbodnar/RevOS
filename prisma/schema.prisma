@@ -6,19 +6,22 @@ generator client {
 }
 
 datasource db {
-  provider = "sqlite"
-  url      = env("DATABASE_URL")
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
 }
 
-// Role values: "SUPER_ADMIN" | "CLINIC_ADMIN"
-// (SQLite doesn't support enums; migrate to Postgres enum in prod.)
+enum Role {
+  SUPER_ADMIN
+  CLINIC_ADMIN
+}
 
 model User {
   id             String   @id @default(cuid())
   email          String   @unique
   passwordHash   String
   name           String?
-  role           String
+  role           Role
   clinicId       String?
   clinic         Clinic?  @relation(fields: [clinicId], references: [id], onDelete: SetNull)
   isActive       Boolean  @default(true)
