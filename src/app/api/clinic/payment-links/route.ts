@@ -58,17 +58,17 @@ export async function POST(req: Request) {
       amount: cents / 100,
       description: descriptionLabel,
       payment_methods: ["cc", "ach"],
-      mode,
       success_url: `${appUrl}/pay/success`,
       cancel_url: `${appUrl}/pay/cancel`,
       metadata: {
         clinicId,
         type: mode === "subscription" ? "subscription" : "payment",
       },
-      expires_in: 60 * 60 * 24 * 7, // 7 days for open links
+      expires_in: 60 * 60 * 24, // 24 hours
     };
 
     if (mode === "subscription" && frequency) {
+      lpPayload.mode = "subscription";
       lpPayload.recurring = { frequency };
     }
 

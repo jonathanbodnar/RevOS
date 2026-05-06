@@ -56,12 +56,6 @@ function formatDate(d: Date) {
   });
 }
 
-function customerName(c: SessionRow["customer"]): string {
-  if (!c) return "—";
-  return (
-    [c.firstName, c.lastName].filter(Boolean).join(" ") || c.email || "Customer"
-  );
-}
 
 export function PaymentLinksClient({
   sessions,
@@ -84,12 +78,8 @@ export function PaymentLinksClient({
     if (tab !== "all" && s.status !== tab) return false;
     if (search.trim()) {
       const q = search.toLowerCase();
-      const name = customerName(s.customer).toLowerCase();
-      const email = s.customer?.email?.toLowerCase() ?? "";
       const desc = s.description?.toLowerCase() ?? "";
-      if (!name.includes(q) && !email.includes(q) && !desc.includes(q)) {
-        return false;
-      }
+      if (!desc.includes(q)) return false;
     }
     return true;
   });
@@ -161,7 +151,7 @@ export function PaymentLinksClient({
           </svg>
           <input
             className="input pl-8"
-            placeholder="Search customer or description…"
+            placeholder="Search description…"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
           />
@@ -173,7 +163,6 @@ export function PaymentLinksClient({
         <table className="table">
           <thead>
             <tr>
-              <th>Customer</th>
               <th>Type</th>
               <th>Description</th>
               <th>Amount</th>
@@ -186,7 +175,7 @@ export function PaymentLinksClient({
             {filtered.length === 0 && (
               <tr>
                 <td
-                  colSpan={7}
+                  colSpan={6}
                   className="text-center text-slate-500 py-12"
                 >
                   {search || tab !== "all"
@@ -201,19 +190,6 @@ export function PaymentLinksClient({
                 className="cursor-pointer"
                 onClick={() => router.push(`/clinic/invoices/${s.id}`)}
               >
-                <td>
-                  {s.customer ? (
-                    <Link
-                      href={`/clinic/customers/${s.customer.id}`}
-                      className="text-brand-600 hover:underline font-medium"
-                      onClick={(e) => e.stopPropagation()}
-                    >
-                      {customerName(s.customer)}
-                    </Link>
-                  ) : (
-                    <span className="text-slate-400">—</span>
-                  )}
-                </td>
                 <td>
                   <span className={MODE_COLORS[s.mode] ?? "badge-slate"}>
                     {MODE_LABELS[s.mode] ?? s.mode}
