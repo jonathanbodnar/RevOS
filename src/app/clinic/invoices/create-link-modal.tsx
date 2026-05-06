@@ -3,31 +3,15 @@
 import { useState } from "react";
 import { CopyButton } from "@/components/copy-button";
 
-type Customer = {
-  id: string;
-  firstName: string | null;
-  lastName: string | null;
-  email: string | null;
-};
-
 type Mode = "payment" | "subscription";
 
-function customerLabel(c: Customer): string {
-  const name = [c.firstName, c.lastName].filter(Boolean).join(" ");
-  if (name && c.email) return `${name} (${c.email})`;
-  return name || c.email || "Unnamed";
-}
-
 export function CreateLinkModal({
-  customers,
   onClose,
   onCreated,
 }: {
-  customers: Customer[];
   onClose: () => void;
   onCreated: () => void;
 }) {
-  const [customerId, setCustomerId] = useState(customers[0]?.id ?? "");
   const [mode, setMode] = useState<Mode>("payment");
   const [amount, setAmount] = useState("");
   const [description, setDescription] = useState("");
@@ -38,24 +22,14 @@ export function CreateLinkModal({
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (!customerId) {
-      setError("Please select a customer.");
-      return;
-    }
     setError(null);
     setLoading(true);
 
-    const endpoint =
-      mode === "subscription"
-        ? `/api/clinic/customers/${customerId}/subscriptions`
-        : `/api/clinic/customers/${customerId}/invoices`;
+    const body: Record<string, string> = { amount, mode };
+    if (description) body.description = description;
+    if (mode === "subscription") body.frequency = frequency;
 
-    const body =
-      mode === "subscription"
-        ? { amount, frequency, description: description || undefined }
-        : { amount, description: description || undefined };
-
-    const res = await fetch(endpoint, {
+    const res = await fetch("/api/clinic/payment-links", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
@@ -91,18 +65,8 @@ export function CreateLinkModal({
             onClick={onClose}
             aria-label="Close"
           >
-            <svg
-              className="w-4 h-4"
-              fill="none"
-              stroke="currentColor"
-              viewBox="0 0 24 24"
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M6 18L18 6M6 6l12 12"
-              />
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
             </svg>
           </button>
         </div>
@@ -110,67 +74,27 @@ export function CreateLinkModal({
         {generatedUrl ? (
           <div className="space-y-4">
             <div className="flex items-center gap-2 text-emerald-700 bg-emerald-50 rounded-lg px-4 py-3 text-sm font-medium">
-              <svg
-                className="w-4 h-4 shrink-0"
-                fill="none"
-                stroke="currentColor"
-                viewBox="0 0 24 24"
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M5 13l4 4L19 7"
-                />
+              <svg className="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
               </svg>
               Payment link created
             </div>
             <div>
-              <label className="label">Share this link with the customer</label>
+              <label className="label">Share this link with anyone</label>
               <div className="flex items-center gap-2">
-                <input
-                  readOnly
-                  value={generatedUrl}
-                  className="input flex-1 font-mono text-xs"
-                />
+                <input readOnly value={generatedUrl} className="input flex-1 font-mono text-xs" />
                 <CopyButton value={generatedUrl} />
               </div>
             </div>
+            <p className="text-xs text-slate-500">
+              When someone pays, they&apos;ll be automatically added as a customer and their card saved.
+            </p>
             <button className="btn-secondary w-full" onClick={onClose}>
               Done
             </button>
           </div>
         ) : (
           <form onSubmit={onSubmit} className="space-y-4">
-            {/* Customer */}
-            <div>
-              <label className="label">Customer</label>
-              {customers.length === 0 ? (
-                <p className="text-sm text-slate-500">
-                  No customers yet.{" "}
-                  <a
-                    href="/clinic/customers/new"
-                    className="text-brand-600 hover:underline"
-                  >
-                    Add one first.
-                  </a>
-                </p>
-              ) : (
-                <select
-                  className="input"
-                  value={customerId}
-                  onChange={(e) => setCustomerId(e.target.value)}
-                  required
-                >
-                  {customers.map((c) => (
-                    <option key={c.id} value={c.id}>
-                      {customerLabel(c)}
-                    </option>
-                  ))}
-                </select>
-              )}
-            </div>
-
             {/* Mode toggle */}
             <div>
               <label className="label">Type</label>
@@ -200,8 +124,7 @@ export function CreateLinkModal({
               </div>
               {mode === "subscription" && (
                 <p className="text-xs text-slate-500 mt-1.5">
-                  First charge happens immediately; LunarPay auto-creates the
-                  recurring plan.
+                  First charge happens immediately; LunarPay auto-creates the recurring plan.
                 </p>
               )}
             </div>
@@ -241,9 +164,7 @@ export function CreateLinkModal({
               <label className="label">Description (optional)</label>
               <input
                 className="input"
-                placeholder={
-                  mode === "subscription" ? "Monthly wellness plan" : "Lab work"
-                }
+                placeholder={mode === "subscription" ? "Monthly wellness plan" : "Lab work"}
                 value={description}
                 onChange={(e) => setDescription(e.target.value)}
               />
@@ -267,7 +188,7 @@ export function CreateLinkModal({
               <button
                 type="submit"
                 className="btn-primary flex-1"
-                disabled={loading || customers.length === 0}
+                disabled={loading}
               >
                 {loading ? "Creating…" : "Generate link"}
               </button>

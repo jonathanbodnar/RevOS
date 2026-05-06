@@ -36,6 +36,9 @@ type WebhookTransaction = {
 type WebhookCustomer = {
   id: number;
   email?: string;
+  first_name?: string;
+  last_name?: string;
+  phone?: string;
 };
 
 type WebhookSession = {
@@ -136,14 +139,53 @@ async function handleSessionCompleted(p: CheckoutSessionCompletedPayload) {
   // Idempotency: already processed
   if (cs.status === "completed") return;
 
-  // 2. Find our Customer record
+  // 2. Find or create our Customer record
   let customer = cs.customerId
     ? await prisma.customer.findUnique({ where: { id: cs.customerId } })
-    : await prisma.customer.findFirst({ where: { lunarpayCustomerId: lpCustomer.id } });
+    : null;
 
   if (!customer) {
-    console.warn(`[webhook] Customer not found for session ${cs.id}`);
-    return;
+    // Try matching by LunarPay customer ID first
+    customer = await prisma.customer.findFirst({
+      where: { lunarpayCustomerId: lpCustomer.id },
+    });
+  }
+
+  if (!customer && lpCustomer.email) {
+    // Try matching by email within this clinic
+    customer = await prisma.customer.findFirst({
+      where: { clinicId: cs.clinicId, email: lpCustomer.email },
+    });
+  }
+
+  if (!customer) {
+    // Auto-create the customer for this clinic from the LunarPay data
+    customer = await prisma.customer.create({
+      data: {
+        clinicId: cs.clinicId,
+        lunarpayCustomerId: lpCustomer.id,
+        email: lpCustomer.email ?? null,
+        firstName: lpCustomer.first_name ?? null,
+        lastName: lpCustomer.last_name ?? null,
+        phone: lpCustomer.phone ?? null,
+      },
+    });
+
+    await logAudit({
+      actorId: null,
+      actorRole: "WEBHOOK",
+      clinicId: cs.clinicId,
+      action: "customer.create.webhook",
+      targetType: "Customer",
+      targetId: customer.id,
+      metadata: { lunarpayCustomerId: lpCustomer.id, email: lpCustomer.email },
+    });
+
+    // Link the session to the newly created customer
+    await prisma.checkoutSession.update({
+      where: { id: cs.id },
+      data: { customerId: customer.id },
+    });
   }
 
   // 3. Ensure the customer has a LunarPay customer ID

@@ -22,12 +22,6 @@ type SessionRow = {
   url: string;
 };
 
-type CustomerOption = {
-  id: string;
-  firstName: string | null;
-  lastName: string | null;
-  email: string | null;
-};
 
 type Tab = "all" | "open" | "completed" | "expired";
 
@@ -71,10 +65,8 @@ function customerName(c: SessionRow["customer"]): string {
 
 export function PaymentLinksClient({
   sessions,
-  customers,
 }: {
   sessions: SessionRow[];
-  customers: CustomerOption[];
 }) {
   const router = useRouter();
   const [tab, setTab] = useState<Tab>("all");
@@ -280,7 +272,6 @@ export function PaymentLinksClient({
 
       {creating && (
         <CreateLinkModal
-          customers={customers}
           onClose={() => setCreating(false)}
           onCreated={() => {
             router.refresh();
