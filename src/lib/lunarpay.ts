@@ -255,6 +255,9 @@ export const lunarpay = {
       input,
     );
   },
+  getSubscription(id: number) {
+    return request<{ data: LPSubscription }>("GET", `/api/v1/subscriptions/${id}`);
+  },
   cancelSubscription(id: number) {
     return request<{ success: boolean; status: string }>(
       "DELETE",

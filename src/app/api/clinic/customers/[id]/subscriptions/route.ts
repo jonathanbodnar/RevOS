@@ -6,11 +6,21 @@ import { lunarpay, LunarPayError } from "@/lib/lunarpay";
 import { logAudit } from "@/lib/audit";
 import { parseMoneyInputToCents } from "@/lib/format";
 
+/**
+ * Create a subscription via hosted checkout (mode: "subscription").
+ *
+ * This does everything in one shot:
+ * - Customer pays the first charge immediately on the hosted page
+ * - LunarPay auto-creates the recurring subscription after the charge succeeds
+ * - Payment method is vaulted automatically
+ *
+ * The webhook (checkout.session.completed) records the subscription, charge,
+ * and payment method in our DB once the customer completes the checkout.
+ */
 const Body = z.object({
-  paymentMethodId: z.string().min(1),
   amount: z.string().min(1),
   frequency: z.enum(["weekly", "monthly", "quarterly", "yearly"]),
-  startOn: z.string().optional(),
+  description: z.string().optional(),
 });
 
 export async function POST(
@@ -33,56 +43,70 @@ export async function POST(
 
   const customer = await prisma.customer.findFirst({
     where: { id, clinicId },
+    include: { clinic: true },
   });
-  if (!customer || !customer.lunarpayCustomerId) {
-    return NextResponse.json({ error: "Customer not synced" }, { status: 400 });
-  }
-  const pm = await prisma.paymentMethod.findFirst({
-    where: {
-      id: parsed.data.paymentMethodId,
-      customerId: customer.id,
-      isActive: true,
-    },
-  });
-  if (!pm) {
-    return NextResponse.json({ error: "Payment method not found" }, { status: 404 });
+  if (!customer) {
+    return NextResponse.json({ error: "Customer not found" }, { status: 404 });
   }
 
+  const appUrl = process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
+  const description = parsed.data.description
+    ? `[${customer.clinic.name}] ${parsed.data.description}`
+    : `[${customer.clinic.name}] Subscription — ${parsed.data.frequency}`;
+
   try {
-    const startOnIso = parsed.data.startOn
-      ? new Date(parsed.data.startOn).toISOString()
-      : undefined;
-    const lp = await lunarpay.createSubscription({
-      customerId: customer.lunarpayCustomerId,
-      paymentMethodId: pm.lunarpayPaymentMethodId,
-      amount: cents,
-      frequency: parsed.data.frequency,
-      startOn: startOnIso,
+    const lp = await lunarpay.createCheckoutSession({
+      amount: cents / 100, // LP checkout API takes dollars, not cents
+      description,
+      customer_email: customer.email || undefined,
+      customer_name:
+        [customer.firstName, customer.lastName].filter(Boolean).join(" ") ||
+        undefined,
+      payment_methods: ["cc", "ach"],
+      mode: "subscription",
+      recurring: {
+        frequency: parsed.data.frequency,
+      },
+      success_url: `${appUrl}/pay/success`,
+      cancel_url: `${appUrl}/pay/cancel`,
+      metadata: {
+        clinicId,
+        customerId: customer.id,
+        type: "subscription",
+      },
+      expires_in: 60 * 60 * 24, // 24 hours
     });
-    const sub = await prisma.subscription.create({
+
+    const checkoutSession = await prisma.checkoutSession.create({
       data: {
         clinicId,
         customerId: customer.id,
-        paymentMethodId: pm.id,
-        lunarpaySubscriptionId: lp.data.id,
-        amountCents: lp.data.amount,
-        frequency: lp.data.frequency,
-        status: lp.data.status,
-        startOn: lp.data.startOn ? new Date(lp.data.startOn) : null,
-        nextPaymentOn: lp.data.nextPaymentOn
-          ? new Date(lp.data.nextPaymentOn)
-          : null,
+        lunarpaySessionId: lp.id,
+        token: lp.token,
+        url: lp.url,
+        amountCents: cents,
+        description: parsed.data.description ?? `Subscription — ${parsed.data.frequency}`,
+        mode: "subscription",
+        status: lp.status,
+        metadataJson: JSON.stringify({
+          clinicId,
+          customerId: customer.id,
+          frequency: parsed.data.frequency,
+        }),
       },
     });
+
     await logAudit({
       actorId: session.user.id,
       actorRole: session.user.originalRole,
       clinicId,
       action: "subscription.create",
-      targetType: "Subscription",
-      targetId: sub.id,
+      targetType: "CheckoutSession",
+      targetId: checkoutSession.id,
+      metadata: { amountCents: cents, frequency: parsed.data.frequency },
     });
-    return NextResponse.json({ data: { id: sub.id } }, { status: 201 });
+
+    return NextResponse.json({ url: lp.url, id: checkoutSession.id });
   } catch (e) {
     const status = e instanceof LunarPayError ? e.status : 500;
     const msg = e instanceof Error ? e.message : "Subscription failed.";

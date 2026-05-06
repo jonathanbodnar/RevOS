@@ -207,13 +207,7 @@ export default async function CustomerDetailPage({
               label: formatMethodLabel(m),
             }))}
           />
-          <NewSubscriptionForm
-            customerId={customer.id}
-            methods={customer.paymentMethods.map((m) => ({
-              id: m.id,
-              label: formatMethodLabel(m),
-            }))}
-          />
+          <NewSubscriptionForm customerId={customer.id} />
           <NewInvoiceForm customerId={customer.id} email={customer.email ?? ""} />
         </div>
       </div>
