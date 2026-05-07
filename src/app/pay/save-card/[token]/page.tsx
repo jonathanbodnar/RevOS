@@ -29,10 +29,7 @@ export default async function SaveCardPage({
             {session.clinic.name}
           </h1>
           <p className="text-sm text-slate-500 mt-1">
-            Save your payment info{" "}
-            {session.customer.firstName
-              ? `for ${session.customer.firstName}`
-              : ""}
+            Please update your payment information
           </p>
         </div>
         <div className="card-pad">
