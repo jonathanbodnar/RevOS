@@ -9,6 +9,7 @@ import { DeletePaymentLinkButton } from "./delete-button";
 const MODE_LABELS: Record<string, string> = {
   payment: "One-time payment",
   subscription: "Subscription",
+  combined: "Setup + subscription",
   installments: "Installments",
   save_card: "Save card",
 };
@@ -16,9 +17,27 @@ const MODE_LABELS: Record<string, string> = {
 const MODE_COLORS: Record<string, string> = {
   payment: "badge-indigo",
   subscription: "badge-green",
+  combined: "badge-purple",
   installments: "badge-yellow",
   save_card: "badge-slate",
 };
+
+type LinkMeta = {
+  frequency?: string;
+  setupFeeCents?: number;
+  subscriptionAmountCents?: number;
+  startOn?: string;
+  startsToday?: boolean;
+};
+
+function safeJson(s: string | null): LinkMeta {
+  if (!s) return {};
+  try {
+    return JSON.parse(s) as LinkMeta;
+  } catch {
+    return {};
+  }
+}
 
 export default async function InvoiceDetailPage({
   params,
@@ -72,6 +91,8 @@ export default async function InvoiceDetailPage({
   const effectiveStatus =
     session.status === "open" && isExpiredByTime ? "expired" : session.status;
 
+  const meta = safeJson(session.metadataJson);
+
   const customer = session.customer;
   const fullName = customer
     ? [customer.firstName, customer.lastName].filter(Boolean).join(" ") ||
@@ -114,6 +135,9 @@ export default async function InvoiceDetailPage({
           </div>
           <h2 className="text-xl font-semibold text-slate-900">
             {formatMoneyCents(session.amountCents)}
+            {session.mode === "combined" && (
+              <span className="text-sm font-normal text-slate-500"> today</span>
+            )}
           </h2>
           {session.description && (
             <p className="text-sm text-slate-500 mt-0.5">{session.description}</p>
@@ -179,6 +203,53 @@ export default async function InvoiceDetailPage({
               )}
             </dl>
           </div>
+
+          {/* Combined-mode breakdown */}
+          {session.mode === "combined" && (
+            <div className="card-pad space-y-3">
+              <h3 className="text-sm font-semibold text-slate-900">
+                Charge breakdown
+              </h3>
+              <dl className="space-y-2 text-sm">
+                {(meta.setupFeeCents ?? 0) > 0 && (
+                  <div className="flex justify-between">
+                    <dt className="text-slate-500">Setup fee (today)</dt>
+                    <dd className="font-medium tabular-nums">
+                      {formatMoneyCents(meta.setupFeeCents ?? 0)}
+                    </dd>
+                  </div>
+                )}
+                <div className="flex justify-between">
+                  <dt className="text-slate-500">
+                    Subscription
+                    {meta.frequency ? ` (${meta.frequency})` : ""}
+                  </dt>
+                  <dd className="font-medium tabular-nums">
+                    {formatMoneyCents(meta.subscriptionAmountCents ?? 0)}
+                  </dd>
+                </div>
+                <div className="flex justify-between">
+                  <dt className="text-slate-500">First subscription charge</dt>
+                  <dd>
+                    {meta.startsToday
+                      ? "Today (bundled with setup)"
+                      : meta.startOn
+                      ? new Date(`${meta.startOn}T00:00:00`).toLocaleDateString(
+                          "en-US",
+                          { month: "long", day: "numeric", year: "numeric" },
+                        )
+                      : "—"}
+                  </dd>
+                </div>
+                <div className="flex justify-between border-t border-slate-100 pt-2">
+                  <dt className="text-slate-700 font-medium">Today total</dt>
+                  <dd className="font-semibold tabular-nums">
+                    {formatMoneyCents(session.amountCents)}
+                  </dd>
+                </div>
+              </dl>
+            </div>
+          )}
 
           {/* Payment link URL */}
           {effectiveStatus === "open" && (

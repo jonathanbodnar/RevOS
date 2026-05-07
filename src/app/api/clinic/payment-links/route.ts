@@ -9,19 +9,35 @@ import { parseMoneyInputToCents } from "@/lib/format";
 /**
  * Create a payment link hosted at /pay/[token] on revosportal.com.
  *
- * Anyone with the link enters their email/name + card on the RevOS-hosted page.
- * On submit, we create the customer in this clinic (or match by email),
- * vault the card via Fortis Elements + LunarPay, and either charge or create
- * a subscription depending on the link mode.
+ * Three link shapes:
+ *   - "payment":      one-time charge of `amount`
+ *   - "subscription": recurring sub; first charge today, recurs every frequency
+ *   - "combined":     setup fee charged today + a subscription that begins on
+ *                     `startOn`. If startOn = today, the first sub charge is
+ *                     bundled with the setup fee in today's transaction; if
+ *                     startOn is in the future, only the setup fee is charged
+ *                     today and the first sub charge runs on `startOn`.
  *
- * No LunarPay hosted checkout is involved — RevOS owns the entire UX.
+ * `amountCents` on the CheckoutSession always represents what gets charged
+ * the day the customer submits the link. Subscription details live in
+ * `metadataJson` so we don't need a schema migration.
  */
 const Body = z.object({
-  amount: z.string().min(1),
-  mode: z.enum(["payment", "subscription"]),
+  mode: z.enum(["payment", "subscription", "combined"]),
+  amount: z.string().optional(),
   frequency: z.enum(["weekly", "monthly", "quarterly", "yearly"]).optional(),
   description: z.string().optional(),
+  // combined-mode fields
+  setupFee: z.string().optional(),
+  subscriptionAmount: z.string().optional(),
+  startOn: z.string().optional(), // YYYY-MM-DD
 });
+
+function todayIso(): string {
+  const d = new Date();
+  const tz = d.getTimezoneOffset() * 60_000;
+  return new Date(d.getTime() - tz).toISOString().slice(0, 10);
+}
 
 export async function POST(req: Request) {
   const guard = await requireClinicApi();
@@ -33,25 +49,92 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Invalid input" }, { status: 400 });
   }
 
-  const { mode, frequency, description } = parsed.data;
-  if (mode === "subscription" && !frequency) {
-    return NextResponse.json(
-      { error: "Frequency is required for subscriptions" },
-      { status: 400 },
-    );
-  }
-
-  const cents = parseMoneyInputToCents(parsed.data.amount);
-  if (cents === null || cents < 50) {
-    return NextResponse.json(
-      { error: "Amount must be at least $0.50" },
-      { status: 400 },
-    );
-  }
-
   const clinic = await prisma.clinic.findUnique({ where: { id: clinicId } });
   if (!clinic) {
     return NextResponse.json({ error: "Clinic not found" }, { status: 404 });
+  }
+
+  let amountCents = 0;
+  let metadata: Record<string, unknown> = { clinicId };
+
+  if (parsed.data.mode === "payment") {
+    const cents = parseMoneyInputToCents(parsed.data.amount ?? "");
+    if (cents === null || cents < 50) {
+      return NextResponse.json(
+        { error: "Amount must be at least $0.50" },
+        { status: 400 },
+      );
+    }
+    amountCents = cents;
+  } else if (parsed.data.mode === "subscription") {
+    if (!parsed.data.frequency) {
+      return NextResponse.json(
+        { error: "Frequency is required for subscriptions" },
+        { status: 400 },
+      );
+    }
+    const cents = parseMoneyInputToCents(parsed.data.amount ?? "");
+    if (cents === null || cents < 50) {
+      return NextResponse.json(
+        { error: "Amount must be at least $0.50" },
+        { status: 400 },
+      );
+    }
+    amountCents = cents;
+    metadata.frequency = parsed.data.frequency;
+  } else {
+    // combined
+    if (!parsed.data.frequency) {
+      return NextResponse.json(
+        { error: "Frequency is required for subscriptions" },
+        { status: 400 },
+      );
+    }
+    if (!parsed.data.startOn) {
+      return NextResponse.json(
+        { error: "Start date is required" },
+        { status: 400 },
+      );
+    }
+    const setupFeeCents = parseMoneyInputToCents(parsed.data.setupFee ?? "0") ?? 0;
+    const subCents = parseMoneyInputToCents(parsed.data.subscriptionAmount ?? "");
+    if (subCents === null || subCents < 50) {
+      return NextResponse.json(
+        { error: "Subscription amount must be at least $0.50" },
+        { status: 400 },
+      );
+    }
+
+    const today = todayIso();
+    const startsToday = parsed.data.startOn === today;
+
+    if (parsed.data.startOn < today) {
+      return NextResponse.json(
+        { error: "Start date cannot be in the past" },
+        { status: 400 },
+      );
+    }
+
+    // Today's charge: setup fee + (sub amount if subscription starts today)
+    amountCents = setupFeeCents + (startsToday ? subCents : 0);
+    if (amountCents < 50) {
+      return NextResponse.json(
+        {
+          error:
+            "Today's charge must be at least $0.50 — add a setup fee or set the start date to today.",
+        },
+        { status: 400 },
+      );
+    }
+
+    metadata = {
+      ...metadata,
+      frequency: parsed.data.frequency,
+      setupFeeCents,
+      subscriptionAmountCents: subCents,
+      startOn: parsed.data.startOn,
+      startsToday,
+    };
   }
 
   const token = randomBytes(24).toString("hex");
@@ -69,14 +152,11 @@ export async function POST(req: Request) {
       lunarpaySessionId: negId,
       token,
       url,
-      amountCents: cents,
-      description: description ?? null,
-      mode,
+      amountCents,
+      description: parsed.data.description ?? null,
+      mode: parsed.data.mode,
       status: "open",
-      metadataJson: JSON.stringify({
-        clinicId,
-        frequency: frequency ?? null,
-      }),
+      metadataJson: JSON.stringify(metadata),
     },
   });
 
@@ -84,10 +164,15 @@ export async function POST(req: Request) {
     actorId: session.user.id,
     actorRole: session.user.originalRole,
     clinicId,
-    action: mode === "subscription" ? "subscription.link.create" : "invoice.link.create",
+    action:
+      parsed.data.mode === "payment"
+        ? "invoice.link.create"
+        : parsed.data.mode === "subscription"
+        ? "subscription.link.create"
+        : "combined.link.create",
     targetType: "CheckoutSession",
     targetId: checkoutSession.id,
-    metadata: { amountCents: cents, mode, frequency },
+    metadata: { amountCents, mode: parsed.data.mode },
   });
 
   return NextResponse.json({ url, id: checkoutSession.id });

@@ -51,7 +51,7 @@ export function PayClient({
   mode,
 }: {
   token: string;
-  mode: "payment" | "subscription";
+  mode: "payment" | "subscription" | "combined";
 }) {
   const [status, setStatus] = useState<Status>("loading");
   const [error, setError] = useState<string | null>(null);
@@ -180,7 +180,7 @@ export function PayClient({
           </svg>
         </div>
         <h2 className="text-lg font-semibold text-slate-900 mb-1">
-          {mode === "subscription" ? "Subscription started" : "Payment received"}
+          {mode === "payment" ? "Payment received" : "Subscription started"}
         </h2>
         <p className="text-sm text-slate-500">
           Thanks! You can close this window.

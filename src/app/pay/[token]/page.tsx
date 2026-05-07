@@ -11,6 +11,14 @@ function formatMoney(cents: number) {
   }).format(cents / 100);
 }
 
+function formatDate(iso: string): string {
+  return new Date(`${iso}T00:00:00`).toLocaleDateString("en-US", {
+    month: "long",
+    day: "numeric",
+    year: "numeric",
+  });
+}
+
 function frequencyLabel(freq: string | null): string | null {
   if (!freq) return null;
   switch (freq) {
@@ -27,6 +35,14 @@ function frequencyLabel(freq: string | null): string | null {
   }
 }
 
+type Meta = {
+  frequency?: string;
+  setupFeeCents?: number;
+  subscriptionAmountCents?: number;
+  startOn?: string;
+  startsToday?: boolean;
+};
+
 export default async function PayPage({
   params,
 }: {
@@ -40,13 +56,13 @@ export default async function PayPage({
 
   if (
     !session ||
-    (session.mode !== "payment" && session.mode !== "subscription")
+    !["payment", "subscription", "combined"].includes(session.mode)
   ) {
     notFound();
   }
 
-  const meta = session.metadataJson ? safeJson(session.metadataJson) : {};
-  const frequency = (meta as Record<string, string | null>).frequency ?? null;
+  const meta = (session.metadataJson ? safeJson(session.metadataJson) : {}) as Meta;
+  const frequency = meta.frequency ?? null;
   const subTitle = frequencyLabel(frequency);
 
   return (
@@ -83,41 +99,131 @@ export default async function PayPage({
             </div>
           ) : (
             <>
+              {/* Charge breakdown */}
               <div className="mb-5">
-                <p className="text-xs font-medium text-slate-500 uppercase tracking-wide mb-1">
-                  {session.mode === "subscription" ? "Subscription" : "Amount due"}
-                </p>
-                <p className="text-3xl font-semibold text-slate-900 tabular-nums">
-                  {formatMoney(session.amountCents)}
-                  {session.mode === "subscription" && subTitle && (
-                    <span className="text-base font-normal text-slate-500">
-                      {" "}
-                      / {subTitle}
-                    </span>
-                  )}
-                </p>
-                {session.description && (
+                {session.mode === "payment" && (
+                  <>
+                    <p className="text-xs font-medium text-slate-500 uppercase tracking-wide mb-1">
+                      Amount due
+                    </p>
+                    <p className="text-3xl font-semibold text-slate-900 tabular-nums">
+                      {formatMoney(session.amountCents)}
+                    </p>
+                  </>
+                )}
+
+                {session.mode === "subscription" && (
+                  <>
+                    <p className="text-xs font-medium text-slate-500 uppercase tracking-wide mb-1">
+                      Subscription
+                    </p>
+                    <p className="text-3xl font-semibold text-slate-900 tabular-nums">
+                      {formatMoney(session.amountCents)}
+                      {subTitle && (
+                        <span className="text-base font-normal text-slate-500">
+                          {" "}
+                          / {subTitle}
+                        </span>
+                      )}
+                    </p>
+                    <p className="text-xs text-slate-500 mt-3">
+                      The first charge runs today. Future charges run
+                      automatically {subTitle}.
+                    </p>
+                  </>
+                )}
+
+                {session.mode === "combined" && (
+                  <CombinedSummary session={session} meta={meta} />
+                )}
+
+                {session.description && session.mode !== "combined" && (
                   <p className="text-sm text-slate-600 mt-1.5">
                     {session.description}
                   </p>
                 )}
-                {session.mode === "subscription" && (
-                  <p className="text-xs text-slate-500 mt-3">
-                    The first charge runs today. Future charges run automatically
-                    {subTitle ? ` ${subTitle}` : ""}.
-                  </p>
-                )}
               </div>
 
-              <PayClient token={token} mode={session.mode} />
+              <PayClient token={token} mode={session.mode as "payment" | "subscription" | "combined"} />
             </>
           )}
 
-          <p className="text-[11px] text-slate-400 mt-4 text-center">
-            Card data is sent directly to Fortis (PCI-compliant).
-          </p>
+          {/* Trust badge */}
+          <div className="flex items-center justify-center gap-1.5 mt-4 text-[11px] text-slate-400">
+            <svg
+              className="w-3 h-3"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth={2}
+              viewBox="0 0 24 24"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"
+              />
+            </svg>
+            <span>Secured by LunarPay • SSL Encryption</span>
+          </div>
         </div>
       </div>
+    </div>
+  );
+}
+
+function CombinedSummary({
+  session,
+  meta,
+}: {
+  session: { amountCents: number; description: string | null };
+  meta: Meta;
+}) {
+  const setup = meta.setupFeeCents ?? 0;
+  const subAmount = meta.subscriptionAmountCents ?? 0;
+  const startsToday = !!meta.startsToday;
+  const startOn = meta.startOn ?? null;
+  const subTitle = frequencyLabel(meta.frequency ?? null);
+
+  return (
+    <div>
+      <p className="text-xs font-medium text-slate-500 uppercase tracking-wide mb-2">
+        Today&apos;s charge
+      </p>
+      <p className="text-3xl font-semibold text-slate-900 tabular-nums mb-3">
+        {formatMoney(session.amountCents)}
+      </p>
+
+      {session.description && (
+        <p className="text-sm text-slate-600 mb-3">{session.description}</p>
+      )}
+
+      <ul className="text-sm text-slate-600 space-y-1.5 border-t border-slate-100 pt-3">
+        {setup > 0 && (
+          <li className="flex justify-between">
+            <span>Setup fee</span>
+            <span className="tabular-nums">{formatMoney(setup)}</span>
+          </li>
+        )}
+        {startsToday && subAmount > 0 && (
+          <li className="flex justify-between">
+            <span>First subscription charge</span>
+            <span className="tabular-nums">{formatMoney(subAmount)}</span>
+          </li>
+        )}
+        <li className="flex justify-between text-slate-500 text-xs pt-2 mt-1 border-t border-slate-100">
+          <span>Then {subTitle ?? "recurring"}</span>
+          <span className="tabular-nums">
+            {formatMoney(subAmount)}
+            {subTitle ? ` / ${subTitle.replace("every ", "")}` : ""}
+          </span>
+        </li>
+        {!startsToday && startOn && (
+          <li className="flex justify-between text-slate-500 text-xs">
+            <span>First subscription charge</span>
+            <span>{formatDate(startOn)}</span>
+          </li>
+        )}
+      </ul>
     </div>
   );
 }

@@ -62,4 +62,5 @@ body {
   .badge-red { @apply badge bg-red-50 text-red-700; }
   .badge-slate { @apply badge bg-slate-100 text-slate-700; }
   .badge-indigo { @apply badge bg-indigo-50 text-indigo-700; }
+  .badge-purple { @apply badge bg-purple-50 text-purple-700; }
 }

@@ -3,7 +3,13 @@
 import { useState } from "react";
 import { CopyButton } from "@/components/copy-button";
 
-type Mode = "payment" | "subscription";
+type Mode = "payment" | "subscription" | "combined";
+
+function todayIso(): string {
+  const d = new Date();
+  const tz = d.getTimezoneOffset() * 60_000;
+  return new Date(d.getTime() - tz).toISOString().slice(0, 10);
+}
 
 export function CreateLinkModal({
   onClose,
@@ -13,9 +19,17 @@ export function CreateLinkModal({
   onCreated: () => void;
 }) {
   const [mode, setMode] = useState<Mode>("payment");
+
+  // payment / subscription mode
   const [amount, setAmount] = useState("");
-  const [description, setDescription] = useState("");
+
+  // combined mode
+  const [setupFee, setSetupFee] = useState("");
+  const [subAmount, setSubAmount] = useState("");
+  const [startOn, setStartOn] = useState<string>(todayIso());
+
   const [frequency, setFrequency] = useState("monthly");
+  const [description, setDescription] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [generatedUrl, setGeneratedUrl] = useState<string | null>(null);
@@ -23,18 +37,28 @@ export function CreateLinkModal({
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
-    setLoading(true);
 
-    const body: Record<string, string> = { amount, mode };
+    const body: Record<string, string> = { mode };
     if (description) body.description = description;
-    if (mode === "subscription") body.frequency = frequency;
 
+    if (mode === "payment") {
+      body.amount = amount;
+    } else if (mode === "subscription") {
+      body.amount = amount;
+      body.frequency = frequency;
+    } else {
+      body.setupFee = setupFee || "0";
+      body.subscriptionAmount = subAmount;
+      body.frequency = frequency;
+      body.startOn = startOn;
+    }
+
+    setLoading(true);
     const res = await fetch("/api/clinic/payment-links", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
     });
-
     setLoading(false);
 
     if (!res.ok) {
@@ -55,7 +79,7 @@ export function CreateLinkModal({
         if (e.target === e.currentTarget) onClose();
       }}
     >
-      <div className="card-pad max-w-md w-full">
+      <div className="card-pad max-w-md w-full max-h-[90vh] overflow-y-auto">
         <div className="flex items-center justify-between mb-5">
           <h2 className="text-base font-semibold text-slate-900">
             Create payment link
@@ -95,25 +119,25 @@ export function CreateLinkModal({
           </div>
         ) : (
           <form onSubmit={onSubmit} className="space-y-4">
-            {/* Mode toggle */}
+            {/* Mode selector */}
             <div>
               <label className="label">Type</label>
-              <div className="flex rounded-lg border border-slate-200 overflow-hidden">
+              <div className="grid grid-cols-3 rounded-lg border border-slate-200 overflow-hidden">
                 <button
                   type="button"
                   onClick={() => setMode("payment")}
-                  className={`flex-1 py-2 text-sm font-medium transition-colors ${
+                  className={`py-2 text-xs font-medium transition-colors ${
                     mode === "payment"
                       ? "bg-brand-600 text-white"
                       : "text-slate-600 bg-white hover:bg-slate-50"
                   }`}
                 >
-                  One-time payment
+                  One-time
                 </button>
                 <button
                   type="button"
                   onClick={() => setMode("subscription")}
-                  className={`flex-1 py-2 text-sm font-medium transition-colors border-l border-slate-200 ${
+                  className={`py-2 text-xs font-medium transition-colors border-l border-slate-200 ${
                     mode === "subscription"
                       ? "bg-brand-600 text-white"
                       : "text-slate-600 bg-white hover:bg-slate-50"
@@ -121,16 +145,32 @@ export function CreateLinkModal({
                 >
                   Subscription
                 </button>
+                <button
+                  type="button"
+                  onClick={() => setMode("combined")}
+                  className={`py-2 text-xs font-medium transition-colors border-l border-slate-200 ${
+                    mode === "combined"
+                      ? "bg-brand-600 text-white"
+                      : "text-slate-600 bg-white hover:bg-slate-50"
+                  }`}
+                >
+                  Setup + sub
+                </button>
               </div>
               {mode === "subscription" && (
                 <p className="text-xs text-slate-500 mt-1.5">
-                  First charge happens immediately; LunarPay auto-creates the recurring plan.
+                  First charge happens immediately; recurring plan starts after.
+                </p>
+              )}
+              {mode === "combined" && (
+                <p className="text-xs text-slate-500 mt-1.5">
+                  Charge a one-time setup fee today, then start a recurring subscription on a date you choose.
                 </p>
               )}
             </div>
 
-            {/* Amount + Frequency */}
-            <div className={mode === "subscription" ? "grid grid-cols-2 gap-3" : ""}>
+            {/* Mode-specific fields */}
+            {mode === "payment" && (
               <div>
                 <label className="label">Amount (USD)</label>
                 <input
@@ -142,7 +182,21 @@ export function CreateLinkModal({
                   onChange={(e) => setAmount(e.target.value)}
                 />
               </div>
-              {mode === "subscription" && (
+            )}
+
+            {mode === "subscription" && (
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="label">Amount (USD)</label>
+                  <input
+                    className="input"
+                    required
+                    inputMode="decimal"
+                    placeholder="99.00"
+                    value={amount}
+                    onChange={(e) => setAmount(e.target.value)}
+                  />
+                </div>
                 <div>
                   <label className="label">Frequency</label>
                   <select
@@ -156,15 +210,81 @@ export function CreateLinkModal({
                     <option value="yearly">Yearly</option>
                   </select>
                 </div>
-              )}
-            </div>
+              </div>
+            )}
+
+            {mode === "combined" && (
+              <>
+                <div>
+                  <label className="label">Setup fee (USD, charged today)</label>
+                  <input
+                    className="input"
+                    inputMode="decimal"
+                    placeholder="0.00"
+                    value={setupFee}
+                    onChange={(e) => setSetupFee(e.target.value)}
+                  />
+                  <p className="text-xs text-slate-500 mt-1">
+                    Leave 0 for no setup fee.
+                  </p>
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="label">Subscription (USD)</label>
+                    <input
+                      className="input"
+                      required
+                      inputMode="decimal"
+                      placeholder="99.00"
+                      value={subAmount}
+                      onChange={(e) => setSubAmount(e.target.value)}
+                    />
+                  </div>
+                  <div>
+                    <label className="label">Frequency</label>
+                    <select
+                      className="input"
+                      value={frequency}
+                      onChange={(e) => setFrequency(e.target.value)}
+                    >
+                      <option value="weekly">Weekly</option>
+                      <option value="monthly">Monthly</option>
+                      <option value="quarterly">Quarterly</option>
+                      <option value="yearly">Yearly</option>
+                    </select>
+                  </div>
+                </div>
+                <div>
+                  <label className="label">First subscription charge</label>
+                  <input
+                    type="date"
+                    className="input"
+                    required
+                    min={todayIso()}
+                    value={startOn}
+                    onChange={(e) => setStartOn(e.target.value)}
+                  />
+                  <p className="text-xs text-slate-500 mt-1">
+                    {startOn === todayIso()
+                      ? "Subscription starts today (charged together with the setup fee)."
+                      : "Subscription's first charge will run on this date. Only the setup fee is charged today."}
+                  </p>
+                </div>
+              </>
+            )}
 
             {/* Description */}
             <div>
               <label className="label">Description (optional)</label>
               <input
                 className="input"
-                placeholder={mode === "subscription" ? "Monthly wellness plan" : "Lab work"}
+                placeholder={
+                  mode === "subscription"
+                    ? "Monthly wellness plan"
+                    : mode === "combined"
+                    ? "Onboarding + monthly plan"
+                    : "Lab work"
+                }
                 value={description}
                 onChange={(e) => setDescription(e.target.value)}
               />

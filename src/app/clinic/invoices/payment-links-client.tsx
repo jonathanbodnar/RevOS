@@ -28,6 +28,7 @@ type Tab = "all" | "open" | "completed" | "expired";
 const MODE_LABELS: Record<string, string> = {
   payment: "One-time",
   subscription: "Subscription",
+  combined: "Setup + sub",
   installments: "Installments",
   save_card: "Save card",
 };
@@ -35,6 +36,7 @@ const MODE_LABELS: Record<string, string> = {
 const MODE_COLORS: Record<string, string> = {
   payment: "badge-indigo",
   subscription: "badge-green",
+  combined: "badge-purple",
   installments: "badge-yellow",
   save_card: "badge-slate",
 };

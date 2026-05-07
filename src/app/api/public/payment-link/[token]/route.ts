@@ -7,21 +7,20 @@ import { logAudit } from "@/lib/audit";
 /**
  * Public submit endpoint for a hosted payment link.
  *
- * Inputs from the page:
- *  - ticketId: Fortis ticket from Elements (card is already vaulted at Fortis)
- *  - email + firstName + lastName + (optional) phone
- *
- * What we do, in order:
+ * Steps:
  *  1) Find or create a Customer for this clinic (matched by email).
  *  2) Ensure the customer has a `lunarpayCustomerId` (create one if missing).
  *  3) Save the card via LunarPay (vaults the ticket against the customer).
- *  4) For mode="payment": charge immediately via LunarPay.
- *     For mode="subscription": charge first, then create the subscription
- *     so future recurrences run automatically.
- *  5) Mark the CheckoutSession as completed.
- *
- * Idempotency: if the session is already "completed", we return success
- * without doing anything else.
+ *  4) Charge `amountCents` immediately. For combined links, this already
+ *     bundles setup fee + (first sub if startOn=today). For "payment" / pure
+ *     "subscription" it's just the single amount.
+ *  5) For subscription / combined links, create the LunarPay subscription
+ *     with a startOn that lines up the FIRST recurring charge correctly:
+ *       - subscription mode: startOn = today (LP next charge in 1 freq)
+ *       - combined w/ startsToday: startOn = today (LP next charge in 1 freq)
+ *       - combined w/ future start: startOn = (futureDate - 1 freq) so LP's
+ *         first charge runs ON the future date the clinic configured.
+ *  6) Mark the CheckoutSession completed and link to the customer.
  */
 const Body = z.object({
   ticketId: z.string().min(1),
@@ -31,6 +30,8 @@ const Body = z.object({
   lastName: z.string().min(1),
   phone: z.string().optional(),
 });
+
+type Frequency = "weekly" | "monthly" | "quarterly" | "yearly";
 
 export async function POST(
   req: Request,
@@ -49,7 +50,7 @@ export async function POST(
   });
   if (
     !sess ||
-    (sess.mode !== "payment" && sess.mode !== "subscription") ||
+    !["payment", "subscription", "combined"].includes(sess.mode) ||
     sess.status !== "open"
   ) {
     return NextResponse.json(
@@ -59,9 +60,16 @@ export async function POST(
   }
 
   const { ticketId, paymentMethod, email, firstName, lastName, phone } = parsed.data;
+  const meta = (sess.metadataJson ? safeJson(sess.metadataJson) : {}) as {
+    frequency?: Frequency;
+    setupFeeCents?: number;
+    subscriptionAmountCents?: number;
+    startOn?: string;
+    startsToday?: boolean;
+  };
 
   try {
-    // 1) Find or create the Customer in this clinic (match by email).
+    // 1) Find or create the Customer for this clinic.
     let customer = await prisma.customer.findFirst({
       where: { clinicId: sess.clinicId, email },
     });
@@ -100,8 +108,6 @@ export async function POST(
         data: { lunarpayCustomerId: lpCustomer.data.id },
       });
     }
-
-    // Type narrowing — at this point we definitely have an LP id.
     const lpCustomerId = customer.lunarpayCustomerId;
     if (!lpCustomerId) {
       return NextResponse.json(
@@ -110,7 +116,7 @@ export async function POST(
       );
     }
 
-    // 3) Save the card (vault the Fortis ticket against the LP customer).
+    // 3) Save the card.
     const existingCount = await prisma.paymentMethod.count({
       where: { customerId: customer.id, isActive: true },
     });
@@ -144,67 +150,91 @@ export async function POST(
       },
     });
 
-    // 4a) Charge first (always — this is the initial payment).
+    // 4) Charge the today total. Combined mode's `amountCents` already
+    //    bundles setup fee + (sub if starting today); payment / subscription
+    //    modes use their single amount.
     const description = sess.description
       ? `[${sess.clinic.name}] ${sess.description}`
       : `[${sess.clinic.name}]`;
 
-    const lpCharge = await lunarpay.createCharge({
-      customerId: lpCustomerId,
-      paymentMethodId: lpPm.data.id,
-      amount: sess.amountCents,
-      description,
-    });
-
-    await prisma.charge.create({
-      data: {
-        clinicId: sess.clinicId,
-        customerId: customer.id,
-        paymentMethodId: pm.id,
-        lunarpayChargeId: String(lpCharge.data.id),
-        fortisTransactionId: lpCharge.data.fortisTransactionId ?? null,
-        amountCents: lpCharge.data.amount,
-        status: lpCharge.data.status,
-        paymentMethodType: lpCharge.data.paymentMethod,
-        description: sess.description ?? null,
-      },
-    });
-
-    // 4b) For subscription links, create the recurring plan now that the
-    // first charge has been captured. nextPaymentOn = startOn + 1 frequency
-    // (LP default), which means "next charge in one frequency unit".
-    if (sess.mode === "subscription") {
-      const meta = sess.metadataJson ? safeJson(sess.metadataJson) : {};
-      const frequency = (meta as Record<string, string>).frequency || "monthly";
-
-      const lpSub = await lunarpay.createSubscription({
+    if (sess.amountCents > 0) {
+      const lpCharge = await lunarpay.createCharge({
         customerId: lpCustomerId,
         paymentMethodId: lpPm.data.id,
         amount: sess.amountCents,
-        frequency: frequency as "weekly" | "monthly" | "quarterly" | "yearly",
+        description,
       });
 
-      const nextPaymentOn = lpSub.data.nextPaymentOn
-        ? new Date(lpSub.data.nextPaymentOn)
-        : computeNextPaymentOn(frequency);
-
-      await prisma.subscription.create({
+      await prisma.charge.create({
         data: {
           clinicId: sess.clinicId,
           customerId: customer.id,
           paymentMethodId: pm.id,
-          lunarpaySubscriptionId: lpSub.data.id,
-          amountCents: sess.amountCents,
-          frequency,
-          status: lpSub.data.status,
-          startOn: lpSub.data.startOn ? new Date(lpSub.data.startOn) : new Date(),
-          nextPaymentOn,
+          lunarpayChargeId: String(lpCharge.data.id),
+          fortisTransactionId: lpCharge.data.fortisTransactionId ?? null,
+          amountCents: lpCharge.data.amount,
+          status: lpCharge.data.status,
+          paymentMethodType: lpCharge.data.paymentMethod,
           description: sess.description ?? null,
         },
       });
     }
 
-    // 5) Mark session completed and link to the customer.
+    // 5) Create the LP subscription if applicable.
+    if (sess.mode === "subscription" || sess.mode === "combined") {
+      const frequency: Frequency = (meta.frequency as Frequency) || "monthly";
+
+      // Subscription amount: meta value for combined links; falls back to the
+      // session amount for legacy "subscription" links.
+      const subAmountCents =
+        sess.mode === "combined"
+          ? meta.subscriptionAmountCents ?? 0
+          : sess.amountCents;
+
+      // Calculate startOn so the FIRST LP charge lands when the clinic wants:
+      //   nextPaymentOn = startOn + 1 frequency (per LP)
+      //   ⇒ startOn = (desired_first_charge_date - 1 frequency)
+      // For "starts today" cases, we set startOn = today so the next LP charge
+      // happens 1 frequency from now (the first sub charge today was bundled
+      // into the createCharge above).
+      let lpStartOn: string;
+      if (sess.mode === "combined" && meta.startOn && !meta.startsToday) {
+        lpStartOn = subtractOneFrequency(meta.startOn, frequency);
+      } else {
+        lpStartOn = todayIso();
+      }
+
+      if (subAmountCents >= 50) {
+        const lpSub = await lunarpay.createSubscription({
+          customerId: lpCustomerId,
+          paymentMethodId: lpPm.data.id,
+          amount: subAmountCents,
+          frequency,
+          startOn: lpStartOn,
+        });
+
+        const nextPaymentOn = lpSub.data.nextPaymentOn
+          ? new Date(lpSub.data.nextPaymentOn)
+          : addOneFrequency(new Date(lpStartOn), frequency);
+
+        await prisma.subscription.create({
+          data: {
+            clinicId: sess.clinicId,
+            customerId: customer.id,
+            paymentMethodId: pm.id,
+            lunarpaySubscriptionId: lpSub.data.id,
+            amountCents: subAmountCents,
+            frequency,
+            status: lpSub.data.status,
+            startOn: lpSub.data.startOn ? new Date(lpSub.data.startOn) : new Date(lpStartOn),
+            nextPaymentOn,
+            description: sess.description ?? null,
+          },
+        });
+      }
+    }
+
+    // 6) Mark session completed and link the customer.
     await prisma.checkoutSession.update({
       where: { id: sess.id },
       data: {
@@ -219,9 +249,11 @@ export async function POST(
       actorRole: "CUSTOMER",
       clinicId: sess.clinicId,
       action:
-        sess.mode === "subscription"
+        sess.mode === "payment"
+          ? "charge.complete.payment_link"
+          : sess.mode === "subscription"
           ? "subscription.complete.payment_link"
-          : "charge.complete.payment_link",
+          : "combined.complete.payment_link",
       targetType: "CheckoutSession",
       targetId: sess.id,
       metadata: { amountCents: sess.amountCents },
@@ -237,22 +269,46 @@ export async function POST(
   }
 }
 
-function computeNextPaymentOn(frequency: string): Date {
+function todayIso(): string {
   const d = new Date();
+  const tz = d.getTimezoneOffset() * 60_000;
+  return new Date(d.getTime() - tz).toISOString().slice(0, 10);
+}
+
+function subtractOneFrequency(isoDate: string, frequency: Frequency): string {
+  const d = new Date(`${isoDate}T00:00:00Z`);
   switch (frequency) {
     case "weekly":
-      d.setDate(d.getDate() + 7);
+      d.setUTCDate(d.getUTCDate() - 7);
       break;
     case "quarterly":
-      d.setMonth(d.getMonth() + 3);
+      d.setUTCMonth(d.getUTCMonth() - 3);
       break;
     case "yearly":
-      d.setFullYear(d.getFullYear() + 1);
+      d.setUTCFullYear(d.getUTCFullYear() - 1);
       break;
     default:
-      d.setMonth(d.getMonth() + 1);
+      d.setUTCMonth(d.getUTCMonth() - 1);
   }
-  return d;
+  return d.toISOString().slice(0, 10);
+}
+
+function addOneFrequency(d: Date, frequency: Frequency): Date {
+  const out = new Date(d);
+  switch (frequency) {
+    case "weekly":
+      out.setDate(out.getDate() + 7);
+      break;
+    case "quarterly":
+      out.setMonth(out.getMonth() + 3);
+      break;
+    case "yearly":
+      out.setFullYear(out.getFullYear() + 1);
+      break;
+    default:
+      out.setMonth(out.getMonth() + 1);
+  }
+  return out;
 }
 
 function safeJson(s: string): unknown {
