@@ -14,7 +14,7 @@ export async function POST(
   const sess = await prisma.checkoutSession.findUnique({ where: { token } });
   if (
     !sess ||
-    (sess.mode !== "payment" && sess.mode !== "subscription") ||
+    !["payment", "subscription", "combined"].includes(sess.mode) ||
     sess.status !== "open"
   ) {
     return NextResponse.json(
