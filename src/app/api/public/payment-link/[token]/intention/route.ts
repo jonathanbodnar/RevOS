@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { requireStringParams } from "@/lib/route-params";
 
 /**
  * Mint a Fortis clientToken for the public payment-link page so the visitor's
@@ -10,7 +11,9 @@ export async function POST(
   _req: Request,
   ctx: { params: Promise<{ token: string }> },
 ) {
-  const { token } = await ctx.params;
+  const params = await requireStringParams(ctx.params, ["token"] as const);
+  if (!params.ok) return params.response;
+  const { token } = params.value;
   const sess = await prisma.checkoutSession.findUnique({ where: { token } });
   if (
     !sess ||

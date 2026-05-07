@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireClinicApi } from "@/lib/api-guard";
+import { requireStringParams } from "@/lib/route-params";
 import { logAudit } from "@/lib/audit";
 
 /**
@@ -18,7 +19,10 @@ export async function DELETE(
   const guard = await requireClinicApi();
   if ("error" in guard) return guard.error;
   const { session, clinicId } = guard;
-  const { id } = await ctx.params;
+
+  const params = await requireStringParams(ctx.params, ["id"] as const);
+  if (!params.ok) return params.response;
+  const { id } = params.value;
 
   const cs = await prisma.checkoutSession.findFirst({
     where: { id, clinicId },

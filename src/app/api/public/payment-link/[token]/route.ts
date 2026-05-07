@@ -3,6 +3,7 @@ import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { lunarpay, LunarPayError } from "@/lib/lunarpay";
 import { logAudit } from "@/lib/audit";
+import { requireStringParams } from "@/lib/route-params";
 
 /**
  * Public submit endpoint for a reusable hosted payment link.
@@ -41,7 +42,9 @@ export async function POST(
   req: Request,
   ctx: { params: Promise<{ token: string }> },
 ) {
-  const { token } = await ctx.params;
+  const params = await requireStringParams(ctx.params, ["token"] as const);
+  if (!params.ok) return params.response;
+  const { token } = params.value;
 
   const parsed = Body.safeParse(await req.json().catch(() => ({})));
   if (!parsed.success) {

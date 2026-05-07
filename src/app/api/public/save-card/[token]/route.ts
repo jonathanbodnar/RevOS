@@ -3,6 +3,7 @@ import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { lunarpay, LunarPayError } from "@/lib/lunarpay";
 import { logAudit } from "@/lib/audit";
+import { requireStringParams } from "@/lib/route-params";
 
 const Body = z.object({
   ticketId: z.string().min(1),
@@ -14,7 +15,9 @@ export async function POST(
   req: Request,
   ctx: { params: Promise<{ token: string }> },
 ) {
-  const { token } = await ctx.params;
+  const params = await requireStringParams(ctx.params, ["token"] as const);
+  if (!params.ok) return params.response;
+  const { token } = params.value;
   const sess = await prisma.checkoutSession.findUnique({
     where: { token },
     include: { customer: true },

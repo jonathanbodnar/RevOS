@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireClinicApi } from "@/lib/api-guard";
+import { requireStringParams } from "@/lib/route-params";
 import { lunarpay, LunarPayError } from "@/lib/lunarpay";
 import { logAudit } from "@/lib/audit";
 
@@ -11,7 +12,10 @@ export async function PATCH(
   const guard = await requireClinicApi();
   if ("error" in guard) return guard.error;
   const { session, clinicId } = guard;
-  const { id, pmId } = await ctx.params;
+
+  const params = await requireStringParams(ctx.params, ["id", "pmId"] as const);
+  if (!params.ok) return params.response;
+  const { id, pmId } = params.value;
 
   const customer = await prisma.customer.findFirst({
     where: { id, clinicId },
@@ -55,7 +59,10 @@ export async function DELETE(
   const guard = await requireClinicApi();
   if ("error" in guard) return guard.error;
   const { session, clinicId } = guard;
-  const { id, pmId } = await ctx.params;
+
+  const params = await requireStringParams(ctx.params, ["id", "pmId"] as const);
+  if (!params.ok) return params.response;
+  const { id, pmId } = params.value;
 
   const customer = await prisma.customer.findFirst({
     where: { id, clinicId },
