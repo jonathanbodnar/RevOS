@@ -262,21 +262,47 @@ export async function POST(
     return NextResponse.json({ ok: true });
   } catch (e) {
     const status = e instanceof LunarPayError ? e.status : 500;
-    const msg = e instanceof Error ? e.message : "Payment failed";
+    const baseMsg = e instanceof Error ? e.message : "Payment failed";
     const details = e instanceof LunarPayError ? e.details : undefined;
-    console.error("[payment-link/public] error:", msg, details);
-    return NextResponse.json({ error: msg, details }, { status });
+
+    // If LP returned a structured `errors` object, surface the first concrete
+    // field-level message so the page shows something more useful than just
+    // "Validation error".
+    let displayMsg = baseMsg;
+    if (details && typeof details === "object") {
+      const d = details as { errors?: Record<string, unknown>; message?: string };
+      if (d.errors && typeof d.errors === "object") {
+        const firstField = Object.entries(d.errors)[0];
+        if (firstField) {
+          const [field, msg] = firstField;
+          const msgStr = Array.isArray(msg) ? msg[0] : msg;
+          displayMsg = `${baseMsg}: ${field} — ${String(msgStr)}`;
+        }
+      } else if (d.message && d.message !== baseMsg) {
+        displayMsg = `${baseMsg}: ${d.message}`;
+      }
+    }
+
+    console.error("[payment-link/public] error:", displayMsg, details);
+    return NextResponse.json({ error: displayMsg, details }, { status });
   }
 }
 
 function todayIso(): string {
+  // LunarPay expects full ISO timestamps with Z (e.g. "2026-06-06T00:00:00Z").
   const d = new Date();
-  const tz = d.getTimezoneOffset() * 60_000;
-  return new Date(d.getTime() - tz).toISOString().slice(0, 10);
+  return new Date(
+    Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), 0, 0, 0),
+  )
+    .toISOString()
+    .replace(".000Z", "Z");
 }
 
 function subtractOneFrequency(isoDate: string, frequency: Frequency): string {
-  const d = new Date(`${isoDate}T00:00:00Z`);
+  // Accepts "YYYY-MM-DD" or full ISO; returns full ISO with Z (LP format).
+  const d = new Date(
+    isoDate.length === 10 ? `${isoDate}T00:00:00Z` : isoDate,
+  );
   switch (frequency) {
     case "weekly":
       d.setUTCDate(d.getUTCDate() - 7);
@@ -290,7 +316,7 @@ function subtractOneFrequency(isoDate: string, frequency: Frequency): string {
     default:
       d.setUTCMonth(d.getUTCMonth() - 1);
   }
-  return d.toISOString().slice(0, 10);
+  return d.toISOString().replace(".000Z", "Z");
 }
 
 function addOneFrequency(d: Date, frequency: Frequency): Date {
