@@ -8,9 +8,11 @@ type Mode = "payment" | "subscription" | "combined";
 export function CreateLinkModal({
   onClose,
   onCreated,
+  apiEndpoint = "/api/clinic/payment-links",
 }: {
   onClose: () => void;
   onCreated: () => void;
+  apiEndpoint?: string;
 }) {
   const [mode, setMode] = useState<Mode>("payment");
 
@@ -51,7 +53,7 @@ export function CreateLinkModal({
     }
 
     setLoading(true);
-    const res = await fetch("/api/clinic/payment-links", {
+    const res = await fetch(apiEndpoint, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),

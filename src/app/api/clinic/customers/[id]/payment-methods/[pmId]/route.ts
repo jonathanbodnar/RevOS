@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { requireClinicApi } from "@/lib/api-guard";
+import { requireClinicApi, requireSuperAdminClinicApi } from "@/lib/api-guard";
 import { requireStringParams } from "@/lib/route-params";
 import { lunarpay, LunarPayError } from "@/lib/lunarpay";
 import { logAudit } from "@/lib/audit";
@@ -56,7 +56,7 @@ export async function DELETE(
   _req: Request,
   ctx: { params: Promise<{ id: string; pmId: string }> },
 ) {
-  const guard = await requireClinicApi();
+  const guard = await requireSuperAdminClinicApi();
   if ("error" in guard) return guard.error;
   const { session, clinicId } = guard;
 

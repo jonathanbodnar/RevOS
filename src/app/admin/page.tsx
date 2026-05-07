@@ -20,7 +20,7 @@ export default async function AdminOverviewPage() {
   const stats = [
     { label: "Clinics", value: clinicCount.toLocaleString() },
     { label: "Customers", value: customerCount.toLocaleString() },
-    { label: "Charges", value: (chargeAgg._count ?? 0).toLocaleString() },
+    { label: "Transactions", value: (chargeAgg._count ?? 0).toLocaleString() },
     { label: "Active subscriptions", value: activeSubs.toLocaleString() },
     { label: "Gross processed", value: formatMoneyCents(gross) },
     { label: "Net (after refunds)", value: formatMoneyCents(net) },

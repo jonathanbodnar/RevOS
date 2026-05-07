@@ -58,8 +58,8 @@ model Clinic {
 // We mirror/cache LunarPay customer id so we can call the API.
 model Customer {
   id                  String   @id @default(cuid())
-  clinicId            String
-  clinic              Clinic   @relation(fields: [clinicId], references: [id], onDelete: Cascade)
+  clinicId            String?
+  clinic              Clinic?  @relation(fields: [clinicId], references: [id], onDelete: SetNull)
 
   // LunarPay customer id (shared merchant). Nullable until first sync.
   lunarpayCustomerId  Int?     @unique
@@ -110,8 +110,8 @@ model PaymentMethod {
 
 model Charge {
   id                   String   @id @default(cuid())
-  clinicId             String
-  clinic               Clinic   @relation(fields: [clinicId], references: [id], onDelete: Cascade)
+  clinicId             String?
+  clinic               Clinic?  @relation(fields: [clinicId], references: [id], onDelete: SetNull)
   customerId           String
   customer             Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
   paymentMethodId      String?
@@ -140,8 +140,8 @@ model Charge {
 
 model Subscription {
   id                 String   @id @default(cuid())
-  clinicId           String
-  clinic             Clinic   @relation(fields: [clinicId], references: [id], onDelete: Cascade)
+  clinicId           String?
+  clinic             Clinic?  @relation(fields: [clinicId], references: [id], onDelete: SetNull)
   customerId         String
   customer           Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
   paymentMethodId    String?
@@ -169,8 +169,8 @@ model Subscription {
 
 model PaymentSchedule {
   id                 String   @id @default(cuid())
-  clinicId           String
-  clinic             Clinic   @relation(fields: [clinicId], references: [id], onDelete: Cascade)
+  clinicId           String?
+  clinic             Clinic?  @relation(fields: [clinicId], references: [id], onDelete: SetNull)
   customerId         String
   customer           Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
   paymentMethodId    String?
@@ -196,10 +196,11 @@ model PaymentSchedule {
 // REUSABLE template: status stays "open" and many customers can pay through
 // the same token. For save-card mode, it remains a one-shot session that
 // flips to "completed" once the customer adds their card.
+// isGlobal=true links are created by super-admin and visible to all clinics.
 model CheckoutSession {
   id                 String   @id @default(cuid())
-  clinicId           String
-  clinic             Clinic   @relation(fields: [clinicId], references: [id], onDelete: Cascade)
+  clinicId           String?
+  clinic             Clinic?  @relation(fields: [clinicId], references: [id], onDelete: SetNull)
   customerId         String?
   customer           Customer? @relation(fields: [customerId], references: [id], onDelete: SetNull)
 
@@ -211,6 +212,7 @@ model CheckoutSession {
   mode               String   // payment | subscription | combined | save_card
   status             String   // open | completed | expired
   metadataJson       String?
+  isGlobal           Boolean  @default(false)
 
   createdAt          DateTime @default(now())
   completedAt        DateTime?
@@ -220,6 +222,7 @@ model CheckoutSession {
   subscriptions      Subscription[] @relation("PaymentLinkSubscriptions")
 
   @@index([clinicId])
+  @@index([isGlobal])
 }
 
 // Audit log: super-admin actions, impersonation, etc.

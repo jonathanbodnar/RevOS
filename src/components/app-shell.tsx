@@ -1,3 +1,4 @@
+import Image from "next/image";
 import Link from "next/link";
 import { SignOutButton } from "./sign-out";
 
@@ -10,6 +11,7 @@ export function AppShell({
   banner,
   children,
   session,
+  clinicName,
 }: {
   title: string;
   subtitle?: string;
@@ -23,22 +25,25 @@ export function AppShell({
       originalRole: "SUPER_ADMIN" | "CLINIC_ADMIN";
     };
   };
+  clinicName?: string;
 }) {
   return (
     <div className="min-h-screen flex">
       <aside className="w-64 shrink-0 bg-white border-r border-slate-200 flex flex-col">
-        <div className="h-16 flex items-center gap-3 px-5 border-b border-slate-100">
-          <div className="h-8 w-8 rounded-lg bg-brand-600 text-white grid place-items-center font-bold">
-            R
-          </div>
-          <div>
-            <div className="text-sm font-semibold leading-tight">RevOS</div>
-            <div className="text-[11px] text-slate-500">
-              {session.user.originalRole === "SUPER_ADMIN"
-                ? "Super Admin"
-                : "Clinic"}
+        <div className="flex flex-col items-center px-5 pt-5 pb-4 border-b border-slate-100 gap-1">
+          <Image
+            src="/logogrey.png"
+            alt="RevOS"
+            width={120}
+            height={40}
+            className="object-contain"
+            priority
+          />
+          {clinicName && (
+            <div className="text-xs text-slate-500 font-medium text-center leading-tight mt-1">
+              {clinicName}
             </div>
-          </div>
+          )}
         </div>
         <nav className="p-3 space-y-0.5 flex-1">
           {nav.map((item) => (

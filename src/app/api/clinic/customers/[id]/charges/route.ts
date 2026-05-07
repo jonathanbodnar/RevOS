@@ -52,9 +52,10 @@ export async function POST(
 
   // Tag charge with clinic context in the description so it's auditable in
   // the shared LunarPay merchant dashboard.
+  const clinicLabel = customer.clinic?.name ?? "Clinic";
   const description = parsed.data.description
-    ? `[${customer.clinic.name}] ${parsed.data.description}`
-    : `[${customer.clinic.name}]`;
+    ? `[${clinicLabel}] ${parsed.data.description}`
+    : `[${clinicLabel}]`;
 
   try {
     const lp = await lunarpay.createCharge({

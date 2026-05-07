@@ -21,3 +21,22 @@ export async function requireClinicApi() {
   }
   return { session, clinicId };
 }
+
+/**
+ * Require super admin (or super admin impersonating) for sensitive operations
+ * like refunds and removing payment methods.
+ */
+export async function requireSuperAdminClinicApi() {
+  const guard = await requireClinicApi();
+  if ("error" in guard) return guard;
+  const { session, clinicId } = guard;
+  if (session.user.originalRole !== "SUPER_ADMIN") {
+    return {
+      error: NextResponse.json(
+        { error: "Only super admins can perform this action." },
+        { status: 403 },
+      ),
+    };
+  }
+  return { session, clinicId };
+}

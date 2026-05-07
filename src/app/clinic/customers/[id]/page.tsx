@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { requireClinicContext } from "@/lib/session";
+import { requireClinicContext, isSuperAdmin, getSession } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
 import { formatMoneyCents, formatDate } from "@/lib/format";
 import { PaymentMethods } from "./payment-methods";
@@ -9,6 +9,7 @@ import { NewSubscriptionForm } from "./new-subscription";
 import { NewInvoiceForm } from "./new-invoice";
 import { RefundButton } from "./refund-button";
 import { CancelSubscriptionButton } from "./cancel-subscription";
+import { DeleteCustomerButton } from "./delete-customer-button";
 
 export default async function CustomerDetailPage({
   params,
@@ -17,6 +18,8 @@ export default async function CustomerDetailPage({
 }) {
   const { id } = await params;
   const { clinicId } = await requireClinicContext();
+  const session = await getSession();
+  const canPerformSensitiveActions = isSuperAdmin(session);
 
   const customer = await prisma.customer.findFirst({
     where: { id, clinicId },
@@ -76,6 +79,9 @@ export default async function CustomerDetailPage({
             </p>
           )}
         </div>
+        {canPerformSensitiveActions && (
+          <DeleteCustomerButton customerId={customer.id} customerName={fullName} />
+        )}
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -83,6 +89,7 @@ export default async function CustomerDetailPage({
           <PaymentMethods
             customerId={customer.id}
             existingUpdateCardUrl={existingUpdateCardLink?.url ?? null}
+            canRemoveCard={canPerformSensitiveActions}
             methods={customer.paymentMethods.map((m) => ({
               id: m.id,
               lunarpayPaymentMethodId: m.lunarpayPaymentMethodId,
@@ -97,7 +104,7 @@ export default async function CustomerDetailPage({
 
           <div className="card-pad">
             <h3 className="text-sm font-semibold text-slate-900 mb-3">
-              Charges
+              Transactions
             </h3>
             <table className="table">
               <thead>
@@ -113,7 +120,7 @@ export default async function CustomerDetailPage({
                 {customer.charges.length === 0 && (
                   <tr>
                     <td colSpan={5} className="text-center text-slate-500 py-6">
-                      No charges yet.
+                      No transactions yet.
                     </td>
                   </tr>
                 )}
@@ -149,7 +156,8 @@ export default async function CustomerDetailPage({
                       {formatDate(c.createdAt)}
                     </td>
                     <td className="text-right pr-3">
-                      {c.status !== "refunded" &&
+                      {canPerformSensitiveActions &&
+                        c.status !== "refunded" &&
                         c.refundedCents < c.amountCents && (
                           <RefundButton
                             chargeId={c.id}

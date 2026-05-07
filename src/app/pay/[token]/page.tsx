@@ -79,10 +79,10 @@ export default async function PayPage({
       <div className="w-full max-w-md">
         <div className="text-center mb-6">
           <div className="inline-flex h-12 w-12 items-center justify-center rounded-xl bg-brand-600 text-white font-bold text-lg mb-3">
-            {session.clinic.name.charAt(0).toUpperCase()}
+            {(session.clinic?.name ?? "R").charAt(0).toUpperCase()}
           </div>
           <h1 className="text-xl font-semibold text-slate-900">
-            {session.clinic.name}
+            {session.clinic?.name ?? "RevOS"}
           </h1>
         </div>
 

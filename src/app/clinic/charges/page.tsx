@@ -28,7 +28,7 @@ export default async function ChargesPage() {
           {charges.length === 0 && (
             <tr>
               <td colSpan={6} className="text-center text-slate-500 py-10">
-                No charges yet.
+                No transactions yet.
               </td>
             </tr>
           )}

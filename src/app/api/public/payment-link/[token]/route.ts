@@ -153,9 +153,10 @@ export async function POST(
     // 4) Charge the today total. Combined mode's `amountCents` already
     //    bundles setup fee + (sub if starting today); payment / subscription
     //    modes use their single amount.
+    const clinicLabel = sess.clinic?.name ?? "RevOS";
     const description = sess.description
-      ? `[${sess.clinic.name}] ${sess.description}`
-      : `[${sess.clinic.name}]`;
+      ? `[${clinicLabel}] ${sess.description}`
+      : `[${clinicLabel}]`;
 
     if (sess.amountCents > 0) {
       const lpCharge = await lunarpay.createCharge({

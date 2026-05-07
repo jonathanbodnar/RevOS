@@ -29,7 +29,7 @@ export default async function CustomersPage() {
               <th>Email</th>
               <th>Phone</th>
               <th>Payment methods</th>
-              <th>Charges</th>
+              <th>Transactions</th>
               <th>Added</th>
             </tr>
           </thead>

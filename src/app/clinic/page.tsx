@@ -31,7 +31,7 @@ export default async function ClinicOverviewPage() {
     <div className="space-y-6">
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         <Stat label="Customers" value={customers.toLocaleString()} />
-        <Stat label="Charges" value={(charges._count ?? 0).toLocaleString()} />
+        <Stat label="Transactions" value={(charges._count ?? 0).toLocaleString()} />
         <Stat
           label="Net processed"
           value={formatMoneyCents(gross - refunded)}
@@ -41,7 +41,7 @@ export default async function ClinicOverviewPage() {
 
       <div className="card-pad">
         <div className="flex items-center justify-between mb-3">
-          <h2 className="text-sm font-semibold text-slate-900">Recent charges</h2>
+          <h2 className="text-sm font-semibold text-slate-900">Recent transactions</h2>
           <Link href="/clinic/charges" className="text-xs text-brand-600 hover:underline">
             View all
           </Link>
@@ -59,7 +59,7 @@ export default async function ClinicOverviewPage() {
             {recentCharges.length === 0 && (
               <tr>
                 <td colSpan={4} className="text-center text-slate-500 py-8">
-                  No charges yet.
+                  No transactions yet.
                 </td>
               </tr>
             )}

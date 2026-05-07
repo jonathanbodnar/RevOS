@@ -38,9 +38,10 @@ export async function POST(
   }
 
   const appUrl = process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
+  const clinicLabel = customer.clinic?.name ?? "Clinic";
   const description = parsed.data.description
-    ? `[${customer.clinic.name}] ${parsed.data.description}`
-    : `[${customer.clinic.name}]`;
+    ? `[${clinicLabel}] ${parsed.data.description}`
+    : `[${clinicLabel}]`;
 
   try {
     const lp = await lunarpay.createCheckoutSession({

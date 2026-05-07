@@ -5,24 +5,38 @@ import { PaymentLinksClient } from "./payment-links-client";
 export default async function InvoicesPage() {
   const { clinicId } = await requireClinicContext();
 
-  const sessions = await prisma.checkoutSession.findMany({
-    where: {
-      clinicId,
-      // Reusable payment-link templates only — they have no upfront customer
-      // and one of the payment-link modes. Legacy single-customer invoices
-      // and save-card sessions are excluded.
-      mode: { in: ["payment", "subscription", "combined"] },
-      customerId: null,
-    },
-    orderBy: { createdAt: "desc" },
-    take: 500,
-    include: {
-      _count: { select: { charges: true, subscriptions: true } },
-    },
-  });
+  const [clinicSessions, globalSessions] = await Promise.all([
+    // Clinic-specific payment links
+    prisma.checkoutSession.findMany({
+      where: {
+        clinicId,
+        mode: { in: ["payment", "subscription", "combined"] },
+        customerId: null,
+        isGlobal: false,
+      },
+      orderBy: { createdAt: "desc" },
+      take: 500,
+      include: {
+        _count: { select: { charges: true, subscriptions: true } },
+      },
+    }),
+    // Global payment links created by super admin
+    prisma.checkoutSession.findMany({
+      where: {
+        isGlobal: true,
+        mode: { in: ["payment", "subscription", "combined"] },
+        customerId: null,
+        status: "open",
+      },
+      orderBy: { createdAt: "desc" },
+      take: 100,
+      include: {
+        _count: { select: { charges: true, subscriptions: true } },
+      },
+    }),
+  ]);
 
-  // Lightweight DTO so we can pass plain data to the client component.
-  const links = sessions.map((s) => ({
+  const toRow = (s: (typeof clinicSessions)[0], isGlobal = false) => ({
     id: s.id,
     token: s.token,
     url: s.url,
@@ -35,7 +49,13 @@ export default async function InvoicesPage() {
     completedAt: s.completedAt,
     chargeCount: s._count.charges,
     subscriptionCount: s._count.subscriptions,
-  }));
+    isGlobal,
+  });
+
+  const links = [
+    ...clinicSessions.map((s) => toRow(s, false)),
+    ...globalSessions.map((s) => toRow(s, true)),
+  ];
 
   return <PaymentLinksClient links={links} />;
 }

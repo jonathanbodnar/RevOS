@@ -20,10 +20,12 @@ export function PaymentMethods({
   customerId,
   methods,
   existingUpdateCardUrl,
+  canRemoveCard = false,
 }: {
   customerId: string;
   methods: MethodView[];
   existingUpdateCardUrl: string | null;
+  canRemoveCard?: boolean;
 }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
@@ -160,13 +162,15 @@ export function PaymentMethods({
                     {settingDefaultId === m.id ? "Saving…" : "Set default"}
                   </button>
                 )}
-                <button
-                  className="btn-ghost text-red-600 hover:bg-red-50 text-xs"
-                  disabled={pending}
-                  onClick={() => remove(m.id)}
-                >
-                  Remove
-                </button>
+                {canRemoveCard && (
+                  <button
+                    className="btn-ghost text-red-600 hover:bg-red-50 text-xs"
+                    disabled={pending}
+                    onClick={() => remove(m.id)}
+                  >
+                    Remove
+                  </button>
+                )}
               </div>
             </li>
           ))}

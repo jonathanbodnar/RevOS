@@ -24,11 +24,13 @@ export default async function ClinicLayout({
       nav={[
         { href: "/clinic", label: "Overview" },
         { href: "/clinic/customers", label: "Customers" },
-        { href: "/clinic/charges", label: "Charges" },
+        { href: "/clinic/charges", label: "Transactions" },
         { href: "/clinic/subscriptions", label: "Subscriptions" },
         { href: "/clinic/invoices", label: "Payment links" },
+        { href: "/clinic/team", label: "Team" },
       ]}
       session={session}
+      clinicName={clinic?.name}
       banner={<ImpersonationBanner impersonating={session.user.impersonating} />}
     >
       {children}

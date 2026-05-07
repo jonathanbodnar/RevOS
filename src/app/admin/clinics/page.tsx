@@ -2,6 +2,7 @@ import Link from "next/link";
 import { prisma } from "@/lib/prisma";
 import { formatDate } from "@/lib/format";
 import { ImpersonateButton } from "./impersonate-button";
+import { DeleteClinicButton } from "./delete-clinic-button";
 
 export default async function ClinicsListPage() {
   const clinics = await prisma.clinic.findMany({
@@ -31,7 +32,7 @@ export default async function ClinicsListPage() {
               <th>Clinic</th>
               <th>Users</th>
               <th>Customers</th>
-              <th>Charges</th>
+              <th>Transactions</th>
               <th>Created</th>
               <th className="text-right pr-4">Actions</th>
             </tr>
@@ -64,7 +65,10 @@ export default async function ClinicsListPage() {
                 <td>{c._count.charges}</td>
                 <td className="text-slate-500">{formatDate(c.createdAt)}</td>
                 <td className="text-right pr-4">
-                  <ImpersonateButton clinicId={c.id} />
+                  <div className="flex items-center justify-end gap-2">
+                    <ImpersonateButton clinicId={c.id} />
+                    <DeleteClinicButton clinicId={c.id} clinicName={c.name} />
+                  </div>
                 </td>
               </tr>
             ))}

@@ -18,6 +18,7 @@ export default async function AdminLayout({
         { href: "/admin", label: "Overview" },
         { href: "/admin/clinics", label: "Clinics" },
         { href: "/admin/clinics/new", label: "New clinic" },
+        { href: "/admin/payment-links", label: "Payment links" },
         { href: "/admin/audit", label: "Audit log" },
       ]}
       session={session}
