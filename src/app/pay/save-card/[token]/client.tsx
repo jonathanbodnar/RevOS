@@ -2,6 +2,17 @@
 
 import { useEffect, useRef, useState } from "react";
 
+interface FortisElementsSDK {
+  create(params: {
+    container: HTMLElement | string;
+    environment?: "sandbox" | "production";
+    showReceipt?: boolean;
+    showSubmitButton?: boolean;
+    [key: string]: unknown;
+  }): void;
+  on(event: string, cb: (payload: unknown) => void): void;
+  submit(): void;
+}
 
 export function SaveCardClient({ token }: { token: string }) {
   const [status, setStatus] = useState<
@@ -9,6 +20,7 @@ export function SaveCardClient({ token }: { token: string }) {
   >("loading");
   const [error, setError] = useState<string | null>(null);
   const mountRef = useRef<HTMLDivElement | null>(null);
+  const elementsRef = useRef<FortisElementsSDK | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -30,10 +42,7 @@ export function SaveCardClient({ token }: { token: string }) {
         if (cancelled) return;
 
         const Commerce = (window as Window & {
-          Commerce?: { elements: new (token: string) => {
-            create(params: { container: HTMLElement | string; environment?: "sandbox" | "production"; showReceipt?: boolean; [key: string]: unknown }): void;
-            on(event: string, cb: (payload: unknown) => void): void;
-          }};
+          Commerce?: { elements: new (token: string) => FortisElementsSDK };
         }).Commerce;
         if (!Commerce?.elements) {
           setStatus("sdk-missing");
@@ -82,8 +91,10 @@ export function SaveCardClient({ token }: { token: string }) {
               (process.env.NEXT_PUBLIC_FORTIS_ENVIRONMENT as
                 | "sandbox"
                 | "production") || "production",
+            showSubmitButton: false,
             showReceipt: false,
           });
+          elementsRef.current = elements;
         }
 
         setStatus("ready");
@@ -117,29 +128,38 @@ export function SaveCardClient({ token }: { token: string }) {
     );
   }
   return (
-    <div>
+    <div className="space-y-4">
       {status === "loading" && (
         <div className="text-sm text-slate-500 py-8 text-center">
           Loading secure form…
         </div>
       )}
       {status === "error" && (
-        <div className="text-sm text-red-700 bg-red-50 border border-red-100 rounded-md p-3 mt-3">
+        <div className="text-sm text-red-700 bg-red-50 border border-red-100 rounded-md p-3">
           {error}
         </div>
       )}
-      {/* Always in DOM so mountRef is available when create() fires */}
+      {/* Clip the Fortis "Payment info" header at the top of the iframe */}
       <div
-        ref={mountRef}
         className={
           status === "ready" || status === "saving"
-            ? "rounded-md border border-slate-200 min-h-[300px] overflow-hidden"
+            ? "rounded-lg border border-slate-200 overflow-hidden"
             : "hidden"
         }
-      />
-      {status === "saving" && (
-        <p className="text-xs text-slate-500 mt-3 text-center">Saving…</p>
-      )}
+        style={{ maxHeight: 260 }}
+      >
+        <div ref={mountRef} style={{ marginTop: -52 }} />
+      </div>
+      <button
+        type="button"
+        onClick={() => {
+          if (status === "ready") elementsRef.current?.submit();
+        }}
+        disabled={status !== "ready"}
+        className="btn-primary w-full"
+      >
+        {status === "saving" ? "Saving…" : "Save card"}
+      </button>
     </div>
   );
 }

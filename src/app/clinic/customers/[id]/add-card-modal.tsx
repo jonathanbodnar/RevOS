@@ -43,6 +43,7 @@ interface FortisElements {
     [key: string]: unknown;
   }): void;
   on(event: string, cb: (payload: unknown) => void): void;
+  submit(): void;
 }
 
 export function AddCardModal({
@@ -59,6 +60,7 @@ export function AddCardModal({
   >("loading");
   const [error, setError] = useState<string | null>(null);
   const mountRef = useRef<HTMLDivElement | null>(null);
+  const elementsRef = useRef<FortisElements | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -141,8 +143,10 @@ export function AddCardModal({
               (process.env.NEXT_PUBLIC_FORTIS_ENVIRONMENT as
                 | "sandbox"
                 | "production") || "production",
+            showSubmitButton: false,
             showReceipt: false,
           });
+          elementsRef.current = elements;
         }
 
         setStatus("ready");
@@ -207,20 +211,29 @@ export function AddCardModal({
           </div>
         )}
 
-        {/* Always in DOM so mountRef is available when create() fires */}
+        {/* Clip the Fortis "Payment info" header from the top of the iframe */}
         <div
-          ref={mountRef}
           className={
             status === "ready" || status === "saving"
-              ? "rounded-md border border-slate-200 min-h-[300px] overflow-hidden"
+              ? "rounded-lg border border-slate-200 overflow-hidden"
               : "hidden"
           }
-        />
+          style={{ maxHeight: 260 }}
+        >
+          <div ref={mountRef} style={{ marginTop: -52 }} />
+        </div>
 
-        {status === "saving" && (
-          <p className="text-xs text-slate-500 mt-3 text-center">
-            Saving card…
-          </p>
+        {(status === "ready" || status === "saving") && (
+          <button
+            type="button"
+            onClick={() => {
+              if (status === "ready") elementsRef.current?.submit();
+            }}
+            disabled={status !== "ready"}
+            className="btn-primary w-full mt-4"
+          >
+            {status === "saving" ? "Saving…" : "Save card"}
+          </button>
         )}
       </div>
     </div>

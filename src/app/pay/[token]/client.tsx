@@ -7,17 +7,18 @@ import { useEffect, useRef, useState } from "react";
  *
  * Flow:
  *  1) Render email/name form + Fortis Elements card iframe.
- *  2) When the customer submits the form, we tell Fortis Elements to tokenize
- *     by triggering its built-in submit. Fortis fires `done` with a ticketId.
- *  3) We POST { ticketId, email, firstName, lastName, phone } to our public
- *     API; the server creates the customer, vaults the card, and runs the
- *     initial charge (and subscription, if applicable).
+ *  2) When the customer clicks our custom "Pay" button we call
+ *     elements.submit() to trigger Fortis tokenisation. Fortis fires `done`
+ *     with a ticketId once the card is vaulted.
+ *  3) We POST { ticketId, email, firstName, lastName, phone, clinicId } to
+ *     our public API; the server creates the customer, vaults the card, and
+ *     runs the initial charge (and subscription, if applicable).
  *
- * Fortis Elements is configured with `showSubmitButton: true` so the iframe
- * provides its own pay button. We hide our app's submit when Fortis is ready
- * and rely entirely on the iframe's button — that gives the cleanest UX
- * because Fortis owns card validation. Our outer form fields (email/name)
- * are validated before we let Fortis through by gating the `done` handler.
+ * showSubmitButton: false hides Fortis's built-in Pay button so we can
+ * render our own styled button outside the iframe. The container wrapper uses
+ * overflow:hidden + a negative top offset to clip the "Payment info" section
+ * heading that Fortis renders at the top of the iframe — keeping the card
+ * fields visible while hiding the redundant label.
  */
 
 type Status = "loading" | "ready" | "submitting" | "done" | "error" | "sdk-missing";
@@ -38,6 +39,7 @@ interface FortisElementsInstance {
     [key: string]: unknown;
   }): void;
   on(event: string, cb: (payload: unknown) => void): void;
+  submit(): void;
 }
 
 type WindowWithCommerce = Window & {
@@ -49,9 +51,11 @@ type WindowWithCommerce = Window & {
 export function PayClient({
   token,
   mode,
+  clinicId,
 }: {
   token: string;
   mode: "payment" | "subscription" | "combined";
+  clinicId?: string;
 }) {
   const [status, setStatus] = useState<Status>("loading");
   const [error, setError] = useState<string | null>(null);
@@ -67,6 +71,7 @@ export function PayClient({
   formRef.current = { email, firstName, lastName, phone };
 
   const mountRef = useRef<HTMLDivElement | null>(null);
+  const elementsRef = useRef<FortisElementsInstance | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -124,6 +129,7 @@ export function PayClient({
               firstName,
               lastName,
               phone: phone || undefined,
+              clinicId: clinicId || undefined,
             }),
           });
           if (!submit.ok) {
@@ -150,9 +156,10 @@ export function PayClient({
               (process.env.NEXT_PUBLIC_FORTIS_ENVIRONMENT as
                 | "sandbox"
                 | "production") || "production",
-            showSubmitButton: true,
+            showSubmitButton: false,
             showReceipt: false,
           });
+          elementsRef.current = elements;
         }
 
         setStatus("ready");
@@ -198,6 +205,18 @@ export function PayClient({
   }
 
   const fieldsDisabled = status === "submitting";
+
+  function handlePay() {
+    if (status !== "ready") return;
+    const { email, firstName, lastName } = formRef.current;
+    if (!email || !firstName || !lastName) {
+      setStatus("error");
+      setError("Please fill in your name and email above.");
+      return;
+    }
+    setError(null);
+    elementsRef.current?.submit();
+  }
 
   return (
     <div className="space-y-4">
@@ -256,7 +275,7 @@ export function PayClient({
       </div>
 
       <div className="border-t border-slate-200 pt-4">
-        <label className="label">Card information</label>
+        <label className="label">Card details</label>
 
         {status === "loading" && (
           <div className="text-sm text-slate-500 py-8 text-center">
@@ -264,28 +283,37 @@ export function PayClient({
           </div>
         )}
 
-        {/* Always in DOM so mountRef is available when create() fires */}
+        {/*
+          Clip the Fortis "Payment info" section heading that renders at the
+          top of the iframe (~52 px tall). We shift the inner div up by that
+          amount and hide the overflow so only the card fields are visible.
+        */}
         <div
-          ref={mountRef}
           className={
             status === "ready" || status === "submitting"
-              ? "rounded-md border border-slate-200 min-h-[300px] overflow-hidden mt-2"
+              ? "rounded-lg border border-slate-200 overflow-hidden mt-2"
               : "hidden"
           }
-        />
+          style={{ maxHeight: 260 }}
+        >
+          <div ref={mountRef} style={{ marginTop: -52 }} />
+        </div>
 
-        {status === "submitting" && (
-          <p className="text-xs text-slate-500 mt-3 text-center">
-            Processing payment…
-          </p>
-        )}
-
-        {error && status === "error" && (
+        {error && (
           <div className="text-sm text-red-700 bg-red-50 border border-red-100 rounded-md p-3 mt-3">
             {error}
           </div>
         )}
       </div>
+
+      <button
+        type="button"
+        onClick={handlePay}
+        disabled={status !== "ready"}
+        className="btn-primary w-full mt-2"
+      >
+        {status === "submitting" ? "Processing…" : "Pay now"}
+      </button>
     </div>
   );
 }

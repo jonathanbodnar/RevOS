@@ -57,5 +57,5 @@ export default async function InvoicesPage() {
     ...globalSessions.map((s) => toRow(s, true)),
   ];
 
-  return <PaymentLinksClient links={links} />;
+  return <PaymentLinksClient links={links} clinicId={clinicId} />;
 }

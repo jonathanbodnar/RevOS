@@ -34,6 +34,9 @@ const Body = z.object({
   firstName: z.string().min(1),
   lastName: z.string().min(1),
   phone: z.string().optional(),
+  // For global links (clinicId = null on the session), the pay page passes the
+  // clinic that shared the link so transactions are attributed correctly.
+  clinicId: z.string().optional(),
 });
 
 type Frequency = "weekly" | "monthly" | "quarterly" | "yearly";
@@ -66,7 +69,10 @@ export async function POST(
     );
   }
 
-  const { ticketId, paymentMethod, email, firstName, lastName, phone } = parsed.data;
+  const { ticketId, paymentMethod, email, firstName, lastName, phone, clinicId: bodyClinicId } = parsed.data;
+  // For global links (sess.clinicId = null) use the clinic passed by the pay
+  // page so transactions are attributed to the clinic that shared the link.
+  const resolvedClinicId = sess.clinicId ?? bodyClinicId ?? null;
   const meta = (sess.metadataJson ? safeJson(sess.metadataJson) : {}) as {
     frequency?: Frequency;
     setupFeeCents?: number;
@@ -90,7 +96,7 @@ export async function POST(
 
     const customer = await prisma.customer.create({
       data: {
-        clinicId: sess.clinicId,
+        clinicId: resolvedClinicId,
         lunarpayCustomerId: lpCustomer.data.id,
         email,
         firstName,
@@ -101,7 +107,7 @@ export async function POST(
     await logAudit({
       actorId: null,
       actorRole: "CUSTOMER",
-      clinicId: sess.clinicId,
+      clinicId: resolvedClinicId,
       action: "customer.create.payment_link",
       targetType: "Customer",
       targetId: customer.id,
@@ -168,7 +174,7 @@ export async function POST(
 
       await prisma.charge.create({
         data: {
-          clinicId: sess.clinicId,
+          clinicId: resolvedClinicId,
           customerId: customer.id,
           paymentMethodId: pm.id,
           paymentLinkId: sess.id,
@@ -230,7 +236,7 @@ export async function POST(
 
         await prisma.subscription.create({
           data: {
-            clinicId: sess.clinicId,
+            clinicId: resolvedClinicId,
             customerId: customer.id,
             paymentMethodId: pm.id,
             paymentLinkId: sess.id,
@@ -251,7 +257,7 @@ export async function POST(
     await logAudit({
       actorId: null,
       actorRole: "CUSTOMER",
-      clinicId: sess.clinicId,
+      clinicId: resolvedClinicId,
       action:
         sess.mode === "payment"
           ? "charge.complete.payment_link"

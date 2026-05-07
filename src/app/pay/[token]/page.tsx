@@ -4,6 +4,8 @@ import { PayClient } from "./client";
 
 export const dynamic = "force-dynamic";
 
+type Clinic = { id: string; name: string };
+
 function formatMoney(cents: number) {
   return new Intl.NumberFormat("en-US", {
     style: "currency",
@@ -54,10 +56,14 @@ function resolveStartAfterDays(meta: Meta): number {
 
 export default async function PayPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ token: string }>;
+  searchParams: Promise<{ c?: string }>;
 }) {
   const { token } = await params;
+  const { c: clinicParam } = await searchParams;
+
   const session = await prisma.checkoutSession.findUnique({
     where: { token },
     include: { clinic: true },
@@ -70,6 +76,16 @@ export default async function PayPage({
     notFound();
   }
 
+  // For global links (clinicId = null), resolve the clinic from the ?c= param
+  // so the payment page is branded for the clinic that shared the link.
+  let displayClinic: Clinic | null = session.clinic;
+  if (!displayClinic && clinicParam) {
+    displayClinic = await prisma.clinic.findUnique({
+      where: { id: clinicParam },
+      select: { id: true, name: true },
+    });
+  }
+
   const meta = (session.metadataJson ? safeJson(session.metadataJson) : {}) as Meta;
   const frequency = meta.frequency ?? null;
   const subTitle = frequencyLabel(frequency);
@@ -79,10 +95,10 @@ export default async function PayPage({
       <div className="w-full max-w-md">
         <div className="text-center mb-6">
           <div className="inline-flex h-12 w-12 items-center justify-center rounded-xl bg-brand-600 text-white font-bold text-lg mb-3">
-            {(session.clinic?.name ?? "R").charAt(0).toUpperCase()}
+            {(displayClinic?.name ?? "R").charAt(0).toUpperCase()}
           </div>
           <h1 className="text-xl font-semibold text-slate-900">
-            {session.clinic?.name ?? "RevOS"}
+            {displayClinic?.name ?? "RevOS"}
           </h1>
         </div>
 
@@ -139,7 +155,11 @@ export default async function PayPage({
                 )}
               </div>
 
-              <PayClient token={token} mode={session.mode as "payment" | "subscription" | "combined"} />
+              <PayClient
+                token={token}
+                mode={session.mode as "payment" | "subscription" | "combined"}
+                clinicId={displayClinic?.id}
+              />
             </>
           )}
 

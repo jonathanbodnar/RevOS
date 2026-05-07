@@ -53,7 +53,13 @@ function formatDate(d: Date) {
   });
 }
 
-export function PaymentLinksClient({ links }: { links: LinkRow[] }) {
+export function PaymentLinksClient({
+  links,
+  clinicId,
+}: {
+  links: LinkRow[];
+  clinicId: string;
+}) {
   const router = useRouter();
   const [search, setSearch] = useState("");
   const [creating, setCreating] = useState(false);
@@ -198,7 +204,11 @@ export function PaymentLinksClient({ links }: { links: LinkRow[] }) {
                     onClick={(e) => e.stopPropagation()}
                   >
                     <div className="flex items-center justify-end gap-2">
-                      <CopyButton value={l.url} />
+                      <CopyButton
+                        value={
+                          l.isGlobal ? `${l.url}?c=${clinicId}` : l.url
+                        }
+                      />
                       <Link
                         href={`/clinic/invoices/${l.id}`}
                         className="btn-ghost text-xs px-2 py-1"
