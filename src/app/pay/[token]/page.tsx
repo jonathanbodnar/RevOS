@@ -4,7 +4,7 @@ import { PayClient } from "./client";
 
 export const dynamic = "force-dynamic";
 
-type Clinic = { id: string; name: string };
+type Clinic = { id: string; name: string; logoUrl: string | null };
 
 function formatMoney(cents: number) {
   return new Intl.NumberFormat("en-US", {
@@ -82,7 +82,7 @@ export default async function PayPage({
   if (!displayClinic && clinicParam) {
     displayClinic = await prisma.clinic.findUnique({
       where: { id: clinicParam },
-      select: { id: true, name: true },
+      select: { id: true, name: true, logoUrl: true },
     });
   }
 
@@ -94,8 +94,17 @@ export default async function PayPage({
     <div className="min-h-screen flex items-center justify-center p-6 bg-slate-50">
       <div className="w-full max-w-md">
         <div className="text-center mb-6">
-          <div className="inline-flex h-12 w-12 items-center justify-center rounded-xl bg-brand-600 text-white font-bold text-lg mb-3">
-            {(displayClinic?.name ?? "R").charAt(0).toUpperCase()}
+          <div className="inline-flex h-12 w-12 items-center justify-center rounded-xl bg-brand-600 text-white font-bold text-lg mb-3 overflow-hidden">
+            {displayClinic?.logoUrl ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img
+                src={displayClinic.logoUrl}
+                alt={displayClinic.name}
+                className="h-full w-full object-contain"
+              />
+            ) : (
+              (displayClinic?.name ?? "R").charAt(0).toUpperCase()
+            )}
           </div>
           <h1 className="text-xl font-semibold text-slate-900">
             {displayClinic?.name ?? "RevOS"}

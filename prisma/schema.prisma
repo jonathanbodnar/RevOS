@@ -34,6 +34,7 @@ model Clinic {
   id         String     @id @default(cuid())
   name       String
   slug       String     @unique
+  logoUrl    String?
   // Optional contact info
   email      String?
   phone      String?

@@ -22,8 +22,17 @@ export default async function SaveCardPage({
     <div className="min-h-screen flex items-center justify-center p-6 bg-slate-50">
       <div className="w-full max-w-md">
         <div className="text-center mb-6">
-          <div className="inline-flex h-12 w-12 items-center justify-center rounded-xl bg-brand-600 text-white font-bold text-lg mb-3">
-            R
+          <div className="inline-flex h-12 w-12 items-center justify-center rounded-xl bg-brand-600 text-white font-bold text-lg mb-3 overflow-hidden">
+            {session.clinic?.logoUrl ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img
+                src={session.clinic.logoUrl}
+                alt={session.clinic.name ?? "RevOS"}
+                className="h-full w-full object-contain"
+              />
+            ) : (
+              (session.clinic?.name ?? "R").charAt(0).toUpperCase()
+            )}
           </div>
           <h1 className="text-xl font-semibold text-slate-900">
             {session.clinic?.name ?? "RevOS"}

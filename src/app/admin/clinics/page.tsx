@@ -66,6 +66,12 @@ export default async function ClinicsListPage() {
                 <td className="text-slate-500">{formatDate(c.createdAt)}</td>
                 <td className="text-right pr-4">
                   <div className="flex items-center justify-end gap-2">
+                    <Link
+                      href={`/admin/clinics/${c.id}/edit`}
+                      className="btn-ghost text-xs px-2 py-1"
+                    >
+                      Edit
+                    </Link>
                     <ImpersonateButton clinicId={c.id} />
                     <DeleteClinicButton clinicId={c.id} clinicName={c.name} />
                   </div>
