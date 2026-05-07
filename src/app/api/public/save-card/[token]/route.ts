@@ -33,22 +33,21 @@ export async function POST(
   }
 
   try {
-    const existingCount = await prisma.paymentMethod.count({
-      where: { customerId: customer.id, isActive: true },
-    });
-    const setDefault = existingCount === 0;
+    // Cards added via the update-card link always become the new default —
+    // the customer is explicitly replacing their billing card.
     const lp = await lunarpay.savePaymentMethod(customer.lunarpayCustomerId, {
       ticketId: parsed.data.ticketId,
       paymentMethod: parsed.data.paymentMethod,
       nameHolder: parsed.data.nameHolder,
-      setDefault,
+      setDefault: true,
     });
-    if (setDefault) {
-      await prisma.paymentMethod.updateMany({
-        where: { customerId: customer.id, isDefault: true },
-        data: { isDefault: false },
-      });
-    }
+
+    // Clear the current default before setting the new one.
+    await prisma.paymentMethod.updateMany({
+      where: { customerId: customer.id, isDefault: true },
+      data: { isDefault: false },
+    });
+
     await prisma.paymentMethod.create({
       data: {
         customerId: customer.id,
@@ -58,7 +57,7 @@ export async function POST(
         nameHolder: lp.data.nameHolder ?? null,
         expMonth: lp.data.expMonth ?? null,
         expYear: lp.data.expYear ?? null,
-        isDefault: !!lp.data.isDefault || setDefault,
+        isDefault: true,
       },
     });
     await prisma.checkoutSession.update({

@@ -28,6 +28,7 @@ export function PaymentMethods({
   const router = useRouter();
   const [pending, startTransition] = useTransition();
   const [adding, setAdding] = useState(false);
+  const [settingDefaultId, setSettingDefaultId] = useState<string | null>(null);
 
   // Update-card link state
   const [updateCardUrl, setUpdateCardUrl] = useState<string | null>(
@@ -78,6 +79,20 @@ export function PaymentMethods({
     }
     const d = (await res.json()) as { url: string };
     setUpdateCardUrl(d.url);
+  }
+
+  async function setDefault(pmId: string) {
+    setSettingDefaultId(pmId);
+    const res = await fetch(
+      `/api/clinic/customers/${customerId}/payment-methods/${pmId}`,
+      { method: "PATCH" },
+    );
+    setSettingDefaultId(null);
+    if (!res.ok) {
+      alert("Failed to set default.");
+      return;
+    }
+    startTransition(() => router.refresh());
   }
 
   async function remove(pmId: string) {
@@ -135,13 +150,24 @@ export function PaymentMethods({
                     : ""}
                 </div>
               </div>
-              <button
-                className="btn-ghost text-red-600 hover:bg-red-50 text-xs"
-                disabled={pending}
-                onClick={() => remove(m.id)}
-              >
-                Remove
-              </button>
+              <div className="flex items-center gap-2">
+                {!m.isDefault && (
+                  <button
+                    className="btn-ghost text-xs px-2 py-1"
+                    disabled={pending || settingDefaultId === m.id}
+                    onClick={() => setDefault(m.id)}
+                  >
+                    {settingDefaultId === m.id ? "Saving…" : "Set default"}
+                  </button>
+                )}
+                <button
+                  className="btn-ghost text-red-600 hover:bg-red-50 text-xs"
+                  disabled={pending}
+                  onClick={() => remove(m.id)}
+                >
+                  Remove
+                </button>
+              </div>
             </li>
           ))}
         </ul>
