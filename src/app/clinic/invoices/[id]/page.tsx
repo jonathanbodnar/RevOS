@@ -11,7 +11,6 @@ const MODE_LABELS: Record<string, string> = {
   subscription: "Subscription",
   combined: "Setup + subscription",
   installments: "Installments",
-  save_card: "Save card",
 };
 
 const MODE_COLORS: Record<string, string> = {
@@ -19,15 +18,16 @@ const MODE_COLORS: Record<string, string> = {
   subscription: "badge-green",
   combined: "badge-purple",
   installments: "badge-yellow",
-  save_card: "badge-slate",
 };
 
 type LinkMeta = {
   frequency?: string;
   setupFeeCents?: number;
   subscriptionAmountCents?: number;
-  startOn?: string;
+  startAfterDays?: number;
   startsToday?: boolean;
+  // legacy
+  startOn?: string;
 };
 
 function safeJson(s: string | null): LinkMeta {
@@ -39,7 +39,23 @@ function safeJson(s: string | null): LinkMeta {
   }
 }
 
-export default async function InvoiceDetailPage({
+function resolveStartAfterDays(meta: LinkMeta): number {
+  if (typeof meta.startAfterDays === "number")
+    return Math.max(0, meta.startAfterDays);
+  if (meta.startsToday) return 0;
+  if (meta.startOn) {
+    const target = new Date(`${meta.startOn}T00:00:00`);
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    return Math.max(
+      0,
+      Math.round((target.getTime() - today.getTime()) / (24 * 60 * 60 * 1000)),
+    );
+  }
+  return 0;
+}
+
+export default async function PaymentLinkDetailPage({
   params,
 }: {
   params: Promise<{ id: string }>;
@@ -47,61 +63,47 @@ export default async function InvoiceDetailPage({
   const { id } = await params;
   const { clinicId } = await requireClinicContext();
 
-  const session = await prisma.checkoutSession.findFirst({
+  const link = await prisma.checkoutSession.findFirst({
     where: { id, clinicId },
     include: {
-      customer: true,
+      charges: {
+        orderBy: { createdAt: "desc" },
+        take: 100,
+        include: {
+          customer: true,
+          paymentMethod: true,
+        },
+      },
+      subscriptions: {
+        orderBy: { createdAt: "desc" },
+        take: 100,
+        include: {
+          customer: true,
+        },
+      },
     },
   });
 
-  if (!session) notFound();
+  if (!link) notFound();
 
-  // Look up the charge that came from this session (matched by description + customer + approximate time)
-  // The webhook records the charge; we look for it here for display purposes.
-  const relatedCharge = session.customerId
-    ? await prisma.charge.findFirst({
-        where: {
-          clinicId,
-          customerId: session.customerId,
-          description: session.description,
-          amountCents: session.amountCents,
-          createdAt: { gte: session.createdAt },
-        },
-        orderBy: { createdAt: "asc" },
-        include: { paymentMethod: true },
-      })
-    : null;
+  // Defensive: this page is for reusable payment-link templates. Save-card
+  // sessions are handled elsewhere.
+  if (!["payment", "subscription", "combined"].includes(link.mode)) {
+    notFound();
+  }
 
-  // Look up related subscription (if mode=subscription)
-  const relatedSubscription =
-    session.mode === "subscription" && session.customerId
-      ? await prisma.subscription.findFirst({
-          where: {
-            clinicId,
-            customerId: session.customerId,
-            amountCents: session.amountCents,
-            createdAt: { gte: session.createdAt },
-          },
-          orderBy: { createdAt: "asc" },
-        })
-      : null;
-
-  const expiresAt = new Date(session.createdAt.getTime() + 24 * 60 * 60 * 1000);
-  const isExpiredByTime = new Date() > expiresAt;
-  const effectiveStatus =
-    session.status === "open" && isExpiredByTime ? "expired" : session.status;
-
-  const meta = safeJson(session.metadataJson);
-
-  const customer = session.customer;
-  const fullName = customer
-    ? [customer.firstName, customer.lastName].filter(Boolean).join(" ") ||
-      customer.email ||
-      "Customer"
-    : null;
+  const meta = safeJson(link.metadataJson);
+  const totalCharged = link.charges.reduce(
+    (acc, c) => acc + (c.status === "paid" ? c.amountCents : 0),
+    0,
+  );
+  const customerCount = new Set([
+    ...link.charges.map((c) => c.customerId),
+    ...link.subscriptions.map((s) => s.customerId),
+  ]).size;
 
   return (
-    <div className="space-y-6 max-w-3xl">
+    <div className="space-y-6 max-w-4xl">
       {/* Breadcrumb */}
       <div>
         <Link
@@ -116,99 +118,60 @@ export default async function InvoiceDetailPage({
       <div className="flex items-start justify-between gap-4">
         <div>
           <div className="flex items-center gap-2 mb-1">
-            <span
-              className={MODE_COLORS[session.mode] ?? "badge-slate"}
-            >
-              {MODE_LABELS[session.mode] ?? session.mode}
+            <span className={MODE_COLORS[link.mode] ?? "badge-slate"}>
+              {MODE_LABELS[link.mode] ?? link.mode}
             </span>
-            <span
-              className={
-                effectiveStatus === "completed"
-                  ? "badge-green"
-                  : effectiveStatus === "expired"
-                    ? "badge-slate"
-                    : "badge-yellow"
-              }
-            >
-              {effectiveStatus}
-            </span>
+            <span className="badge-green">active</span>
           </div>
           <h2 className="text-xl font-semibold text-slate-900">
-            {formatMoneyCents(session.amountCents)}
-            {session.mode === "combined" && (
+            {formatMoneyCents(link.amountCents)}
+            {link.mode === "combined" && (
               <span className="text-sm font-normal text-slate-500"> today</span>
             )}
           </h2>
-          {session.description && (
-            <p className="text-sm text-slate-500 mt-0.5">{session.description}</p>
+          {link.description && (
+            <p className="text-sm text-slate-500 mt-0.5">{link.description}</p>
           )}
         </div>
-        {session.status !== "completed" && (
-          <DeletePaymentLinkButton id={session.id} />
-        )}
+        <DeletePaymentLinkButton id={link.id} />
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Main info */}
+        {/* Main column */}
         <div className="lg:col-span-2 space-y-5">
-          {/* Session details */}
-          <div className="card-pad space-y-3">
-            <h3 className="text-sm font-semibold text-slate-900">
-              Link details
-            </h3>
-            <dl className="space-y-2 text-sm">
-              <div className="flex justify-between">
-                <dt className="text-slate-500">Status</dt>
-                <dd>
-                  <span
-                    className={
-                      effectiveStatus === "completed"
-                        ? "badge-green"
-                        : effectiveStatus === "expired"
-                          ? "badge-slate"
-                          : "badge-yellow"
-                    }
-                  >
-                    {effectiveStatus}
-                  </span>
-                </dd>
-              </div>
-              <div className="flex justify-between">
-                <dt className="text-slate-500">Amount</dt>
-                <dd className="font-medium">{formatMoneyCents(session.amountCents)}</dd>
-              </div>
-              {session.description && (
-                <div className="flex justify-between">
-                  <dt className="text-slate-500">Description</dt>
-                  <dd>{session.description}</dd>
-                </div>
-              )}
-              <div className="flex justify-between">
-                <dt className="text-slate-500">Created</dt>
-                <dd className="text-slate-700">{formatDate(session.createdAt)}</dd>
-              </div>
-              {effectiveStatus === "open" && (
-                <div className="flex justify-between">
-                  <dt className="text-slate-500">Expires</dt>
-                  <dd className="text-slate-700">{formatDate(expiresAt)}</dd>
-                </div>
-              )}
-              {session.completedAt && (
-                <div className="flex justify-between">
-                  <dt className="text-slate-500">Paid at</dt>
-                  <dd className="text-emerald-700 font-medium">
-                    {formatDate(session.completedAt)}
-                  </dd>
-                </div>
-              )}
-            </dl>
+          {/* Stats */}
+          <div className="grid grid-cols-3 gap-3">
+            <div className="card-pad">
+              <p className="text-xs font-medium text-slate-500 uppercase tracking-wide">
+                Payments
+              </p>
+              <p className="text-2xl font-semibold text-slate-900 tabular-nums">
+                {link.charges.length}
+              </p>
+            </div>
+            <div className="card-pad">
+              <p className="text-xs font-medium text-slate-500 uppercase tracking-wide">
+                Customers
+              </p>
+              <p className="text-2xl font-semibold text-slate-900 tabular-nums">
+                {customerCount}
+              </p>
+            </div>
+            <div className="card-pad">
+              <p className="text-xs font-medium text-slate-500 uppercase tracking-wide">
+                Collected
+              </p>
+              <p className="text-2xl font-semibold text-slate-900 tabular-nums">
+                {formatMoneyCents(totalCharged)}
+              </p>
+            </div>
           </div>
 
           {/* Combined-mode breakdown */}
-          {session.mode === "combined" && (
+          {link.mode === "combined" && (
             <div className="card-pad space-y-3">
               <h3 className="text-sm font-semibold text-slate-900">
-                Charge breakdown
+                Charge breakdown (per customer)
               </h3>
               <dl className="space-y-2 text-sm">
                 {(meta.setupFeeCents ?? 0) > 0 && (
@@ -231,204 +194,218 @@ export default async function InvoiceDetailPage({
                 <div className="flex justify-between">
                   <dt className="text-slate-500">First subscription charge</dt>
                   <dd>
-                    {meta.startsToday
-                      ? "Today (bundled with setup)"
-                      : meta.startOn
-                      ? new Date(`${meta.startOn}T00:00:00`).toLocaleDateString(
-                          "en-US",
-                          { month: "long", day: "numeric", year: "numeric" },
-                        )
-                      : "—"}
+                    {(() => {
+                      const days = resolveStartAfterDays(meta);
+                      if (days === 0) return "Day of payment (bundled with setup)";
+                      return `${days} day${days === 1 ? "" : "s"} after payment`;
+                    })()}
                   </dd>
                 </div>
                 <div className="flex justify-between border-t border-slate-100 pt-2">
                   <dt className="text-slate-700 font-medium">Today total</dt>
                   <dd className="font-semibold tabular-nums">
-                    {formatMoneyCents(session.amountCents)}
+                    {formatMoneyCents(link.amountCents)}
                   </dd>
                 </div>
               </dl>
             </div>
           )}
 
-          {/* Payment link URL */}
-          {effectiveStatus === "open" && (
-            <div className="card-pad">
-              <h3 className="text-sm font-semibold text-slate-900 mb-3">
-                Payment link
+          {/* Payments list */}
+          <div className="card overflow-hidden">
+            <div className="px-4 py-3 border-b border-slate-100">
+              <h3 className="text-sm font-semibold text-slate-900">
+                Payments
               </h3>
-              <div className="flex items-center gap-2">
-                <input
-                  readOnly
-                  value={session.url}
-                  className="input flex-1 font-mono text-xs"
-                />
-                <CopyButton value={session.url} />
+            </div>
+            {link.charges.length === 0 ? (
+              <div className="p-8 text-center text-sm text-slate-500">
+                No payments yet. Share the link to start collecting.
               </div>
-              <p className="text-xs text-slate-500 mt-2">
-                Share this link with the customer. It expires in 24 hours and
-                accepts card or bank transfer.
-              </p>
-            </div>
-          )}
+            ) : (
+              <table className="table">
+                <thead>
+                  <tr>
+                    <th>Customer</th>
+                    <th>Amount</th>
+                    <th>Method</th>
+                    <th>Status</th>
+                    <th>Paid</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {link.charges.map((c) => {
+                    const cust = c.customer;
+                    const name =
+                      [cust.firstName, cust.lastName]
+                        .filter(Boolean)
+                        .join(" ") ||
+                      cust.email ||
+                      "Customer";
+                    return (
+                      <tr key={c.id}>
+                        <td>
+                          <Link
+                            href={`/clinic/customers/${cust.id}`}
+                            className="text-brand-600 hover:underline text-sm font-medium"
+                          >
+                            {name}
+                          </Link>
+                          {cust.email && (
+                            <div className="text-xs text-slate-500">
+                              {cust.email}
+                            </div>
+                          )}
+                        </td>
+                        <td className="font-medium tabular-nums">
+                          {formatMoneyCents(c.amountCents)}
+                        </td>
+                        <td className="text-sm text-slate-600">
+                          {c.paymentMethod ? (
+                            <>
+                              {c.paymentMethod.sourceType === "ach"
+                                ? "Bank"
+                                : "Card"}{" "}
+                              •••• {c.paymentMethod.lastDigits ?? "????"}
+                            </>
+                          ) : (
+                            <span className="text-slate-400">—</span>
+                          )}
+                        </td>
+                        <td>
+                          <span
+                            className={
+                              c.status === "paid"
+                                ? "badge-green"
+                                : c.status === "refunded"
+                                  ? "badge-slate"
+                                  : c.status === "failed"
+                                    ? "badge-red"
+                                    : "badge-yellow"
+                            }
+                          >
+                            {c.status}
+                          </span>
+                        </td>
+                        <td className="text-slate-500 text-xs whitespace-nowrap">
+                          {formatDate(c.createdAt)}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            )}
+          </div>
 
-          {/* Transaction details (if completed) */}
-          {relatedCharge && (
-            <div className="card-pad space-y-3">
-              <h3 className="text-sm font-semibold text-slate-900">
-                Transaction
-              </h3>
-              <dl className="space-y-2 text-sm">
-                <div className="flex justify-between">
-                  <dt className="text-slate-500">Amount charged</dt>
-                  <dd className="font-medium">
-                    {formatMoneyCents(relatedCharge.amountCents)}
-                  </dd>
+          {/* Subscriptions list */}
+          {(link.mode === "subscription" || link.mode === "combined") && (
+            <div className="card overflow-hidden">
+              <div className="px-4 py-3 border-b border-slate-100">
+                <h3 className="text-sm font-semibold text-slate-900">
+                  Subscriptions
+                </h3>
+              </div>
+              {link.subscriptions.length === 0 ? (
+                <div className="p-8 text-center text-sm text-slate-500">
+                  No subscriptions yet.
                 </div>
-                <div className="flex justify-between">
-                  <dt className="text-slate-500">Method</dt>
-                  <dd>
-                    {relatedCharge.paymentMethod ? (
-                      <>
-                        {relatedCharge.paymentMethod.sourceType === "ach"
-                          ? "Bank"
-                          : "Card"}{" "}
-                        ••••{" "}
-                        {relatedCharge.paymentMethod.lastDigits ?? "????"}
-                      </>
-                    ) : (
-                      <span className="text-slate-400">—</span>
-                    )}
-                  </dd>
-                </div>
-                <div className="flex justify-between">
-                  <dt className="text-slate-500">Status</dt>
-                  <dd>
-                    <span
-                      className={
-                        relatedCharge.status === "paid"
-                          ? "badge-green"
-                          : relatedCharge.status === "refunded"
-                            ? "badge-slate"
-                            : relatedCharge.status === "failed"
-                              ? "badge-red"
-                              : "badge-yellow"
-                      }
-                    >
-                      {relatedCharge.status}
-                    </span>
-                  </dd>
-                </div>
-                {relatedCharge.fortisTransactionId && (
-                  <div className="flex justify-between">
-                    <dt className="text-slate-500">Fortis ID</dt>
-                    <dd className="font-mono text-xs text-slate-600">
-                      {relatedCharge.fortisTransactionId}
-                    </dd>
-                  </div>
-                )}
-              </dl>
-            </div>
-          )}
-
-          {/* Subscription details */}
-          {relatedSubscription && (
-            <div className="card-pad space-y-3">
-              <h3 className="text-sm font-semibold text-slate-900">
-                Recurring subscription
-              </h3>
-              <dl className="space-y-2 text-sm">
-                <div className="flex justify-between">
-                  <dt className="text-slate-500">Frequency</dt>
-                  <dd className="capitalize">{relatedSubscription.frequency}</dd>
-                </div>
-                <div className="flex justify-between">
-                  <dt className="text-slate-500">Status</dt>
-                  <dd>
-                    <span
-                      className={
-                        relatedSubscription.status === "active"
-                          ? "badge-green"
-                          : "badge-slate"
-                      }
-                    >
-                      {relatedSubscription.status}
-                    </span>
-                  </dd>
-                </div>
-                {relatedSubscription.nextPaymentOn && (
-                  <div className="flex justify-between">
-                    <dt className="text-slate-500">Next charge</dt>
-                    <dd>{formatDate(relatedSubscription.nextPaymentOn)}</dd>
-                  </div>
-                )}
-              </dl>
-              <Link
-                href={`/clinic/customers/${session.customerId}`}
-                className="text-xs text-brand-600 hover:underline"
-              >
-                Manage subscription on customer page →
-              </Link>
+              ) : (
+                <table className="table">
+                  <thead>
+                    <tr>
+                      <th>Customer</th>
+                      <th>Amount</th>
+                      <th>Frequency</th>
+                      <th>Next charge</th>
+                      <th>Status</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {link.subscriptions.map((s) => {
+                      const cust = s.customer;
+                      const name =
+                        [cust.firstName, cust.lastName]
+                          .filter(Boolean)
+                          .join(" ") ||
+                        cust.email ||
+                        "Customer";
+                      return (
+                        <tr key={s.id}>
+                          <td>
+                            <Link
+                              href={`/clinic/customers/${cust.id}`}
+                              className="text-brand-600 hover:underline text-sm font-medium"
+                            >
+                              {name}
+                            </Link>
+                          </td>
+                          <td className="font-medium tabular-nums">
+                            {formatMoneyCents(s.amountCents)}
+                          </td>
+                          <td className="text-sm text-slate-600 capitalize">
+                            {s.frequency}
+                          </td>
+                          <td className="text-sm text-slate-600">
+                            {s.nextPaymentOn ? formatDate(s.nextPaymentOn) : "—"}
+                          </td>
+                          <td>
+                            <span
+                              className={
+                                s.status === "active"
+                                  ? "badge-green"
+                                  : "badge-slate"
+                              }
+                            >
+                              {s.status}
+                            </span>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              )}
             </div>
           )}
         </div>
 
-        {/* Customer sidebar */}
+        {/* Sidebar */}
         <div className="space-y-5">
-          {customer ? (
-            <div className="card-pad">
-              <h3 className="text-sm font-semibold text-slate-900 mb-3">
-                Customer
-              </h3>
-              <div className="space-y-1">
-                <Link
-                  href={`/clinic/customers/${customer.id}`}
-                  className="text-brand-600 hover:underline font-medium text-sm"
-                >
-                  {fullName}
-                </Link>
-                {customer.email && (
-                  <p className="text-sm text-slate-500">{customer.email}</p>
-                )}
-                {customer.phone && (
-                  <p className="text-sm text-slate-500">{customer.phone}</p>
-                )}
-              </div>
-              <div className="mt-4">
-                <Link
-                  href={`/clinic/customers/${customer.id}`}
-                  className="btn-secondary text-xs w-full justify-center"
-                >
-                  View customer →
-                </Link>
-              </div>
-            </div>
-          ) : (
-            <div className="card-pad">
-              <h3 className="text-sm font-semibold text-slate-900 mb-2">
-                Customer
-              </h3>
-              <p className="text-sm text-slate-500">No customer linked.</p>
-            </div>
-          )}
-
-          {/* Token info */}
+          {/* Payment link URL */}
           <div className="card-pad">
-            <h3 className="text-sm font-semibold text-slate-900 mb-2">
-              Reference
+            <h3 className="text-sm font-semibold text-slate-900 mb-3">
+              Shareable link
             </h3>
-            <dl className="space-y-1.5 text-xs">
-              <div>
-                <dt className="text-slate-500">Session token</dt>
-                <dd className="font-mono text-slate-700 break-all">
-                  {session.token}
+            <div className="flex items-center gap-2">
+              <input
+                readOnly
+                value={link.url}
+                className="input flex-1 font-mono text-xs"
+              />
+              <CopyButton value={link.url} />
+            </div>
+            <p className="text-xs text-slate-500 mt-2">
+              Reusable — every customer who pays through this link gets a new
+              profile and a saved card.
+            </p>
+          </div>
+
+          {/* Link details */}
+          <div className="card-pad">
+            <h3 className="text-sm font-semibold text-slate-900 mb-3">
+              Details
+            </h3>
+            <dl className="space-y-2 text-sm">
+              <div className="flex justify-between">
+                <dt className="text-slate-500">Amount</dt>
+                <dd className="font-medium">
+                  {formatMoneyCents(link.amountCents)}
                 </dd>
               </div>
-              <div>
-                <dt className="text-slate-500">LunarPay session ID</dt>
-                <dd className="font-mono text-slate-700">
-                  {session.lunarpaySessionId}
-                </dd>
+              <div className="flex justify-between">
+                <dt className="text-slate-500">Created</dt>
+                <dd className="text-slate-700">{formatDate(link.createdAt)}</dd>
               </div>
             </dl>
           </div>

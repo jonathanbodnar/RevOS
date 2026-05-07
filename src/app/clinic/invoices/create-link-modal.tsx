@@ -5,12 +5,6 @@ import { CopyButton } from "@/components/copy-button";
 
 type Mode = "payment" | "subscription" | "combined";
 
-function todayIso(): string {
-  const d = new Date();
-  const tz = d.getTimezoneOffset() * 60_000;
-  return new Date(d.getTime() - tz).toISOString().slice(0, 10);
-}
-
 export function CreateLinkModal({
   onClose,
   onCreated,
@@ -26,7 +20,10 @@ export function CreateLinkModal({
   // combined mode
   const [setupFee, setSetupFee] = useState("");
   const [subAmount, setSubAmount] = useState("");
-  const [startOn, setStartOn] = useState<string>(todayIso());
+  // Days between the customer's first payment (today, when they submit) and
+  // the first recurring subscription charge. 0 = "starts today, bundled with
+  // the setup fee in today's transaction".
+  const [startAfterDays, setStartAfterDays] = useState<string>("30");
 
   const [frequency, setFrequency] = useState("monthly");
   const [description, setDescription] = useState("");
@@ -50,7 +47,7 @@ export function CreateLinkModal({
       body.setupFee = setupFee || "0";
       body.subscriptionAmount = subAmount;
       body.frequency = frequency;
-      body.startOn = startOn;
+      body.startAfterDays = startAfterDays || "0";
     }
 
     setLoading(true);
@@ -164,7 +161,9 @@ export function CreateLinkModal({
               )}
               {mode === "combined" && (
                 <p className="text-xs text-slate-500 mt-1.5">
-                  Charge a one-time setup fee today, then start a recurring subscription on a date you choose.
+                  Charge a one-time setup fee today, then start a recurring
+                  subscription a fixed number of days after each customer
+                  pays.
                 </p>
               )}
             </div>
@@ -255,19 +254,26 @@ export function CreateLinkModal({
                   </div>
                 </div>
                 <div>
-                  <label className="label">First subscription charge</label>
+                  <label className="label">
+                    First subscription charge (days after payment)
+                  </label>
                   <input
-                    type="date"
+                    type="number"
                     className="input"
                     required
-                    min={todayIso()}
-                    value={startOn}
-                    onChange={(e) => setStartOn(e.target.value)}
+                    min={0}
+                    max={365}
+                    step={1}
+                    placeholder="30"
+                    value={startAfterDays}
+                    onChange={(e) => setStartAfterDays(e.target.value)}
                   />
                   <p className="text-xs text-slate-500 mt-1">
-                    {startOn === todayIso()
-                      ? "Subscription starts today (charged together with the setup fee)."
-                      : "Subscription's first charge will run on this date. Only the setup fee is charged today."}
+                    {Number(startAfterDays || 0) === 0
+                      ? "Subscription starts the day the customer pays (charged together with the setup fee)."
+                      : `First subscription charge will run ${Number(
+                          startAfterDays || 0,
+                        )} day${Number(startAfterDays) === 1 ? "" : "s"} after the customer pays. Only the setup fee is charged that day.`}
                   </p>
                 </div>
               </>

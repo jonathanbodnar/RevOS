@@ -5,22 +5,26 @@ import { lunarpay, LunarPayError } from "@/lib/lunarpay";
 import { logAudit } from "@/lib/audit";
 
 /**
- * Public submit endpoint for a hosted payment link.
+ * Public submit endpoint for a reusable hosted payment link.
  *
  * Steps:
- *  1) Find or create a Customer for this clinic (matched by email).
- *  2) Ensure the customer has a `lunarpayCustomerId` (create one if missing).
+ *  1) Always create a fresh Customer for this clinic. Reusable links are
+ *     intentionally NOT keyed off email — every submission produces a new
+ *     customer profile, even if the email matches an existing one.
+ *  2) Create a LunarPay customer for this fresh record.
  *  3) Save the card via LunarPay (vaults the ticket against the customer).
  *  4) Charge `amountCents` immediately. For combined links, this already
- *     bundles setup fee + (first sub if startOn=today). For "payment" / pure
- *     "subscription" it's just the single amount.
+ *     bundles setup fee + (first sub if startAfterDays=0). For "payment" /
+ *     pure "subscription" it's just the single amount.
  *  5) For subscription / combined links, create the LunarPay subscription
  *     with a startOn that lines up the FIRST recurring charge correctly:
  *       - subscription mode: startOn = today (LP next charge in 1 freq)
  *       - combined w/ startsToday: startOn = today (LP next charge in 1 freq)
- *       - combined w/ future start: startOn = (futureDate - 1 freq) so LP's
- *         first charge runs ON the future date the clinic configured.
- *  6) Mark the CheckoutSession completed and link to the customer.
+ *       - combined w/ N-day delay: desiredFirstCharge = today + N days,
+ *         startOn = (desiredFirstCharge - 1 freq) so LP's first charge
+ *         runs exactly N days from this customer's payment day.
+ *  6) Leave the CheckoutSession open — payment links are reusable, so any
+ *     number of customers can pay through the same token.
  */
 const Body = z.object({
   ticketId: z.string().min(1),
@@ -64,50 +68,43 @@ export async function POST(
     frequency?: Frequency;
     setupFeeCents?: number;
     subscriptionAmountCents?: number;
-    startOn?: string;
+    startAfterDays?: number;
     startsToday?: boolean;
+    // legacy field on links created before the relative-start change
+    startOn?: string;
   };
 
   try {
-    // 1) Find or create the Customer for this clinic.
-    let customer = await prisma.customer.findFirst({
-      where: { clinicId: sess.clinicId, email },
+    // 1) Always create a fresh Customer + LunarPay customer for this submit.
+    //    Reusable links must not collapse repeat submissions (even with the
+    //    same email) into a single customer record.
+    const lpCustomer = await lunarpay.createCustomer({
+      firstName,
+      lastName,
+      email,
+      phone,
     });
 
-    if (!customer) {
-      customer = await prisma.customer.create({
-        data: {
-          clinicId: sess.clinicId,
-          email,
-          firstName,
-          lastName,
-          phone: phone ?? null,
-        },
-      });
-      await logAudit({
-        actorId: null,
-        actorRole: "CUSTOMER",
+    const customer = await prisma.customer.create({
+      data: {
         clinicId: sess.clinicId,
-        action: "customer.create.payment_link",
-        targetType: "Customer",
-        targetId: customer.id,
-        metadata: { email },
-      });
-    }
-
-    // 2) Make sure they have a LunarPay customer id.
-    if (!customer.lunarpayCustomerId) {
-      const lpCustomer = await lunarpay.createCustomer({
+        lunarpayCustomerId: lpCustomer.data.id,
+        email,
         firstName,
         lastName,
-        email,
-        phone,
-      });
-      customer = await prisma.customer.update({
-        where: { id: customer.id },
-        data: { lunarpayCustomerId: lpCustomer.data.id },
-      });
-    }
+        phone: phone ?? null,
+      },
+    });
+    await logAudit({
+      actorId: null,
+      actorRole: "CUSTOMER",
+      clinicId: sess.clinicId,
+      action: "customer.create.payment_link",
+      targetType: "Customer",
+      targetId: customer.id,
+      metadata: { email, paymentLinkId: sess.id },
+    });
+
     const lpCustomerId = customer.lunarpayCustomerId;
     if (!lpCustomerId) {
       return NextResponse.json(
@@ -170,6 +167,7 @@ export async function POST(
           clinicId: sess.clinicId,
           customerId: customer.id,
           paymentMethodId: pm.id,
+          paymentLinkId: sess.id,
           lunarpayChargeId: String(lpCharge.data.id),
           fortisTransactionId: lpCharge.data.fortisTransactionId ?? null,
           amountCents: lpCharge.data.amount,
@@ -194,12 +192,21 @@ export async function POST(
       // Calculate startOn so the FIRST LP charge lands when the clinic wants:
       //   nextPaymentOn = startOn + 1 frequency (per LP)
       //   ⇒ startOn = (desired_first_charge_date - 1 frequency)
-      // For "starts today" cases, we set startOn = today so the next LP charge
-      // happens 1 frequency from now (the first sub charge today was bundled
-      // into the createCharge above).
+      // For "starts today" cases (subscription mode, or combined with
+      // startAfterDays = 0), startOn = today so the next LP charge happens
+      // 1 frequency from now (the first sub charge for today was already
+      // bundled into the createCharge above).
+      // For combined with N-day delay, desiredFirstCharge = today + N days,
+      // and startOn = (desiredFirstCharge - 1 frequency).
       let lpStartOn: string;
-      if (sess.mode === "combined" && meta.startOn && !meta.startsToday) {
-        lpStartOn = subtractOneFrequency(meta.startOn, frequency);
+      if (sess.mode === "combined") {
+        const startAfterDays = resolveStartAfterDays(meta);
+        if (startAfterDays > 0) {
+          const desired = addDaysIso(todayIso(), startAfterDays);
+          lpStartOn = subtractOneFrequency(desired, frequency);
+        } else {
+          lpStartOn = todayIso();
+        }
       } else {
         lpStartOn = todayIso();
       }
@@ -222,6 +229,7 @@ export async function POST(
             clinicId: sess.clinicId,
             customerId: customer.id,
             paymentMethodId: pm.id,
+            paymentLinkId: sess.id,
             lunarpaySubscriptionId: lpSub.data.id,
             amountCents: subAmountCents,
             frequency,
@@ -234,16 +242,8 @@ export async function POST(
       }
     }
 
-    // 6) Mark session completed and link the customer.
-    await prisma.checkoutSession.update({
-      where: { id: sess.id },
-      data: {
-        status: "completed",
-        completedAt: new Date(),
-        customerId: customer.id,
-      },
-    });
-
+    // 6) Reusable link — DO NOT mark the session completed. The link stays
+    //    active so other customers can pay through the same URL.
     await logAudit({
       actorId: null,
       actorRole: "CUSTOMER",
@@ -256,7 +256,10 @@ export async function POST(
           : "combined.complete.payment_link",
       targetType: "CheckoutSession",
       targetId: sess.id,
-      metadata: { amountCents: sess.amountCents },
+      metadata: {
+        amountCents: sess.amountCents,
+        customerId: customer.id,
+      },
     });
 
     return NextResponse.json({ ok: true });
@@ -335,6 +338,38 @@ function addOneFrequency(d: Date, frequency: Frequency): Date {
       out.setMonth(out.getMonth() + 1);
   }
   return out;
+}
+
+function addDaysIso(isoDate: string, days: number): string {
+  // Adds N days to a UTC ISO timestamp, preserving the LP "...Z" format.
+  const d = new Date(
+    isoDate.length === 10 ? `${isoDate}T00:00:00Z` : isoDate,
+  );
+  d.setUTCDate(d.getUTCDate() + days);
+  return d.toISOString().replace(".000Z", "Z");
+}
+
+/**
+ * Backwards-compat: links created before the relative-start change stored an
+ * absolute `startOn` calendar date. For those, treat startAfterDays as the
+ * delta between today and that stored date (clamped to non-negative).
+ */
+function resolveStartAfterDays(meta: {
+  startAfterDays?: number;
+  startsToday?: boolean;
+  startOn?: string;
+}): number {
+  if (typeof meta.startAfterDays === "number") return Math.max(0, meta.startAfterDays);
+  if (meta.startsToday) return 0;
+  if (meta.startOn) {
+    const target = new Date(
+      meta.startOn.length === 10 ? `${meta.startOn}T00:00:00Z` : meta.startOn,
+    );
+    const today = new Date(todayIso());
+    const days = Math.round((target.getTime() - today.getTime()) / (24 * 60 * 60 * 1000));
+    return Math.max(0, days);
+  }
+  return 0;
 }
 
 function safeJson(s: string): unknown {

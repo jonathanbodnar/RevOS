@@ -6,11 +6,10 @@ import { logAudit } from "@/lib/audit";
 /**
  * Delete a payment link.
  *
- * Only links that have NOT been completed are deletable — once a charge has
- * been captured / a subscription created, the underlying records (Charge,
- * Subscription, PaymentMethod) are tied to a real customer and we should
- * not silently drop the trail. The CheckoutSession row is removed entirely;
- * the token URL becomes 404 immediately.
+ * Payment links are reusable templates — deleting one stops accepting new
+ * payments through the URL (the page 404s) but does NOT touch existing
+ * charges, subscriptions, or customers that were created through the link.
+ * Their `paymentLinkId` is set to null via the FK's `onDelete: SetNull`.
  */
 export async function DELETE(
   _req: Request,
@@ -23,16 +22,12 @@ export async function DELETE(
 
   const cs = await prisma.checkoutSession.findFirst({
     where: { id, clinicId },
+    include: {
+      _count: { select: { charges: true, subscriptions: true } },
+    },
   });
   if (!cs) {
     return NextResponse.json({ error: "Payment link not found" }, { status: 404 });
-  }
-
-  if (cs.status === "completed") {
-    return NextResponse.json(
-      { error: "Cannot delete a completed payment link." },
-      { status: 400 },
-    );
   }
 
   await prisma.checkoutSession.delete({ where: { id: cs.id } });
@@ -47,7 +42,8 @@ export async function DELETE(
     metadata: {
       mode: cs.mode,
       amountCents: cs.amountCents,
-      previousStatus: cs.status,
+      chargeCount: cs._count.charges,
+      subscriptionCount: cs._count.subscriptions,
     },
   });
 

@@ -7,20 +7,22 @@ import { logAudit } from "@/lib/audit";
 import { parseMoneyInputToCents } from "@/lib/format";
 
 /**
- * Create a payment link hosted at /pay/[token] on revosportal.com.
+ * Create a reusable payment link hosted at /pay/[token] on revosportal.com.
  *
  * Three link shapes:
- *   - "payment":      one-time charge of `amount`
- *   - "subscription": recurring sub; first charge today, recurs every frequency
- *   - "combined":     setup fee charged today + a subscription that begins on
- *                     `startOn`. If startOn = today, the first sub charge is
- *                     bundled with the setup fee in today's transaction; if
- *                     startOn is in the future, only the setup fee is charged
- *                     today and the first sub charge runs on `startOn`.
+ *   - "payment":      one-time charge of `amount` per customer.
+ *   - "subscription": recurring sub; first charge runs the day the customer
+ *                     pays, then every `frequency` after.
+ *   - "combined":     setup fee charged today (= the day each customer pays)
+ *                     + a subscription whose first charge runs
+ *                     `startAfterDays` days later. Because the link is
+ *                     reusable and shared with many customers, the start
+ *                     date is RELATIVE to each customer's payment day, not
+ *                     a fixed calendar date.
  *
- * `amountCents` on the CheckoutSession always represents what gets charged
- * the day the customer submits the link. Subscription details live in
- * `metadataJson` so we don't need a schema migration.
+ * `amountCents` on the CheckoutSession represents what gets charged the day
+ * a customer submits the link. Subscription details (frequency, sub amount,
+ * setup fee, days-until-first-sub-charge) live in `metadataJson`.
  */
 const Body = z.object({
   mode: z.enum(["payment", "subscription", "combined"]),
@@ -30,14 +32,10 @@ const Body = z.object({
   // combined-mode fields
   setupFee: z.string().optional(),
   subscriptionAmount: z.string().optional(),
-  startOn: z.string().optional(), // YYYY-MM-DD
+  // Number of days after the customer's payment that the first recurring
+  // subscription charge should run. 0 = bundled with today's setup fee.
+  startAfterDays: z.string().optional(),
 });
-
-function todayIso(): string {
-  const d = new Date();
-  const tz = d.getTimezoneOffset() * 60_000;
-  return new Date(d.getTime() - tz).toISOString().slice(0, 10);
-}
 
 export async function POST(req: Request) {
   const guard = await requireClinicApi();
@@ -90,12 +88,7 @@ export async function POST(req: Request) {
         { status: 400 },
       );
     }
-    if (!parsed.data.startOn) {
-      return NextResponse.json(
-        { error: "Start date is required" },
-        { status: 400 },
-      );
-    }
+
     const setupFeeCents = parseMoneyInputToCents(parsed.data.setupFee ?? "0") ?? 0;
     const subCents = parseMoneyInputToCents(parsed.data.subscriptionAmount ?? "");
     if (subCents === null || subCents < 50) {
@@ -105,23 +98,32 @@ export async function POST(req: Request) {
       );
     }
 
-    const today = todayIso();
-    const startsToday = parsed.data.startOn === today;
-
-    if (parsed.data.startOn < today) {
+    const startAfterDaysRaw = parsed.data.startAfterDays ?? "0";
+    const startAfterDays = Number.parseInt(startAfterDaysRaw, 10);
+    if (
+      !Number.isFinite(startAfterDays) ||
+      startAfterDays < 0 ||
+      startAfterDays > 365
+    ) {
       return NextResponse.json(
-        { error: "Start date cannot be in the past" },
+        {
+          error:
+            "First subscription charge must be 0–365 days after the customer pays.",
+        },
         { status: 400 },
       );
     }
 
-    // Today's charge: setup fee + (sub amount if subscription starts today)
+    const startsToday = startAfterDays === 0;
+
+    // What gets charged the day a customer submits the link: setup fee plus
+    // — only when startAfterDays is 0 — the first subscription installment.
     amountCents = setupFeeCents + (startsToday ? subCents : 0);
     if (amountCents < 50) {
       return NextResponse.json(
         {
           error:
-            "Today's charge must be at least $0.50 — add a setup fee or set the start date to today.",
+            "Day-of charge must be at least $0.50 — add a setup fee or set start days to 0.",
         },
         { status: 400 },
       );
@@ -132,7 +134,7 @@ export async function POST(req: Request) {
       frequency: parsed.data.frequency,
       setupFeeCents,
       subscriptionAmountCents: subCents,
-      startOn: parsed.data.startOn,
+      startAfterDays,
       startsToday,
     };
   }

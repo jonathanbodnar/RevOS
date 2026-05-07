@@ -117,6 +117,10 @@ model Charge {
   paymentMethodId      String?
   paymentMethod        PaymentMethod? @relation(fields: [paymentMethodId], references: [id], onDelete: SetNull)
 
+  // Originating reusable payment link (null for charges created in the admin)
+  paymentLinkId        String?
+  paymentLink          CheckoutSession? @relation("PaymentLinkCharges", fields: [paymentLinkId], references: [id], onDelete: SetNull)
+
   // LunarPay charge id (they return a string id, e.g. "789")
   lunarpayChargeId     String   @unique
   fortisTransactionId  String?
@@ -131,6 +135,7 @@ model Charge {
 
   @@index([clinicId])
   @@index([customerId])
+  @@index([paymentLinkId])
 }
 
 model Subscription {
@@ -141,6 +146,10 @@ model Subscription {
   customer           Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
   paymentMethodId    String?
   paymentMethod      PaymentMethod? @relation(fields: [paymentMethodId], references: [id], onDelete: SetNull)
+
+  // Originating reusable payment link (null for subs created in the admin)
+  paymentLinkId      String?
+  paymentLink        CheckoutSession? @relation("PaymentLinkSubscriptions", fields: [paymentLinkId], references: [id], onDelete: SetNull)
 
   lunarpaySubscriptionId Int @unique
   amountCents        Int
@@ -155,6 +164,7 @@ model Subscription {
 
   @@index([clinicId])
   @@index([customerId])
+  @@index([paymentLinkId])
 }
 
 model PaymentSchedule {
@@ -181,7 +191,11 @@ model PaymentSchedule {
   @@index([customerId])
 }
 
-// Public invoice / payment-link (hosted checkout session)
+// Public invoice / payment-link (hosted checkout session).
+// For payment-link modes (payment | subscription | combined), this row is a
+// REUSABLE template: status stays "open" and many customers can pay through
+// the same token. For save-card mode, it remains a one-shot session that
+// flips to "completed" once the customer adds their card.
 model CheckoutSession {
   id                 String   @id @default(cuid())
   clinicId           String
@@ -194,12 +208,16 @@ model CheckoutSession {
   url                String
   amountCents        Int
   description        String?
-  mode               String   // payment | subscription | installments
+  mode               String   // payment | subscription | combined | save_card
   status             String   // open | completed | expired
   metadataJson       String?
 
   createdAt          DateTime @default(now())
   completedAt        DateTime?
+
+  // Reusable links spawn many charges / subscriptions
+  charges            Charge[]       @relation("PaymentLinkCharges")
+  subscriptions      Subscription[] @relation("PaymentLinkSubscriptions")
 
   @@index([clinicId])
 }

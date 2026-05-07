@@ -11,14 +11,6 @@ function formatMoney(cents: number) {
   }).format(cents / 100);
 }
 
-function formatDate(iso: string): string {
-  return new Date(`${iso}T00:00:00`).toLocaleDateString("en-US", {
-    month: "long",
-    day: "numeric",
-    year: "numeric",
-  });
-}
-
 function frequencyLabel(freq: string | null): string | null {
   if (!freq) return null;
   switch (freq) {
@@ -39,9 +31,26 @@ type Meta = {
   frequency?: string;
   setupFeeCents?: number;
   subscriptionAmountCents?: number;
-  startOn?: string;
+  startAfterDays?: number;
   startsToday?: boolean;
+  // legacy (pre-relative-start) field, still readable on old links
+  startOn?: string;
 };
+
+function resolveStartAfterDays(meta: Meta): number {
+  if (typeof meta.startAfterDays === "number") return Math.max(0, meta.startAfterDays);
+  if (meta.startsToday) return 0;
+  if (meta.startOn) {
+    const target = new Date(`${meta.startOn}T00:00:00`);
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    return Math.max(
+      0,
+      Math.round((target.getTime() - today.getTime()) / (24 * 60 * 60 * 1000)),
+    );
+  }
+  return 0;
+}
 
 export default async function PayPage({
   params,
@@ -78,21 +87,7 @@ export default async function PayPage({
         </div>
 
         <div className="card-pad">
-          {session.status === "completed" ? (
-            <div className="text-center py-6">
-              <div className="inline-flex h-12 w-12 items-center justify-center rounded-full bg-emerald-100 text-emerald-700 mb-3">
-                <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                </svg>
-              </div>
-              <h2 className="text-lg font-semibold text-slate-900 mb-1">
-                Payment received
-              </h2>
-              <p className="text-sm text-slate-500">
-                Thanks! You can close this window.
-              </p>
-            </div>
-          ) : session.status === "expired" ? (
+          {session.status === "expired" ? (
             <div className="text-sm text-amber-800 bg-amber-50 border border-amber-100 rounded-md p-3 text-center">
               This payment link has expired. Please contact the clinic for a
               new one.
@@ -180,8 +175,8 @@ function CombinedSummary({
 }) {
   const setup = meta.setupFeeCents ?? 0;
   const subAmount = meta.subscriptionAmountCents ?? 0;
-  const startsToday = !!meta.startsToday;
-  const startOn = meta.startOn ?? null;
+  const startAfterDays = resolveStartAfterDays(meta);
+  const startsToday = startAfterDays === 0;
   const subTitle = frequencyLabel(meta.frequency ?? null);
 
   return (
@@ -217,10 +212,12 @@ function CombinedSummary({
             {subTitle ? ` / ${subTitle.replace("every ", "")}` : ""}
           </span>
         </li>
-        {!startsToday && startOn && (
+        {!startsToday && (
           <li className="flex justify-between text-slate-500 text-xs">
             <span>First subscription charge</span>
-            <span>{formatDate(startOn)}</span>
+            <span>
+              in {startAfterDays} day{startAfterDays === 1 ? "" : "s"}
+            </span>
           </li>
         )}
       </ul>
