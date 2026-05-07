@@ -37,15 +37,24 @@ export default async function SaveCardPage({
         </div>
         <div className="card-pad">
           {session.status === "completed" ? (
-            <div className="text-sm text-emerald-700 bg-emerald-50 border border-emerald-100 rounded-md p-3">
-              Your payment method is saved. You can close this window.
+            <div className="text-center py-6">
+              <div className="inline-flex h-12 w-12 items-center justify-center rounded-full bg-emerald-100 text-emerald-700 mb-3">
+                <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                </svg>
+              </div>
+              <p className="text-sm font-medium text-slate-900">Card saved successfully</p>
+              <p className="text-xs text-slate-500 mt-1">You can close this window.</p>
             </div>
           ) : (
             <SaveCardClient token={token} />
           )}
-          <p className="text-[11px] text-slate-400 mt-4 text-center">
-            Card data is sent directly to Fortis (PCI-compliant).
-          </p>
+          <div className="flex items-center justify-center gap-1.5 mt-4 text-[11px] text-slate-400">
+            <svg className="w-3 h-3" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+            </svg>
+            <span>Secured by LunarPay • SSL Encryption</span>
+          </div>
         </div>
       </div>
     </div>

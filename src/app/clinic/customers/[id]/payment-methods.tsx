@@ -19,30 +19,65 @@ type MethodView = {
 export function PaymentMethods({
   customerId,
   methods,
+  existingUpdateCardUrl,
 }: {
   customerId: string;
   methods: MethodView[];
+  existingUpdateCardUrl: string | null;
 }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
   const [adding, setAdding] = useState(false);
-  const [linkUrl, setLinkUrl] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
 
-  async function createAddCardLink() {
-    setError(null);
-    setLinkUrl(null);
+  // Update-card link state
+  const [updateCardUrl, setUpdateCardUrl] = useState<string | null>(
+    existingUpdateCardUrl,
+  );
+  const [linkLoading, setLinkLoading] = useState(false);
+  const [linkError, setLinkError] = useState<string | null>(null);
+
+  async function getOrCreateLink() {
+    setLinkError(null);
+    setLinkLoading(true);
     const res = await fetch(
       `/api/clinic/customers/${customerId}/save-card-link`,
       { method: "POST" },
     );
+    setLinkLoading(false);
     if (!res.ok) {
       const d = (await res.json().catch(() => ({}))) as { error?: string };
-      setError(d.error || "Failed to create link.");
+      setLinkError(d.error || "Failed to create link.");
       return;
     }
     const d = (await res.json()) as { url: string };
-    setLinkUrl(d.url);
+    setUpdateCardUrl(d.url);
+  }
+
+  async function rotateLink() {
+    if (
+      !confirm(
+        "Generate a new update-card link? The previous link will stop working.",
+      )
+    )
+      return;
+    setLinkLoading(true);
+    setLinkError(null);
+    // DELETE invalidates the existing open link, then POST mints a fresh one.
+    await fetch(`/api/clinic/customers/${customerId}/save-card-link`, {
+      method: "DELETE",
+    });
+    const res = await fetch(
+      `/api/clinic/customers/${customerId}/save-card-link`,
+      { method: "POST" },
+    );
+    setLinkLoading(false);
+    if (!res.ok) {
+      const d = (await res.json().catch(() => ({}))) as { error?: string };
+      setLinkError(d.error || "Failed to regenerate link.");
+      return;
+    }
+    const d = (await res.json()) as { url: string };
+    setUpdateCardUrl(d.url);
   }
 
   async function remove(pmId: string) {
@@ -65,39 +100,21 @@ export function PaymentMethods({
           Payment methods
         </h3>
         <div className="flex gap-2">
-          <button className="btn-secondary" onClick={createAddCardLink}>
-            Send link to customer
-          </button>
-          <button className="btn-primary" onClick={() => setAdding(true)}>
-            Add card
+          <button
+            className="btn-primary"
+            onClick={() => setAdding(true)}
+          >
+            + Add card
           </button>
         </div>
       </div>
-
-      {error && (
-        <div className="text-sm text-red-600 bg-red-50 border border-red-100 rounded-md px-3 py-2 mb-3">
-          {error}
-        </div>
-      )}
-
-      {linkUrl && (
-        <div className="mb-3 rounded-md bg-brand-50 border border-brand-100 p-3 text-sm">
-          <div className="text-xs text-slate-500 mb-1">
-            Share this link with the customer to add their payment info:
-          </div>
-          <div className="flex items-center gap-2">
-            <input readOnly value={linkUrl} className="input flex-1 font-mono text-xs" />
-            <CopyButton value={linkUrl} />
-          </div>
-        </div>
-      )}
 
       {methods.length === 0 ? (
         <div className="text-sm text-slate-500 text-center py-6">
           No payment methods on file.
         </div>
       ) : (
-        <ul className="divide-y divide-slate-100">
+        <ul className="divide-y divide-slate-100 mb-4">
           {methods.map((m) => (
             <li
               key={m.id}
@@ -113,11 +130,13 @@ export function PaymentMethods({
                 </div>
                 <div className="text-xs text-slate-500">
                   {m.nameHolder || "—"}
-                  {m.expMonth && m.expYear ? ` · exp ${m.expMonth}/${m.expYear}` : ""}
+                  {m.expMonth && m.expYear
+                    ? ` · exp ${m.expMonth}/${m.expYear}`
+                    : ""}
                 </div>
               </div>
               <button
-                className="btn-ghost text-red-600 hover:bg-red-50"
+                className="btn-ghost text-red-600 hover:bg-red-50 text-xs"
                 disabled={pending}
                 onClick={() => remove(m.id)}
               >
@@ -127,6 +146,55 @@ export function PaymentMethods({
           ))}
         </ul>
       )}
+
+      {/* Update-card link section */}
+      <div className="border-t border-slate-100 pt-4">
+        <div className="flex items-center justify-between mb-2">
+          <div>
+            <p className="text-xs font-semibold text-slate-700">
+              Update card link
+            </p>
+            <p className="text-xs text-slate-500">
+              Send this to the customer so they can securely add a new card on
+              file.
+            </p>
+          </div>
+          {updateCardUrl ? (
+            <button
+              className="btn-ghost text-xs px-2 py-1"
+              onClick={rotateLink}
+              disabled={linkLoading}
+            >
+              Regenerate
+            </button>
+          ) : (
+            <button
+              className="btn-secondary text-xs"
+              onClick={getOrCreateLink}
+              disabled={linkLoading}
+            >
+              {linkLoading ? "Generating…" : "Generate link"}
+            </button>
+          )}
+        </div>
+
+        {linkError && (
+          <div className="text-xs text-red-600 bg-red-50 border border-red-100 rounded px-3 py-2 mb-2">
+            {linkError}
+          </div>
+        )}
+
+        {updateCardUrl && (
+          <div className="flex items-center gap-2 rounded-md bg-slate-50 border border-slate-200 px-3 py-2">
+            <input
+              readOnly
+              value={updateCardUrl}
+              className="flex-1 bg-transparent font-mono text-xs text-slate-700 outline-none truncate"
+            />
+            <CopyButton value={updateCardUrl} />
+          </div>
+        )}
+      </div>
 
       {adding && (
         <AddCardModal

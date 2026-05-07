@@ -32,6 +32,19 @@ export default async function CustomerDetailPage({
   });
   if (!customer) notFound();
 
+  // Customer-specific update-card link, if one already exists. The
+  // PaymentMethods component lazy-mints one on demand if not.
+  const existingUpdateCardLink = await prisma.checkoutSession.findFirst({
+    where: {
+      clinicId,
+      customerId: customer.id,
+      mode: "save_card",
+      status: "open",
+    },
+    orderBy: { createdAt: "desc" },
+    select: { url: true },
+  });
+
   const fullName =
     [customer.firstName, customer.lastName].filter(Boolean).join(" ") ||
     customer.email ||
@@ -69,6 +82,7 @@ export default async function CustomerDetailPage({
         <div className="lg:col-span-2 space-y-6">
           <PaymentMethods
             customerId={customer.id}
+            existingUpdateCardUrl={existingUpdateCardLink?.url ?? null}
             methods={customer.paymentMethods.map((m) => ({
               id: m.id,
               lunarpayPaymentMethodId: m.lunarpayPaymentMethodId,
