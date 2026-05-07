@@ -9,7 +9,8 @@ const Body = z.object({
 
 export async function POST(req: Request) {
   const session = await getSession();
-  if (!session?.user?.clinicId) {
+  const clinicId = session?.user?.effectiveClinicId;
+  if (!clinicId) {
     return NextResponse.json({ error: "No clinic context" }, { status: 400 });
   }
 
@@ -19,7 +20,7 @@ export async function POST(req: Request) {
   }
 
   const clinic = await prisma.clinic.update({
-    where: { id: session.user.clinicId },
+    where: { id: clinicId },
     data: { logoUrl: parsed.data.logo },
     select: { id: true, logoUrl: true },
   });
@@ -29,12 +30,13 @@ export async function POST(req: Request) {
 
 export async function DELETE() {
   const session = await getSession();
-  if (!session?.user?.clinicId) {
+  const clinicId = session?.user?.effectiveClinicId;
+  if (!clinicId) {
     return NextResponse.json({ error: "No clinic context" }, { status: 400 });
   }
 
   const clinic = await prisma.clinic.update({
-    where: { id: session.user.clinicId },
+    where: { id: clinicId },
     data: { logoUrl: null },
     select: { id: true, logoUrl: true },
   });

@@ -9,7 +9,8 @@ const UpdateBody = z.object({
 
 export async function PATCH(req: Request) {
   const session = await getSession();
-  if (!session?.user?.clinicId) {
+  const clinicId = session?.user?.effectiveClinicId;
+  if (!clinicId) {
     return NextResponse.json({ error: "No clinic context" }, { status: 400 });
   }
 
@@ -19,7 +20,7 @@ export async function PATCH(req: Request) {
   }
 
   const clinic = await prisma.clinic.update({
-    where: { id: session.user.clinicId },
+    where: { id: clinicId },
     data: { name: parsed.data.name },
     select: { id: true, name: true, logoUrl: true },
   });
