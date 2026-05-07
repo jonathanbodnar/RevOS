@@ -66,6 +66,24 @@ export function PaymentLinksClient({
   const [tab, setTab] = useState<Tab>("all");
   const [search, setSearch] = useState("");
   const [creating, setCreating] = useState(false);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+
+  async function deleteLink(id: string) {
+    if (!confirm("Delete this payment link? The URL will stop working immediately.")) {
+      return;
+    }
+    setDeletingId(id);
+    const res = await fetch(`/api/clinic/payment-links/${id}`, {
+      method: "DELETE",
+    });
+    setDeletingId(null);
+    if (!res.ok) {
+      const d = (await res.json().catch(() => ({}))) as { error?: string };
+      alert(d.error || "Failed to delete payment link.");
+      return;
+    }
+    router.refresh();
+  }
 
   const counts: Record<Tab, number> = {
     all: sessions.length,
@@ -238,6 +256,29 @@ export function PaymentLinksClient({
                     >
                       View →
                     </Link>
+                    {s.status !== "completed" && (
+                      <button
+                        type="button"
+                        onClick={() => deleteLink(s.id)}
+                        disabled={deletingId === s.id}
+                        title="Delete link"
+                        className="text-slate-400 hover:text-red-600 disabled:opacity-40 p-1"
+                      >
+                        <svg
+                          className="w-3.5 h-3.5"
+                          fill="none"
+                          stroke="currentColor"
+                          viewBox="0 0 24 24"
+                        >
+                          <path
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            strokeWidth={2}
+                            d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6M1 7h22M9 7V4a1 1 0 011-1h4a1 1 0 011 1v3"
+                          />
+                        </svg>
+                      </button>
+                    )}
                   </div>
                 </td>
               </tr>

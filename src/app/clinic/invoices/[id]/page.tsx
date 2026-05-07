@@ -4,6 +4,7 @@ import { requireClinicContext } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
 import { formatMoneyCents, formatDate } from "@/lib/format";
 import { CopyButton } from "@/components/copy-button";
+import { DeletePaymentLinkButton } from "./delete-button";
 
 const MODE_LABELS: Record<string, string> = {
   payment: "One-time payment",
@@ -91,7 +92,7 @@ export default async function InvoiceDetailPage({
       </div>
 
       {/* Header */}
-      <div className="flex items-start justify-between">
+      <div className="flex items-start justify-between gap-4">
         <div>
           <div className="flex items-center gap-2 mb-1">
             <span
@@ -118,6 +119,9 @@ export default async function InvoiceDetailPage({
             <p className="text-sm text-slate-500 mt-0.5">{session.description}</p>
           )}
         </div>
+        {session.status !== "completed" && (
+          <DeletePaymentLinkButton id={session.id} />
+        )}
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
