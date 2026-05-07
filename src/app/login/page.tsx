@@ -1,3 +1,4 @@
+import Image from "next/image";
 import { getSession } from "@/lib/session";
 import { redirect } from "next/navigation";
 import { LoginForm } from "./login-form";
@@ -9,20 +10,35 @@ export default async function LoginPage() {
     redirect("/clinic");
   }
   return (
-    <div className="min-h-screen flex items-center justify-center p-6">
+    <div className="min-h-screen flex items-center justify-center p-6 bg-surface-base">
       <div className="w-full max-w-sm">
-        <div className="text-center mb-8">
-          <div className="inline-flex h-12 w-12 items-center justify-center rounded-xl bg-brand-600 text-white font-bold text-lg mb-3">
-            R
-          </div>
-          <h1 className="text-2xl font-semibold text-slate-900">RevOS</h1>
-          <p className="text-sm text-slate-500 mt-1">
-            Sign in to your account
-          </p>
+        <div className="text-center mb-7">
+          <Image
+            src="/logogrey.png"
+            alt="RevOS"
+            width={140}
+            height={42}
+            className="object-contain h-10 w-auto mx-auto"
+            priority
+          />
         </div>
+
         <div className="card-pad">
+          <div className="text-center mb-6">
+            <h1 className="text-lg font-semibold text-ink">
+              Sign in to your account
+            </h1>
+            <p className="text-sm text-ink-muted mt-1">
+              Manage clinics, customers, and payments.
+            </p>
+          </div>
+
           <LoginForm />
         </div>
+
+        <p className="text-center text-[11px] text-ink-subtle mt-6">
+          Privacy Policy · Terms of Use
+        </p>
       </div>
     </div>
   );

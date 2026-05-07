@@ -22,12 +22,12 @@ export default async function ClinicLayout({
           : "Clinic workspace"
       }
       nav={[
-        { href: "/clinic", label: "Overview" },
-        { href: "/clinic/customers", label: "Customers" },
-        { href: "/clinic/charges", label: "Transactions" },
-        { href: "/clinic/subscriptions", label: "Subscriptions" },
-        { href: "/clinic/invoices", label: "Payment links" },
-        { href: "/clinic/team", label: "Team" },
+        { href: "/clinic", label: "Overview", icon: "home" },
+        { href: "/clinic/customers", label: "Customers", icon: "users" },
+        { href: "/clinic/charges", label: "Transactions", icon: "receipt" },
+        { href: "/clinic/subscriptions", label: "Subscriptions", icon: "refresh" },
+        { href: "/clinic/invoices", label: "Payment links", icon: "link" },
+        { href: "/clinic/team", label: "Team", icon: "user" },
       ]}
       session={session}
       clinicName={clinic?.name}

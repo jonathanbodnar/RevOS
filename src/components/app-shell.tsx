@@ -1,8 +1,6 @@
 import Image from "next/image";
-import Link from "next/link";
 import { SignOutButton } from "./sign-out";
-
-type NavItem = { href: string; label: string };
+import { SidebarNav, type SidebarNavItem } from "./sidebar-nav";
 
 export function AppShell({
   title,
@@ -12,10 +10,11 @@ export function AppShell({
   children,
   session,
   clinicName,
+  headerAction,
 }: {
   title: string;
   subtitle?: string;
-  nav: NavItem[];
+  nav: SidebarNavItem[];
   banner?: React.ReactNode;
   children: React.ReactNode;
   session: {
@@ -26,52 +25,78 @@ export function AppShell({
     };
   };
   clinicName?: string;
+  headerAction?: React.ReactNode;
 }) {
+  const initials = (session.user.name || session.user.email || "?")
+    .split(/[\s@.]+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((s) => s[0]?.toUpperCase() ?? "")
+    .join("") || "?";
+
   return (
-    <div className="min-h-screen flex">
-      <aside className="w-64 shrink-0 bg-white border-r border-slate-200 flex flex-col">
-        <div className="flex flex-col items-center px-5 pt-5 pb-4 border-b border-slate-100 gap-1">
+    <div className="min-h-screen flex bg-surface-base">
+      <aside className="w-64 shrink-0 bg-white border-r border-line flex flex-col">
+        {/* Logo + clinic name */}
+        <div className="flex flex-col items-center px-5 pt-7 pb-5 gap-1.5">
           <Image
             src="/logogrey.png"
             alt="RevOS"
             width={120}
             height={40}
-            className="object-contain"
+            className="object-contain h-9 w-auto"
             priority
           />
-          {clinicName && (
-            <div className="text-xs text-slate-500 font-medium text-center leading-tight mt-1">
+          {clinicName ? (
+            <div className="text-[11px] text-ink-subtle font-medium tracking-wide text-center mt-0.5">
               {clinicName}
+            </div>
+          ) : (
+            <div className="text-[11px] text-ink-subtle font-medium tracking-wide text-center mt-0.5">
+              {session.user.originalRole === "SUPER_ADMIN"
+                ? "Super Admin"
+                : "Clinic"}
             </div>
           )}
         </div>
-        <nav className="p-3 space-y-0.5 flex-1">
-          {nav.map((item) => (
-            <Link
-              key={item.href}
-              href={item.href}
-              className="block rounded-md px-3 py-2 text-sm text-slate-700 hover:bg-slate-100"
-            >
-              {item.label}
-            </Link>
-          ))}
-        </nav>
-        <div className="p-3 border-t border-slate-100 text-xs text-slate-500">
-          <div className="truncate mb-2">{session.user.email}</div>
+
+        <div className="h-px bg-line mx-3 mb-3" />
+
+        <SidebarNav items={nav} />
+
+        {/* Footer: user info + sign out */}
+        <div className="border-t border-line p-3 mt-2">
+          <div className="flex items-center gap-2.5 px-2 py-2 mb-1.5">
+            <div className="h-8 w-8 shrink-0 rounded-full bg-brand-900 text-white grid place-items-center text-xs font-semibold">
+              {initials}
+            </div>
+            <div className="min-w-0">
+              <div className="text-xs font-medium text-ink truncate">
+                {session.user.name || session.user.email.split("@")[0]}
+              </div>
+              <div className="text-[11px] text-ink-subtle truncate">
+                {session.user.email}
+              </div>
+            </div>
+          </div>
           <SignOutButton />
         </div>
       </aside>
-      <main className="flex-1 min-w-0">
+
+      <main className="flex-1 min-w-0 flex flex-col">
         {banner}
-        <header className="h-16 flex items-center px-8 border-b border-slate-100 bg-white">
+        <header className="flex items-center justify-between px-10 py-6 bg-surface-base">
           <div>
-            <h1 className="text-lg font-semibold text-slate-900">{title}</h1>
+            <h1 className="text-2xl font-semibold text-ink tracking-tight">
+              {title}
+            </h1>
             {subtitle && (
-              <p className="text-xs text-slate-500">{subtitle}</p>
+              <p className="text-sm text-ink-muted mt-1">{subtitle}</p>
             )}
           </div>
+          {headerAction && <div>{headerAction}</div>}
         </header>
-        <div className="p-8">{children}</div>
+        <div className="flex-1 px-10 pb-12">{children}</div>
       </main>
     </div>
   );
