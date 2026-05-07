@@ -210,7 +210,7 @@ export default async function CustomerDetailPage({
                       {formatDate(s.nextPaymentOn)}
                     </td>
                     <td className="text-right pr-3">
-                      {s.status === "active" && (
+                      {s.status === "active" && canPerformSensitiveActions && (
                         <CancelSubscriptionButton subscriptionId={s.id} />
                       )}
                     </td>

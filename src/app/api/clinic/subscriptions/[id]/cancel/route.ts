@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { requireClinicApi } from "@/lib/api-guard";
+import { requireSuperAdminClinicApi } from "@/lib/api-guard";
 import { lunarpay, LunarPayError } from "@/lib/lunarpay";
 import { logAudit } from "@/lib/audit";
 
@@ -8,7 +8,7 @@ export async function POST(
   _req: Request,
   ctx: { params: Promise<{ id: string }> },
 ) {
-  const guard = await requireClinicApi();
+  const guard = await requireSuperAdminClinicApi();
   if ("error" in guard) return guard.error;
   const { session, clinicId } = guard;
   const { id } = await ctx.params;
