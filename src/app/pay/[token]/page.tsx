@@ -35,6 +35,7 @@ type Meta = {
   subscriptionAmountCents?: number;
   startAfterDays?: number;
   startsToday?: boolean;
+  trial?: boolean;
   // legacy (pre-relative-start) field, still readable on old links
   startOn?: string;
 };
@@ -134,22 +135,45 @@ export default async function PayPage({
 
                 {session.mode === "subscription" && (
                   <>
-                    <p className="text-xs font-medium text-slate-500 uppercase tracking-wide mb-1">
-                      Subscription
-                    </p>
-                    <p className="text-3xl font-semibold text-slate-900 tabular-nums">
-                      {formatMoney(session.amountCents)}
-                      {subTitle && (
-                        <span className="text-base font-normal text-slate-500">
-                          {" "}
-                          / {subTitle}
-                        </span>
-                      )}
-                    </p>
-                    <p className="text-xs text-slate-500 mt-3">
-                      The first charge runs today. Future charges run
-                      automatically {subTitle}.
-                    </p>
+                    {meta.trial ? (
+                      <>
+                        <p className="text-xs font-medium text-slate-500 uppercase tracking-wide mb-1">
+                          Trial subscription
+                        </p>
+                        <p className="text-3xl font-semibold text-slate-900 tabular-nums">
+                          {formatMoney(meta.subscriptionAmountCents ?? session.amountCents)}
+                          {subTitle && (
+                            <span className="text-base font-normal text-slate-500">
+                              {" "}
+                              / {subTitle}
+                            </span>
+                          )}
+                        </p>
+                        <p className="text-xs text-slate-500 mt-3">
+                          No charge today — your card will be saved securely.
+                          The first payment runs on the next billing cycle.
+                        </p>
+                      </>
+                    ) : (
+                      <>
+                        <p className="text-xs font-medium text-slate-500 uppercase tracking-wide mb-1">
+                          Subscription
+                        </p>
+                        <p className="text-3xl font-semibold text-slate-900 tabular-nums">
+                          {formatMoney(session.amountCents)}
+                          {subTitle && (
+                            <span className="text-base font-normal text-slate-500">
+                              {" "}
+                              / {subTitle}
+                            </span>
+                          )}
+                        </p>
+                        <p className="text-xs text-slate-500 mt-3">
+                          The first charge runs today. Future charges run
+                          automatically {subTitle}.
+                        </p>
+                      </>
+                    )}
                   </>
                 )}
 

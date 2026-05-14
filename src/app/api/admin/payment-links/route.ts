@@ -14,6 +14,7 @@ const Body = z.object({
   setupFee: z.string().optional(),
   subscriptionAmount: z.string().optional(),
   startAfterDays: z.string().optional(),
+  trial: z.string().optional(),
 });
 
 export async function GET() {
@@ -74,8 +75,15 @@ export async function POST(req: Request) {
         { status: 400 },
       );
     }
-    amountCents = cents;
+    const isTrial = parsed.data.trial === "true";
     metadata.frequency = parsed.data.frequency;
+    metadata.trial = isTrial;
+    metadata.subscriptionAmountCents = cents;
+    if (isTrial) {
+      amountCents = 0;
+    } else {
+      amountCents = cents;
+    }
   } else {
     if (!parsed.data.frequency) {
       return NextResponse.json(

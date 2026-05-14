@@ -170,6 +170,12 @@ export function PaymentLinksClient({
                     <span className={MODE_COLORS[l.mode] ?? "badge-slate"}>
                       {MODE_LABELS[l.mode] ?? l.mode}
                     </span>
+                    {(() => {
+                      const meta = l.metadataJson ? (JSON.parse(l.metadataJson) as Record<string, unknown>) : {};
+                      return meta.trial ? (
+                        <span className="ml-2 badge-slate text-xs">Trial</span>
+                      ) : null;
+                    })()}
                     {l.isGlobal && (
                       <span className="ml-2 badge-slate text-xs">Global</span>
                     )}

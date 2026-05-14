@@ -79,6 +79,7 @@ export async function POST(
     subscriptionAmountCents?: number;
     startAfterDays?: number;
     startsToday?: boolean;
+    trial?: boolean;
     // legacy field on links created before the relative-start change
     startOn?: string;
   };
@@ -156,15 +157,15 @@ export async function POST(
       },
     });
 
-    // 4) Charge the today total. Combined mode's `amountCents` already
-    //    bundles setup fee + (sub if starting today); payment / subscription
-    //    modes use their single amount.
     const clinicLabel = sess.clinic?.name ?? "RevOS";
     const description = sess.description
       ? `[${clinicLabel}] ${sess.description}`
       : `[${clinicLabel}]`;
 
-    if (sess.amountCents > 0) {
+    // 4) Charge the today total — skipped entirely for trial subscriptions.
+    //    Combined mode's `amountCents` already bundles setup fee + (sub if
+    //    starting today); payment / subscription modes use their single amount.
+    if (!meta.trial && sess.amountCents > 0) {
       const lpCharge = await lunarpay.createCharge({
         customerId: lpCustomerId,
         paymentMethodId: lpPm.data.id,
@@ -194,9 +195,13 @@ export async function POST(
 
       // Subscription amount: meta value for combined links; falls back to the
       // session amount for legacy "subscription" links.
+      // For trial links the real subscription amount lives in meta since
+      // sess.amountCents is 0 (nothing charged day-of).
       const subAmountCents =
         sess.mode === "combined"
           ? meta.subscriptionAmountCents ?? 0
+          : meta.trial
+          ? meta.subscriptionAmountCents ?? sess.amountCents
           : sess.amountCents;
 
       // Calculate startOn so the FIRST LP charge lands when the clinic wants:
@@ -228,6 +233,7 @@ export async function POST(
           amount: subAmountCents,
           frequency,
           startOn: lpStartOn,
+          trial: !!meta.trial,
         });
 
         const nextPaymentOn = lpSub.data.nextPaymentOn
@@ -259,7 +265,9 @@ export async function POST(
       actorRole: "CUSTOMER",
       clinicId: resolvedClinicId,
       action:
-        sess.mode === "payment"
+        meta.trial
+          ? "trial_subscription.complete.payment_link"
+          : sess.mode === "payment"
           ? "charge.complete.payment_link"
           : sess.mode === "subscription"
           ? "subscription.complete.payment_link"

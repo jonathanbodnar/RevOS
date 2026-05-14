@@ -27,6 +27,7 @@ export function CreateLinkModal({
   // the setup fee in today's transaction".
   const [startAfterDays, setStartAfterDays] = useState<string>("30");
 
+  const [trial, setTrial] = useState(false);
   const [frequency, setFrequency] = useState("monthly");
   const [description, setDescription] = useState("");
   const [loading, setLoading] = useState(false);
@@ -45,6 +46,7 @@ export function CreateLinkModal({
     } else if (mode === "subscription") {
       body.amount = amount;
       body.frequency = frequency;
+      if (trial) body.trial = "true";
     } else {
       body.setupFee = setupFee || "0";
       body.subscriptionAmount = subAmount;
@@ -186,32 +188,62 @@ export function CreateLinkModal({
             )}
 
             {mode === "subscription" && (
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="label">Amount (USD)</label>
-                  <input
-                    className="input"
-                    required
-                    inputMode="decimal"
-                    placeholder="99.00"
-                    value={amount}
-                    onChange={(e) => setAmount(e.target.value)}
-                  />
+              <>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="label">Amount (USD)</label>
+                    <input
+                      className="input"
+                      required
+                      inputMode="decimal"
+                      placeholder="99.00"
+                      value={amount}
+                      onChange={(e) => setAmount(e.target.value)}
+                    />
+                  </div>
+                  <div>
+                    <label className="label">Frequency</label>
+                    <select
+                      className="input"
+                      value={frequency}
+                      onChange={(e) => setFrequency(e.target.value)}
+                    >
+                      <option value="weekly">Weekly</option>
+                      <option value="monthly">Monthly</option>
+                      <option value="quarterly">Quarterly</option>
+                      <option value="yearly">Yearly</option>
+                    </select>
+                  </div>
                 </div>
-                <div>
-                  <label className="label">Frequency</label>
-                  <select
-                    className="input"
-                    value={frequency}
-                    onChange={(e) => setFrequency(e.target.value)}
+                <label className="flex items-center gap-2.5 cursor-pointer select-none group">
+                  <span
+                    className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors ${
+                      trial ? "bg-brand-600" : "bg-slate-200"
+                    }`}
+                    onClick={() => setTrial(!trial)}
                   >
-                    <option value="weekly">Weekly</option>
-                    <option value="monthly">Monthly</option>
-                    <option value="quarterly">Quarterly</option>
-                    <option value="yearly">Yearly</option>
-                  </select>
-                </div>
-              </div>
+                    <span
+                      className={`inline-block h-3.5 w-3.5 rounded-full bg-white shadow-sm transition-transform ${
+                        trial ? "translate-x-[18px]" : "translate-x-[3px]"
+                      }`}
+                    />
+                  </span>
+                  <input
+                    type="checkbox"
+                    checked={trial}
+                    onChange={() => setTrial(!trial)}
+                    className="sr-only"
+                  />
+                  <div>
+                    <span className="text-sm text-slate-700 font-medium">
+                      Free trial — no charge today
+                    </span>
+                    <p className="text-xs text-slate-500 mt-0.5">
+                      Card is saved but not charged. The first recurring payment runs on the next billing cycle.
+                    </p>
+                  </div>
+                </label>
+              </>
             )}
 
             {mode === "combined" && (

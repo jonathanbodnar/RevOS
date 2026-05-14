@@ -35,6 +35,9 @@ const Body = z.object({
   // Number of days after the customer's payment that the first recurring
   // subscription charge should run. 0 = bundled with today's setup fee.
   startAfterDays: z.string().optional(),
+  // When true, the card is saved but no charge is made on day-of. The
+  // subscription starts without an initial payment.
+  trial: z.string().optional(),
 });
 
 export async function POST(req: Request) {
@@ -78,8 +81,17 @@ export async function POST(req: Request) {
         { status: 400 },
       );
     }
-    amountCents = cents;
+    const isTrial = parsed.data.trial === "true";
     metadata.frequency = parsed.data.frequency;
+    metadata.trial = isTrial;
+    metadata.subscriptionAmountCents = cents;
+    if (isTrial) {
+      // Trial: no day-of charge. The card is saved, subscription created
+      // without an initial payment.
+      amountCents = 0;
+    } else {
+      amountCents = cents;
+    }
   } else {
     // combined
     if (!parsed.data.frequency) {

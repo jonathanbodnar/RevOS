@@ -234,6 +234,7 @@ export const lunarpay = {
     amount: number;
     frequency: "weekly" | "monthly" | "quarterly" | "yearly";
     startOn?: string;
+    trial?: boolean;
   }) {
     return request<{ data: LPSubscription }>(
       "POST",
@@ -303,6 +304,7 @@ export const lunarpay = {
       frequency: "weekly" | "monthly" | "quarterly" | "yearly";
       amount?: number;
       start_on?: string;
+      trial?: boolean;
     };
     installments?: {
       count: number;

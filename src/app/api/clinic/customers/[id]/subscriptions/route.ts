@@ -21,6 +21,7 @@ const Body = z.object({
   amount: z.string().min(1),
   frequency: z.enum(["weekly", "monthly", "quarterly", "yearly"]),
   description: z.string().optional(),
+  trial: z.boolean().optional(),
 });
 
 export async function POST(
@@ -67,6 +68,7 @@ export async function POST(
       mode: "subscription",
       recurring: {
         frequency: parsed.data.frequency,
+        trial: parsed.data.trial,
       },
       success_url: `${appUrl}/pay/success`,
       cancel_url: `${appUrl}/pay/cancel`,
