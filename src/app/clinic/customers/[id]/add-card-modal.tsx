@@ -211,17 +211,14 @@ export function AddCardModal({
           </div>
         )}
 
-        {/* Clip the Fortis "Payment info" header from the top of the iframe */}
         <div
+          ref={mountRef}
           className={
             status === "ready" || status === "saving"
               ? "rounded-lg border border-slate-200 overflow-hidden"
               : "hidden"
           }
-          style={{ maxHeight: 260 }}
-        >
-          <div ref={mountRef} style={{ marginTop: -52 }} />
-        </div>
+        />
 
         {(status === "ready" || status === "saving") && (
           <button

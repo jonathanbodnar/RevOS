@@ -139,17 +139,14 @@ export function SaveCardClient({ token }: { token: string }) {
           {error}
         </div>
       )}
-      {/* Clip the Fortis "Payment info" header at the top of the iframe */}
       <div
+        ref={mountRef}
         className={
           status === "ready" || status === "saving"
             ? "rounded-lg border border-slate-200 overflow-hidden"
             : "hidden"
         }
-        style={{ maxHeight: 260 }}
-      >
-        <div ref={mountRef} style={{ marginTop: -52 }} />
-      </div>
+      />
       <button
         type="button"
         onClick={() => {
