@@ -209,8 +209,24 @@ export const lunarpay = {
     paymentMethodId: number;
     amount: number;
     description?: string;
+    capture?: boolean; // false = authorize-only (hold); omit or true = charge immediately
   }) {
     return request<{ data: LPCharge }>("POST", "/api/v1/charges", input);
+  },
+  captureCharge(chargeId: string, amount?: number) {
+    // Captures a previously authorized hold. Pass amount to partially capture.
+    return request<{ data: LPCharge }>(
+      "POST",
+      `/api/v1/charges/${chargeId}/capture`,
+      amount ? { amount } : undefined,
+    );
+  },
+  voidCharge(chargeId: string) {
+    // Releases an authorized hold without charging.
+    return request<{ success: boolean }>(
+      "POST",
+      `/api/v1/charges/${chargeId}/void`,
+    );
   },
   refundCharge(chargeId: string, amount?: number) {
     return request<{

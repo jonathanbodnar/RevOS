@@ -25,19 +25,21 @@ import { parseMoneyInputToCents } from "@/lib/format";
  * setup fee, days-until-first-sub-charge) live in `metadataJson`.
  */
 const Body = z.object({
-  mode: z.enum(["payment", "subscription", "combined"]),
+  mode: z.enum(["payment", "subscription", "combined", "installments"]),
   amount: z.string().optional(),
   frequency: z.enum(["weekly", "monthly", "quarterly", "yearly"]).optional(),
   description: z.string().optional(),
   // combined-mode fields
   setupFee: z.string().optional(),
   subscriptionAmount: z.string().optional(),
-  // Number of days after the customer's payment that the first recurring
-  // subscription charge should run. 0 = bundled with today's setup fee.
   startAfterDays: z.string().optional(),
-  // When true, the card is saved but no charge is made on day-of. The
-  // subscription starts without an initial payment.
+  // subscription trial — card saved, no day-of charge
   trial: z.string().optional(),
+  // installments-mode fields
+  installTotal: z.string().optional(),
+  installCount: z.string().optional(),
+  installFrequency: z.enum(["weekly", "monthly", "quarterly", "yearly"]).optional(),
+  installFirstToday: z.string().optional(),
 });
 
 export async function POST(req: Request) {
@@ -92,8 +94,7 @@ export async function POST(req: Request) {
     } else {
       amountCents = cents;
     }
-  } else {
-    // combined
+  } else if (parsed.data.mode === "combined") {
     if (!parsed.data.frequency) {
       return NextResponse.json(
         { error: "Frequency is required for subscriptions" },
@@ -148,6 +149,48 @@ export async function POST(req: Request) {
       subscriptionAmountCents: subCents,
       startAfterDays,
       startsToday,
+    };
+  } else if (parsed.data.mode === "installments") {
+    if (!parsed.data.installFrequency) {
+      return NextResponse.json(
+        { error: "Frequency is required for installments" },
+        { status: 400 },
+      );
+    }
+    const totalCents = parseMoneyInputToCents(parsed.data.installTotal ?? "");
+    if (totalCents === null || totalCents < 100) {
+      return NextResponse.json(
+        { error: "Total amount must be at least $1.00" },
+        { status: 400 },
+      );
+    }
+    const count = Number.parseInt(parsed.data.installCount ?? "3", 10);
+    if (!Number.isFinite(count) || count < 2 || count > 24) {
+      return NextResponse.json(
+        { error: "Number of payments must be between 2 and 24" },
+        { status: 400 },
+      );
+    }
+    const installFirstToday = parsed.data.installFirstToday !== "false";
+    const perPaymentCents = Math.round(totalCents / count);
+    if (perPaymentCents < 50) {
+      return NextResponse.json(
+        { error: "Each payment must be at least $0.50" },
+        { status: 400 },
+      );
+    }
+    // amountCents = day-of charge (first installment if installFirstToday, else 0)
+    amountCents = installFirstToday ? perPaymentCents : 0;
+    metadata = {
+      ...metadata,
+      installments: true,
+      totalCents,
+      count,
+      perPaymentCents,
+      frequency: parsed.data.installFrequency,
+      installFirstToday,
+      // Number of future payments (those not charged immediately)
+      remainingCount: installFirstToday ? count - 1 : count,
     };
   }
 

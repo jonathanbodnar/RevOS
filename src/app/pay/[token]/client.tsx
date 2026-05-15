@@ -51,7 +51,7 @@ export function PayClient({
   clinicId,
 }: {
   token: string;
-  mode: "payment" | "subscription" | "combined";
+  mode: "payment" | "subscription" | "combined" | "installments";
   clinicId?: string;
 }) {
   const [status, setStatus] = useState<Status>("loading");

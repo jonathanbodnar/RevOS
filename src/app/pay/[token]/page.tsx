@@ -38,6 +38,13 @@ type Meta = {
   trial?: boolean;
   // legacy (pre-relative-start) field, still readable on old links
   startOn?: string;
+  // installments
+  installments?: boolean;
+  totalCents?: number;
+  count?: number;
+  perPaymentCents?: number;
+  remainingCount?: number;
+  installFirstToday?: boolean;
 };
 
 function resolveStartAfterDays(meta: Meta): number {
@@ -72,7 +79,7 @@ export default async function PayPage({
 
   if (
     !session ||
-    !["payment", "subscription", "combined"].includes(session.mode)
+    !["payment", "subscription", "combined", "installments"].includes(session.mode)
   ) {
     notFound();
   }
@@ -181,7 +188,11 @@ export default async function PayPage({
                   <CombinedSummary session={session} meta={meta} />
                 )}
 
-                {session.description && session.mode !== "combined" && (
+                {session.mode === "installments" && meta.installments && (
+                  <InstallmentsSummary meta={meta} />
+                )}
+
+                {session.description && !["combined", "installments"].includes(session.mode) && (
                   <p className="text-sm text-slate-600 mt-1.5">
                     {session.description}
                   </p>
@@ -190,7 +201,7 @@ export default async function PayPage({
 
               <PayClient
                 token={token}
-                mode={session.mode as "payment" | "subscription" | "combined"}
+                mode={session.mode as "payment" | "subscription" | "combined" | "installments"}
                 clinicId={displayClinic?.id}
               />
             </>
@@ -274,6 +285,52 @@ function CombinedSummary({
           </li>
         )}
       </ul>
+    </div>
+  );
+}
+
+function InstallmentsSummary({ meta }: { meta: Meta }) {
+  const total = meta.totalCents ?? 0;
+  const count = meta.count ?? 0;
+  const perPayment = meta.perPaymentCents ?? 0;
+  const firstToday = meta.installFirstToday ?? true;
+  const remaining = meta.remainingCount ?? 0;
+  const freqLabel = frequencyLabel(meta.frequency ?? null);
+
+  return (
+    <div>
+      <p className="text-xs font-medium text-slate-500 uppercase tracking-wide mb-1">
+        Installment plan
+      </p>
+      <p className="text-3xl font-semibold text-slate-900 tabular-nums mb-1">
+        {formatMoney(total)}
+      </p>
+      <p className="text-sm text-slate-500 mb-3">
+        {count} payments of {formatMoney(perPayment)} {freqLabel ?? ""}
+      </p>
+
+      <ul className="text-sm text-slate-600 space-y-1.5 border-t border-slate-100 pt-3">
+        <li className="flex justify-between font-medium">
+          <span>{firstToday ? "Due today" : `Payment 1 (tonight)`}</span>
+          <span className="tabular-nums">{formatMoney(perPayment)}</span>
+        </li>
+        {remaining > 0 && (
+          <li className="flex justify-between text-slate-500 text-xs">
+            <span>
+              Then {remaining} more {freqLabel ?? "payment"} payment
+              {remaining !== 1 ? "s" : ""}
+            </span>
+            <span className="tabular-nums">{formatMoney(perPayment)} each</span>
+          </li>
+        )}
+      </ul>
+
+      {!firstToday && (
+        <p className="text-xs text-slate-500 mt-3">
+          No charge today — your card is saved. The first payment runs tonight
+          at 2 AM UTC.
+        </p>
+      )}
     </div>
   );
 }

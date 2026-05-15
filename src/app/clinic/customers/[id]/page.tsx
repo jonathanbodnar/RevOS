@@ -10,6 +10,7 @@ import { NewInvoiceForm } from "./new-invoice";
 import { RefundButton } from "./refund-button";
 import { CancelSubscriptionButton } from "./cancel-subscription";
 import { DeleteCustomerButton } from "./delete-customer-button";
+import { HoldsSection } from "./holds-section";
 
 export default async function CustomerDetailPage({
   params,
@@ -28,7 +29,7 @@ export default async function CustomerDetailPage({
         where: { isActive: true },
         orderBy: [{ isDefault: "desc" }, { createdAt: "desc" }],
       },
-      charges: { orderBy: { createdAt: "desc" }, take: 25 },
+      charges: { orderBy: { createdAt: "desc" }, take: 50 },
       subscriptions: { orderBy: { createdAt: "desc" } },
       schedules: { orderBy: { createdAt: "desc" } },
     },
@@ -102,6 +103,25 @@ export default async function CustomerDetailPage({
             }))}
           />
 
+          {/* Holds — authorized-only charges */}
+          <HoldsSection
+            customerId={customer.id}
+            holds={customer.charges
+              .filter((c) => ["authorized", "voided"].includes(c.status))
+              .map((c) => ({
+                id: c.id,
+                amountCents: c.amountCents,
+                status: c.status,
+                description: c.description,
+                createdAt: c.createdAt,
+              }))}
+            methods={customer.paymentMethods.map((m) => ({
+              id: m.id,
+              label: formatMethodLabel(m),
+              sourceType: m.sourceType,
+            }))}
+          />
+
           <div className="card-pad">
             <h3 className="text-sm font-semibold text-slate-900 mb-3">
               Transactions
@@ -117,14 +137,16 @@ export default async function CustomerDetailPage({
                 </tr>
               </thead>
               <tbody>
-                {customer.charges.length === 0 && (
+                {customer.charges.filter((c) => !["authorized", "voided"].includes(c.status)).length === 0 && (
                   <tr>
                     <td colSpan={5} className="text-center text-slate-500 py-6">
                       No transactions yet.
                     </td>
                   </tr>
                 )}
-                {customer.charges.map((c) => (
+                {customer.charges
+                  .filter((c) => !["authorized", "voided"].includes(c.status))
+                  .map((c) => (
                   <tr key={c.id}>
                     <td>
                       <div className="font-medium">

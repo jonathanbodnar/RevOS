@@ -23,7 +23,7 @@ export async function POST(
   const sess = await prisma.checkoutSession.findUnique({ where: { token } });
   if (
     !sess ||
-    !["payment", "subscription", "combined"].includes(sess.mode) ||
+    !["payment", "subscription", "combined", "installments"].includes(sess.mode) ||
     sess.status !== "open"
   ) {
     return NextResponse.json(
@@ -49,8 +49,8 @@ export async function POST(
 
   // One-time payments: use a transaction intention so Fortis charges the card
   // directly in the iframe — no backend charge call needed.
-  // Everything else (subscription, combined, trial): use a ticket intention
-  // (hasRecurring: true) so the card is vaulted without charging.
+  // Everything else (subscription, combined, trial, installments): use a ticket
+  // intention (hasRecurring: true) so the card is vaulted without charging.
   const isOneTime = sess.mode === "payment";
   const intentionBody = isOneTime
     ? { amount: sess.amountCents, paymentMethods: ["cc", "ach"] }

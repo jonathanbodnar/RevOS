@@ -61,7 +61,7 @@ export async function POST(
   });
   if (
     !sess ||
-    !["payment", "subscription", "combined"].includes(sess.mode) ||
+    !["payment", "subscription", "combined", "installments"].includes(sess.mode) ||
     sess.status !== "open"
   ) {
     return NextResponse.json(
@@ -93,6 +93,13 @@ export async function POST(
     trial?: boolean;
     // legacy field on links created before the relative-start change
     startOn?: string;
+    // installments
+    installments?: boolean;
+    totalCents?: number;
+    count?: number;
+    perPaymentCents?: number;
+    remainingCount?: number;
+    installFirstToday?: boolean;
   };
 
   try {
@@ -237,7 +244,63 @@ export async function POST(
       });
     }
 
-    // 5) Create the LP subscription if applicable.
+    // 5a) Create installment schedule if this is an installments link.
+    if (sess.mode === "installments" && meta.installments) {
+      const perPaymentCents = meta.perPaymentCents ?? 0;
+      const remainingCount = meta.remainingCount ?? 0;
+      const frequency: Frequency = (meta.frequency as Frequency) || "monthly";
+
+      if (remainingCount > 0 && perPaymentCents >= 50) {
+        // Build future payment dates starting from 1 frequency after today.
+        const payments: { amount: number; date: string }[] = [];
+        let nextDate = addOneFrequency(new Date(), frequency);
+        for (let i = 0; i < remainingCount; i++) {
+          payments.push({
+            amount: perPaymentCents,
+            date: nextDate.toISOString().slice(0, 10),
+          });
+          nextDate = addOneFrequency(nextDate, frequency);
+        }
+
+        const lpSchedule = await lunarpay.createSchedule({
+          customerId: lpCustomerId,
+          paymentMethodId: lpPm.data.id,
+          description,
+          payments,
+        });
+
+        await prisma.paymentSchedule.create({
+          data: {
+            clinicId: resolvedClinicId,
+            customerId: customer.id,
+            paymentMethodId: pm.id,
+            lunarpayScheduleId: lpSchedule.data.id,
+            totalAmountCents: meta.totalCents ?? 0,
+            paidAmountCents: meta.installFirstToday ? perPaymentCents : 0,
+            status: lpSchedule.data.status,
+            description: sess.description ?? null,
+          },
+        });
+      }
+
+      await logAudit({
+        actorId: null,
+        actorRole: "CUSTOMER",
+        clinicId: resolvedClinicId,
+        action: "installments.complete.payment_link",
+        targetType: "CheckoutSession",
+        targetId: sess.id,
+        metadata: {
+          totalCents: meta.totalCents,
+          count: meta.count,
+          customerId: customer.id,
+        },
+      });
+
+      return NextResponse.json({ ok: true });
+    }
+
+    // 5b) Create the LP subscription if applicable.
     if (sess.mode === "subscription" || sess.mode === "combined") {
       const frequency: Frequency = (meta.frequency as Frequency) || "monthly";
 
