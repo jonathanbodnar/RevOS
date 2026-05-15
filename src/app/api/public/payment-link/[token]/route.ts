@@ -8,27 +8,26 @@ import { requireStringParams } from "@/lib/route-params";
 /**
  * Public submit endpoint for a reusable hosted payment link.
  *
- * Steps:
- *  1) Always create a fresh Customer for this clinic. Reusable links are
- *     intentionally NOT keyed off email — every submission produces a new
- *     customer profile, even if the email matches an existing one.
- *  2) Create a LunarPay customer for this fresh record.
- *  3) Save the card via LunarPay (vaults the ticket against the customer).
- *  4) Charge `amountCents` immediately. For combined links, this already
- *     bundles setup fee + (first sub if startAfterDays=0). For "payment" /
- *     pure "subscription" it's just the single amount.
- *  5) For subscription / combined links, create the LunarPay subscription
- *     with a startOn that lines up the FIRST recurring charge correctly:
- *       - subscription mode: startOn = today (LP next charge in 1 freq)
- *       - combined w/ startsToday: startOn = today (LP next charge in 1 freq)
- *       - combined w/ N-day delay: desiredFirstCharge = today + N days,
- *         startOn = (desiredFirstCharge - 1 freq) so LP's first charge
- *         runs exactly N days from this customer's payment day.
- *  6) Leave the CheckoutSession open — payment links are reusable, so any
- *     number of customers can pay through the same token.
+ * Two distinct flows depending on the Fortis intention type:
+ *
+ * A) transactionId present (mode: "payment" → transaction intention):
+ *    Fortis already charged the card inside the iframe. We create the customer
+ *    and record the charge in our DB. We must NOT call lunarpay.createCharge()
+ *    again — the money already moved.
+ *
+ * B) ticketId present (mode: "subscription" | "combined" → ticket intention):
+ *    Fortis only saved the card. We:
+ *    1) Create LunarPay customer.
+ *    2) Vault the card via the ticket ID.
+ *    3) Charge the setup fee (if amountCents > 0 and not a trial).
+ *    4) Create the LunarPay subscription.
+ *
+ * The CheckoutSession is never marked completed — payment links are reusable.
  */
 const Body = z.object({
-  ticketId: z.string().min(1),
+  // Exactly one of these must be present:
+  ticketId: z.string().min(1).optional(),      // ticket (save-card) flow
+  transactionId: z.string().min(1).optional(), // transaction (charge-in-iframe) flow
   paymentMethod: z.enum(["cc", "ach"]).optional(),
   email: z.string().email(),
   firstName: z.string().min(1),
@@ -37,6 +36,8 @@ const Body = z.object({
   // For global links (clinicId = null on the session), the pay page passes the
   // clinic that shared the link so transactions are attributed correctly.
   clinicId: z.string().optional(),
+}).refine((d) => !!d.ticketId || !!d.transactionId, {
+  message: "Either ticketId or transactionId is required",
 });
 
 type Frequency = "weekly" | "monthly" | "quarterly" | "yearly";
@@ -69,10 +70,20 @@ export async function POST(
     );
   }
 
-  const { ticketId, paymentMethod, email, firstName, lastName, phone, clinicId: bodyClinicId } = parsed.data;
+  const {
+    ticketId,
+    transactionId,
+    paymentMethod,
+    email,
+    firstName,
+    lastName,
+    phone,
+    clinicId: bodyClinicId,
+  } = parsed.data;
   // For global links (sess.clinicId = null) use the clinic passed by the pay
   // page so transactions are attributed to the clinic that shared the link.
   const resolvedClinicId = sess.clinicId ?? bodyClinicId ?? null;
+  const isTransactionFlow = !!transactionId && !ticketId;
   const meta = (sess.metadataJson ? safeJson(sess.metadataJson) : {}) as {
     frequency?: Frequency;
     setupFeeCents?: number;
@@ -85,9 +96,9 @@ export async function POST(
   };
 
   try {
-    // 1) Always create a fresh Customer + LunarPay customer for this submit.
-    //    Reusable links must not collapse repeat submissions (even with the
-    //    same email) into a single customer record.
+    // Always create a fresh Customer + LunarPay customer for this submit.
+    // Reusable links must not collapse repeat submissions (even with the
+    // same email) into a single customer record.
     const lpCustomer = await lunarpay.createCustomer({
       firstName,
       lastName,
@@ -123,14 +134,51 @@ export async function POST(
       );
     }
 
-    // 3) Save the card.
+    // ─── TRANSACTION FLOW (one-time payment) ──────────────────────────────
+    // Fortis already charged the card inside the iframe. Record the customer
+    // and charge in our DB, then return — do NOT call createCharge again.
+    if (isTransactionFlow) {
+      const clinicLabel = sess.clinic?.name ?? "RevOS";
+      await prisma.charge.create({
+        data: {
+          clinicId: resolvedClinicId,
+          customerId: customer.id,
+          paymentMethodId: null,
+          paymentLinkId: sess.id,
+          // The transaction ID from Fortis is our charge identifier here.
+          lunarpayChargeId: transactionId!,
+          fortisTransactionId: transactionId!,
+          amountCents: sess.amountCents,
+          status: "paid",
+          paymentMethodType: paymentMethod ?? "cc",
+          description: sess.description ?? `[${clinicLabel}]`,
+        },
+      });
+
+      await logAudit({
+        actorId: null,
+        actorRole: "CUSTOMER",
+        clinicId: resolvedClinicId,
+        action: "charge.complete.payment_link",
+        targetType: "CheckoutSession",
+        targetId: sess.id,
+        metadata: { amountCents: sess.amountCents, customerId: customer.id, transactionId },
+      });
+
+      return NextResponse.json({ ok: true });
+    }
+
+    // ─── TICKET FLOW (subscription / combined / trial) ────────────────────
+    // Fortis saved the card only. Vault it, optionally charge, create sub.
+
+    // Save the card.
     const existingCount = await prisma.paymentMethod.count({
       where: { customerId: customer.id, isActive: true },
     });
     const setDefault = existingCount === 0;
 
     const lpPm = await lunarpay.savePaymentMethod(lpCustomerId, {
-      ticketId,
+      ticketId: ticketId!,
       paymentMethod,
       nameHolder: `${firstName} ${lastName}`.trim(),
       setDefault,

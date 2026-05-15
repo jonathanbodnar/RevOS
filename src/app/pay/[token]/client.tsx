@@ -5,20 +5,17 @@ import { useEffect, useRef, useState } from "react";
 /**
  * Public payment-link page client.
  *
- * Flow:
- *  1) Render email/name form + Fortis Elements card iframe.
- *  2) When the customer clicks our custom "Pay" button we call
- *     elements.submit() to trigger Fortis tokenisation. Fortis fires `done`
- *     with a ticketId once the card is vaulted.
- *  3) We POST { ticketId, email, firstName, lastName, phone, clinicId } to
- *     our public API; the server creates the customer, vaults the card, and
- *     runs the initial charge (and subscription, if applicable).
+ * Flow depends on the intention type returned by the server:
  *
- * showSubmitButton: false hides Fortis's built-in Pay button so we can
- * render our own styled button outside the iframe. The container wrapper uses
- * overflow:hidden + a negative top offset to clip the "Payment info" section
- * heading that Fortis renders at the top of the iframe — keeping the card
- * fields visible while hiding the redundant label.
+ * "transaction" (one-time payment):
+ *   Fortis charges the card directly inside the iframe. On `done`, we POST
+ *   { transactionId } to our backend which records the charge — it does NOT
+ *   call the LunarPay charge API again (double-charge would occur).
+ *
+ * "ticket" (subscription / combined / trial):
+ *   Fortis only saves the card (hasRecurring: true intention). On `done`, we
+ *   POST { ticketId } to our backend which vaults the card, optionally charges
+ *   a setup fee, and creates the LunarPay subscription.
  */
 
 type Status = "loading" | "ready" | "submitting" | "done" | "error" | "sdk-missing";
@@ -65,13 +62,13 @@ export function PayClient({
   const [lastName, setLastName] = useState("");
   const [phone, setPhone] = useState("");
 
-  // Latest form values (used inside the Fortis `done` callback, which closes
-  // over the values present when the elements instance was created).
   const formRef = useRef({ email, firstName, lastName, phone });
   formRef.current = { email, firstName, lastName, phone };
 
   const mountRef = useRef<HTMLDivElement | null>(null);
   const elementsRef = useRef<FortisElementsInstance | null>(null);
+  // "transaction" = Fortis charged in iframe; "ticket" = card saved only
+  const intentionTypeRef = useRef<"transaction" | "ticket">("ticket");
 
   useEffect(() => {
     let cancelled = false;
@@ -85,7 +82,11 @@ export function PayClient({
           const d = (await res.json().catch(() => ({}))) as { error?: string };
           throw new Error(d.error || "Could not initialize form");
         }
-        const intention = (await res.json()) as { clientToken: string };
+        const intention = (await res.json()) as {
+          clientToken: string;
+          intentionType?: "transaction" | "ticket";
+        };
+        intentionTypeRef.current = intention.intentionType ?? "ticket";
 
         await loadScript(
           process.env.NEXT_PUBLIC_FORTIS_ELEMENTS_URL ||
@@ -103,14 +104,13 @@ export function PayClient({
 
         elements.on("done", async (payload: unknown) => {
           const p = payload as FortisDonePayload;
-          const ticketId = p.data?.id;
-          if (!ticketId) {
+          const id = p.data?.id;
+          if (!id) {
             setStatus("error");
-            setError("No card token returned. Please try again.");
+            setError("No token returned from card form. Please try again.");
             return;
           }
 
-          // Validate the form fields before submitting.
           const { email, firstName, lastName, phone } = formRef.current;
           if (!email || !firstName || !lastName) {
             setStatus("error");
@@ -119,11 +119,14 @@ export function PayClient({
           }
 
           setStatus("submitting");
+
+          const isTransaction = intentionTypeRef.current === "transaction";
           const submit = await fetch(`/api/public/payment-link/${token}`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
-              ticketId,
+              // transaction = charge happened in iframe; ticket = card vaulted only
+              ...(isTransaction ? { transactionId: id } : { ticketId: id }),
               paymentMethod: "cc",
               email,
               firstName,
@@ -132,6 +135,7 @@ export function PayClient({
               clinicId: clinicId || undefined,
             }),
           });
+
           if (!submit.ok) {
             const d = (await submit.json().catch(() => ({}))) as {
               error?: string;
