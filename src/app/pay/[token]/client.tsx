@@ -298,7 +298,7 @@ export function PayClient({
         >
           <div
             ref={mountRef}
-            style={{ marginTop: -52 }}
+            style={{ marginTop: -72 }}
           />
         </div>
 
