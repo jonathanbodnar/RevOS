@@ -33,6 +33,7 @@ interface FortisElementsInstance {
     environment?: "sandbox" | "production";
     showSubmitButton?: boolean;
     showReceipt?: boolean;
+    hideAmount?: boolean;
     [key: string]: unknown;
   }): void;
   on(event: string, cb: (payload: unknown) => void): void;
@@ -162,6 +163,7 @@ export function PayClient({
                 | "production") || "production",
             showSubmitButton: false,
             showReceipt: false,
+            hideAmount: true,
           });
           elementsRef.current = elements;
         }
