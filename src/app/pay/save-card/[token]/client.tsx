@@ -140,13 +140,14 @@ export function SaveCardClient({ token }: { token: string }) {
         </div>
       )}
       <div
-        ref={mountRef}
         className={
           status === "ready" || status === "saving"
             ? "rounded-lg border border-slate-200 overflow-hidden"
             : "hidden"
         }
-      />
+      >
+        <div ref={mountRef} style={{ marginTop: -52 }} />
+      </div>
       <button
         type="button"
         onClick={() => {

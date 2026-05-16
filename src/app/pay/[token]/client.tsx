@@ -287,14 +287,20 @@ export function PayClient({
           </div>
         )}
 
+        {/* Outer clip wrapper — hides the "Payment Info" header rendered by
+            the Fortis iframe while keeping all input fields fully visible. */}
         <div
-          ref={mountRef}
           className={
             status === "ready" || status === "submitting"
-              ? "rounded-lg border border-slate-200 overflow-hidden mt-2"
+              ? "rounded-lg border border-slate-200 overflow-hidden"
               : "hidden"
           }
-        />
+        >
+          <div
+            ref={mountRef}
+            style={{ marginTop: -52 }}
+          />
+        </div>
 
         {error && (
           <div className="text-sm text-red-700 bg-red-50 border border-red-100 rounded-md p-3 mt-3">
