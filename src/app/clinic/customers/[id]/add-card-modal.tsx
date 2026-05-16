@@ -146,7 +146,6 @@ export function AddCardModal({
                 | "production") || "production",
             showSubmitButton: false,
             showReceipt: false,
-            hideAmount: true,
           });
           elementsRef.current = elements;
         }
@@ -220,7 +219,7 @@ export function AddCardModal({
               : "hidden"
           }
         >
-          <div ref={mountRef} style={{ marginTop: -72 }} />
+          <div ref={mountRef} style={{ marginTop: -72, marginBottom: -56 }} />
         </div>
 
         {(status === "ready" || status === "saving") && (

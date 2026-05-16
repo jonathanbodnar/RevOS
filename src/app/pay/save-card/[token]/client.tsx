@@ -94,7 +94,6 @@ export function SaveCardClient({ token }: { token: string }) {
                 | "production") || "production",
             showSubmitButton: false,
             showReceipt: false,
-            hideAmount: true,
           });
           elementsRef.current = elements;
         }
@@ -148,7 +147,7 @@ export function SaveCardClient({ token }: { token: string }) {
             : "hidden"
         }
       >
-        <div ref={mountRef} style={{ marginTop: -72 }} />
+        <div ref={mountRef} style={{ marginTop: -72, marginBottom: -56 }} />
       </div>
       <button
         type="button"

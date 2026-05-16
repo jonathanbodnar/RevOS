@@ -163,7 +163,6 @@ export function PayClient({
                 | "production") || "production",
             showSubmitButton: false,
             showReceipt: false,
-            hideAmount: true,
           });
           elementsRef.current = elements;
         }
@@ -300,7 +299,7 @@ export function PayClient({
         >
           <div
             ref={mountRef}
-            style={{ marginTop: -72 }}
+            style={{ marginTop: -72, marginBottom: -56 }}
           />
         </div>
 
