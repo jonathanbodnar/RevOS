@@ -91,15 +91,21 @@ export async function POST(
     startAfterDays?: number;
     startsToday?: boolean;
     trial?: boolean;
-    // legacy field on links created before the relative-start change
     startOn?: string;
-    // installments
+    // installments (all modes)
     installments?: boolean;
+    scheduleType?: "frequency" | "dates";
     totalCents?: number;
     count?: number;
-    perPaymentCents?: number;
+    perPaymentCents?: number[];  // array — one amount per payment
     remainingCount?: number;
     installFirstToday?: boolean;
+    // custom-dates installments
+    scheduledDates?: string[];
+    firstIsToday?: boolean;
+    // optional subscription after last installment
+    subAmountCents?: number;
+    subFrequency?: Frequency;
   };
 
   try {
@@ -246,28 +252,48 @@ export async function POST(
 
     // 5a) Create installment schedule if this is an installments link.
     if (sess.mode === "installments" && meta.installments) {
-      const perPaymentCents = meta.perPaymentCents ?? 0;
-      const remainingCount = meta.remainingCount ?? 0;
-      const frequency: Frequency = (meta.frequency as Frequency) || "monthly";
+      const perPaymentCentsArr = Array.isArray(meta.perPaymentCents)
+        ? meta.perPaymentCents
+        : Array(meta.count ?? 1).fill(meta.perPaymentCents ?? 0);
 
-      if (remainingCount > 0 && perPaymentCents >= 50) {
-        // Build future payment dates starting from 1 frequency after today.
-        const payments: { amount: number; date: string }[] = [];
+      const scheduleType = meta.scheduleType ?? "frequency";
+
+      // Build scheduled payments list (excluding the first if charged today)
+      let payments: { amount: number; date: string }[] = [];
+
+      if (scheduleType === "dates") {
+        const dates = meta.scheduledDates ?? [];
+        const firstIsToday = meta.firstIsToday ?? false;
+        const startIdx = firstIsToday ? 1 : 0; // skip first if already charged
+        payments = dates.slice(startIdx).map((date, i) => ({
+          amount: perPaymentCentsArr[startIdx + i] ?? perPaymentCentsArr[0],
+          date,
+        }));
+      } else {
+        const frequency: Frequency = (meta.frequency as Frequency) || "monthly";
+        const remainingCount = meta.remainingCount ?? 0;
         let nextDate = addOneFrequency(new Date(), frequency);
         for (let i = 0; i < remainingCount; i++) {
           payments.push({
-            amount: perPaymentCents,
+            amount: perPaymentCentsArr[i + 1] ?? perPaymentCentsArr[0],
             date: nextDate.toISOString().slice(0, 10),
           });
           nextDate = addOneFrequency(nextDate, frequency);
         }
+      }
 
+      if (payments.length > 0) {
         const lpSchedule = await lunarpay.createSchedule({
           customerId: lpCustomerId,
           paymentMethodId: lpPm.data.id,
           description,
           payments,
         });
+
+        const firstPaymentCents = perPaymentCentsArr[0] ?? 0;
+        const chargedToday = scheduleType === "dates"
+          ? (meta.firstIsToday ? firstPaymentCents : 0)
+          : (meta.installFirstToday ? firstPaymentCents : 0);
 
         await prisma.paymentSchedule.create({
           data: {
@@ -276,8 +302,52 @@ export async function POST(
             paymentMethodId: pm.id,
             lunarpayScheduleId: lpSchedule.data.id,
             totalAmountCents: meta.totalCents ?? 0,
-            paidAmountCents: meta.installFirstToday ? perPaymentCents : 0,
+            paidAmountCents: chargedToday,
             status: lpSchedule.data.status,
+            description: sess.description ?? null,
+          },
+        });
+      }
+
+      // Optional subscription after last installment
+      if (meta.subAmountCents && meta.subFrequency && meta.subAmountCents >= 50) {
+        // Start subscription the day after the last scheduled payment
+        const lastDate = meta.scheduledDates
+          ? meta.scheduledDates[meta.scheduledDates.length - 1]
+          : (() => {
+              const freq: Frequency = (meta.frequency as Frequency) || "monthly";
+              const count = meta.count ?? 1;
+              let d = new Date();
+              for (let i = 0; i < count; i++) d = addOneFrequency(d, freq);
+              return d.toISOString().slice(0, 10);
+            })();
+
+        const lpStartOn = subtractOneFrequency(lastDate, meta.subFrequency);
+
+        const lpSub = await lunarpay.createSubscription({
+          customerId: lpCustomerId,
+          paymentMethodId: lpPm.data.id,
+          amount: meta.subAmountCents,
+          frequency: meta.subFrequency,
+          startOn: lpStartOn,
+        });
+
+        const nextPaymentOn = lpSub.data.nextPaymentOn
+          ? new Date(lpSub.data.nextPaymentOn)
+          : addOneFrequency(new Date(lpStartOn), meta.subFrequency);
+
+        await prisma.subscription.create({
+          data: {
+            clinicId: resolvedClinicId,
+            customerId: customer.id,
+            paymentMethodId: pm.id,
+            paymentLinkId: sess.id,
+            lunarpaySubscriptionId: lpSub.data.id,
+            amountCents: meta.subAmountCents,
+            frequency: meta.subFrequency,
+            status: lpSub.data.status,
+            startOn: new Date(lpStartOn),
+            nextPaymentOn,
             description: sess.description ?? null,
           },
         });
@@ -290,11 +360,7 @@ export async function POST(
         action: "installments.complete.payment_link",
         targetType: "CheckoutSession",
         targetId: sess.id,
-        metadata: {
-          totalCents: meta.totalCents,
-          count: meta.count,
-          customerId: customer.id,
-        },
+        metadata: { totalCents: meta.totalCents, count: meta.count, customerId: customer.id },
       });
 
       return NextResponse.json({ ok: true });

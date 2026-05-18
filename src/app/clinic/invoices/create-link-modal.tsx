@@ -1,9 +1,47 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { CopyButton } from "@/components/copy-button";
 
 type Mode = "payment" | "subscription" | "combined" | "installments";
+
+function todayStr() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function addMonths(dateStr: string, months: number): string {
+  const d = new Date(`${dateStr}T00:00:00`);
+  d.setMonth(d.getMonth() + months);
+  return d.toISOString().slice(0, 10);
+}
+
+function buildDefaultDates(count: number, firstToday: boolean): string[] {
+  const base = firstToday ? todayStr() : addMonths(todayStr(), 1);
+  return Array.from({ length: count }, (_, i) => addMonths(base, i));
+}
+
+function Toggle({
+  checked,
+  onChange,
+}: {
+  checked: boolean;
+  onChange: () => void;
+}) {
+  return (
+    <span
+      onClick={onChange}
+      className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer items-center rounded-full transition-colors ${
+        checked ? "bg-brand-600" : "bg-slate-200"
+      }`}
+    >
+      <span
+        className={`inline-block h-3.5 w-3.5 rounded-full bg-white shadow-sm transition-transform ${
+          checked ? "translate-x-[18px]" : "translate-x-[3px]"
+        }`}
+      />
+    </span>
+  );
+}
 
 export function CreateLinkModal({
   onClose,
@@ -16,26 +54,77 @@ export function CreateLinkModal({
 }) {
   const [mode, setMode] = useState<Mode>("payment");
 
-  // payment / subscription mode
+  // payment / subscription
   const [amount, setAmount] = useState("");
+  const [frequency, setFrequency] = useState("monthly");
+  const [trial, setTrial] = useState(false);
 
-  // combined mode
+  // combined
   const [setupFee, setSetupFee] = useState("");
   const [subAmount, setSubAmount] = useState("");
-  const [startAfterDays, setStartAfterDays] = useState<string>("30");
+  const [startAfterDays, setStartAfterDays] = useState("30");
 
-  // installments mode
+  // installments — core
   const [installTotal, setInstallTotal] = useState("");
-  const [installCount, setInstallCount] = useState("3");
+  const [installCount, setInstallCount] = useState(3);
+  const [installAmounts, setInstallAmounts] = useState<string[]>(["", "", ""]);
+
+  // installments — schedule: "frequency" or "dates"
+  const [installScheduleType, setInstallScheduleType] = useState<"frequency" | "dates">("frequency");
   const [installFrequency, setInstallFrequency] = useState("monthly");
   const [installFirstToday, setInstallFirstToday] = useState(true);
+  const [installDates, setInstallDates] = useState<string[]>(() =>
+    buildDefaultDates(3, true),
+  );
 
-  const [trial, setTrial] = useState(false);
-  const [frequency, setFrequency] = useState("monthly");
+  // installments — optional subscription after last payment
+  const [installIncludeSub, setInstallIncludeSub] = useState(false);
+  const [installSubAmount, setInstallSubAmount] = useState("");
+  const [installSubFrequency, setInstallSubFrequency] = useState("monthly");
+
   const [description, setDescription] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [generatedUrl, setGeneratedUrl] = useState<string | null>(null);
+
+  // Keep dates array in sync with count
+  useEffect(() => {
+    setInstallDates((prev) => {
+      if (prev.length === installCount) return prev;
+      const base = installScheduleType === "dates"
+        ? (prev[0] ?? todayStr())
+        : (installFirstToday ? todayStr() : addMonths(todayStr(), 1));
+      return Array.from({ length: installCount }, (_, i) =>
+        prev[i] ?? addMonths(base, i),
+      );
+    });
+    setInstallAmounts((prev) => {
+      if (prev.length === installCount) return prev;
+      return Array.from({ length: installCount }, (_, i) => prev[i] ?? "");
+    });
+  }, [installCount, installScheduleType, installFirstToday]);
+
+  // Auto-fill equal amounts when total changes and amounts are all blank
+  function distributeTotal(total: string) {
+    setInstallTotal(total);
+    const cents = Math.round(parseFloat(total || "0") * 100);
+    if (!cents) return;
+    const per = (cents / installCount / 100).toFixed(2);
+    setInstallAmounts(Array(installCount).fill(per));
+  }
+
+  function setDate(i: number, val: string) {
+    setInstallDates((prev) => prev.map((d, j) => (j === i ? val : d)));
+  }
+
+  function setInstallAmt(i: number, val: string) {
+    setInstallAmounts((prev) => prev.map((a, j) => (j === i ? val : a)));
+  }
+
+  function changeCount(n: number) {
+    const clamped = Math.min(24, Math.max(2, n));
+    setInstallCount(clamped);
+  }
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -58,9 +147,21 @@ export function CreateLinkModal({
     } else {
       // installments
       body.installTotal = installTotal;
-      body.installCount = installCount;
-      body.installFrequency = installFrequency;
-      body.installFirstToday = installFirstToday ? "true" : "false";
+      body.installCount = String(installCount);
+      body.installAmounts = JSON.stringify(installAmounts);
+      body.installScheduleType = installScheduleType;
+
+      if (installScheduleType === "frequency") {
+        body.installFrequency = installFrequency;
+        body.installFirstToday = installFirstToday ? "true" : "false";
+      } else {
+        body.installDates = JSON.stringify(installDates);
+      }
+
+      if (installIncludeSub) {
+        body.installSubAmount = installSubAmount;
+        body.installSubFrequency = installSubFrequency;
+      }
     }
 
     setLoading(true);
@@ -82,6 +183,12 @@ export function CreateLinkModal({
     onCreated();
   }
 
+  const perPayment = installAmounts.every((a) => !a)
+    ? installTotal
+      ? (parseFloat(installTotal) / installCount).toFixed(2)
+      : ""
+    : null;
+
   return (
     <div
       className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4"
@@ -89,7 +196,7 @@ export function CreateLinkModal({
         if (e.target === e.currentTarget) onClose();
       }}
     >
-      <div className="card-pad max-w-md w-full max-h-[90vh] overflow-y-auto">
+      <div className="card-pad max-w-lg w-full max-h-[90vh] overflow-y-auto">
         <div className="flex items-center justify-between mb-5">
           <h2 className="text-base font-semibold text-slate-900">
             Create payment link
@@ -156,26 +263,19 @@ export function CreateLinkModal({
                   ),
                 )}
               </div>
-              {mode === "subscription" && (
-                <p className="text-xs text-slate-500 mt-1.5">
-                  First charge happens immediately; recurring plan starts after.
-                </p>
-              )}
               {mode === "combined" && (
                 <p className="text-xs text-slate-500 mt-1.5">
-                  Charge a one-time setup fee today, then start a recurring
-                  subscription a fixed number of days after each customer pays.
+                  Charge a one-time setup fee today, then start a recurring subscription.
                 </p>
               )}
               {mode === "installments" && (
                 <p className="text-xs text-slate-500 mt-1.5">
-                  Split a fixed total into equal scheduled payments. Optionally
-                  charge the first installment today.
+                  Split a bill into scheduled payments, with optional subscription after the last one.
                 </p>
               )}
             </div>
 
-            {/* Mode-specific fields */}
+            {/* ── ONE-TIME ─────────────────────────────────────── */}
             {mode === "payment" && (
               <div>
                 <label className="label">Amount (USD)</label>
@@ -190,6 +290,7 @@ export function CreateLinkModal({
               </div>
             )}
 
+            {/* ── SUBSCRIPTION ─────────────────────────────────── */}
             {mode === "subscription" && (
               <>
                 <div className="grid grid-cols-2 gap-3">
@@ -206,11 +307,7 @@ export function CreateLinkModal({
                   </div>
                   <div>
                     <label className="label">Frequency</label>
-                    <select
-                      className="input"
-                      value={frequency}
-                      onChange={(e) => setFrequency(e.target.value)}
-                    >
+                    <select className="input" value={frequency} onChange={(e) => setFrequency(e.target.value)}>
                       <option value="weekly">Weekly</option>
                       <option value="monthly">Monthly</option>
                       <option value="quarterly">Quarterly</option>
@@ -218,37 +315,20 @@ export function CreateLinkModal({
                     </select>
                   </div>
                 </div>
-                <label className="flex items-center gap-2.5 cursor-pointer select-none group">
-                  <span
-                    className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors ${
-                      trial ? "bg-brand-600" : "bg-slate-200"
-                    }`}
-                    onClick={() => setTrial(!trial)}
-                  >
-                    <span
-                      className={`inline-block h-3.5 w-3.5 rounded-full bg-white shadow-sm transition-transform ${
-                        trial ? "translate-x-[18px]" : "translate-x-[3px]"
-                      }`}
-                    />
-                  </span>
-                  <input
-                    type="checkbox"
-                    checked={trial}
-                    onChange={() => setTrial(!trial)}
-                    className="sr-only"
-                  />
+                <label className="flex items-center gap-2.5 cursor-pointer select-none">
+                  <Toggle checked={trial} onChange={() => setTrial(!trial)} />
+                  <input type="checkbox" checked={trial} onChange={() => setTrial(!trial)} className="sr-only" />
                   <div>
-                    <span className="text-sm text-slate-700 font-medium">
-                      Free trial — no charge today
-                    </span>
+                    <span className="text-sm text-slate-700 font-medium">Free trial — no charge today</span>
                     <p className="text-xs text-slate-500 mt-0.5">
-                      Card is saved but not charged. The first recurring payment runs on the next billing cycle.
+                      Card is saved but not charged. First payment runs on next billing cycle.
                     </p>
                   </div>
                 </label>
               </>
             )}
 
+            {/* ── COMBINED ─────────────────────────────────────── */}
             {mode === "combined" && (
               <>
                 <div>
@@ -260,9 +340,7 @@ export function CreateLinkModal({
                     value={setupFee}
                     onChange={(e) => setSetupFee(e.target.value)}
                   />
-                  <p className="text-xs text-slate-500 mt-1">
-                    Leave 0 for no setup fee.
-                  </p>
+                  <p className="text-xs text-slate-500 mt-1">Leave 0 for no setup fee.</p>
                 </div>
                 <div className="grid grid-cols-2 gap-3">
                   <div>
@@ -278,11 +356,7 @@ export function CreateLinkModal({
                   </div>
                   <div>
                     <label className="label">Frequency</label>
-                    <select
-                      className="input"
-                      value={frequency}
-                      onChange={(e) => setFrequency(e.target.value)}
-                    >
+                    <select className="input" value={frequency} onChange={(e) => setFrequency(e.target.value)}>
                       <option value="weekly">Weekly</option>
                       <option value="monthly">Monthly</option>
                       <option value="quarterly">Quarterly</option>
@@ -291,33 +365,30 @@ export function CreateLinkModal({
                   </div>
                 </div>
                 <div>
-                  <label className="label">
-                    First subscription charge (days after payment)
-                  </label>
+                  <label className="label">First subscription charge (days after payment)</label>
                   <input
                     type="number"
                     className="input"
                     required
                     min={0}
                     max={365}
-                    step={1}
                     placeholder="30"
                     value={startAfterDays}
                     onChange={(e) => setStartAfterDays(e.target.value)}
                   />
                   <p className="text-xs text-slate-500 mt-1">
                     {Number(startAfterDays || 0) === 0
-                      ? "Subscription starts the day the customer pays (charged together with the setup fee)."
-                      : `First subscription charge will run ${Number(
-                          startAfterDays || 0,
-                        )} day${Number(startAfterDays) === 1 ? "" : "s"} after the customer pays. Only the setup fee is charged that day.`}
+                      ? "Subscription starts the day the customer pays."
+                      : `First subscription charge ${Number(startAfterDays || 0)} day${Number(startAfterDays) === 1 ? "" : "s"} after payment.`}
                   </p>
                 </div>
               </>
             )}
 
+            {/* ── INSTALLMENTS ─────────────────────────────────── */}
             {mode === "installments" && (
               <>
+                {/* Total + count */}
                 <div className="grid grid-cols-2 gap-3">
                   <div>
                     <label className="label">Total amount (USD)</label>
@@ -327,7 +398,7 @@ export function CreateLinkModal({
                       inputMode="decimal"
                       placeholder="1500.00"
                       value={installTotal}
-                      onChange={(e) => setInstallTotal(e.target.value)}
+                      onChange={(e) => distributeTotal(e.target.value)}
                     />
                   </div>
                   <div>
@@ -340,53 +411,163 @@ export function CreateLinkModal({
                       max={24}
                       step={1}
                       value={installCount}
-                      onChange={(e) => setInstallCount(e.target.value)}
+                      onChange={(e) => changeCount(Number(e.target.value))}
                     />
                   </div>
                 </div>
+
+                {perPayment && (
+                  <p className="text-xs text-slate-500 -mt-1">
+                    {installCount} × ${perPayment}
+                  </p>
+                )}
+
+                {/* Schedule type toggle */}
                 <div>
-                  <label className="label">Payment frequency</label>
-                  <select
-                    className="input"
-                    value={installFrequency}
-                    onChange={(e) => setInstallFrequency(e.target.value)}
-                  >
-                    <option value="weekly">Weekly</option>
-                    <option value="monthly">Monthly</option>
-                    <option value="quarterly">Quarterly</option>
-                    <option value="yearly">Yearly</option>
-                  </select>
-                </div>
-                <label className="flex items-center gap-2.5 cursor-pointer select-none">
-                  <span
-                    className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors ${
-                      installFirstToday ? "bg-brand-600" : "bg-slate-200"
-                    }`}
-                    onClick={() => setInstallFirstToday(!installFirstToday)}
-                  >
-                    <span
-                      className={`inline-block h-3.5 w-3.5 rounded-full bg-white shadow-sm transition-transform ${
-                        installFirstToday ? "translate-x-[18px]" : "translate-x-[3px]"
+                  <label className="label">Payment schedule</label>
+                  <div className="grid grid-cols-2 rounded-lg border border-slate-200 overflow-hidden">
+                    <button
+                      type="button"
+                      onClick={() => setInstallScheduleType("frequency")}
+                      className={`py-1.5 text-xs font-medium transition-colors ${
+                        installScheduleType === "frequency"
+                          ? "bg-brand-600 text-white"
+                          : "text-slate-600 bg-white hover:bg-slate-50"
                       }`}
-                    />
-                  </span>
-                  <input
-                    type="checkbox"
-                    checked={installFirstToday}
-                    onChange={() => setInstallFirstToday(!installFirstToday)}
-                    className="sr-only"
-                  />
-                  <div>
-                    <span className="text-sm text-slate-700 font-medium">
-                      Charge first payment today
-                    </span>
-                    <p className="text-xs text-slate-500 mt-0.5">
-                      {installFirstToday
-                        ? `First payment charged immediately; remaining ${Math.max(0, Number(installCount || 0) - 1)} scheduled automatically.`
-                        : `All ${installCount || "N"} payments deferred to schedule (first runs tonight at 2 AM UTC).`}
+                    >
+                      By frequency
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setInstallScheduleType("dates")}
+                      className={`py-1.5 text-xs font-medium border-l border-slate-200 transition-colors ${
+                        installScheduleType === "dates"
+                          ? "bg-brand-600 text-white"
+                          : "text-slate-600 bg-white hover:bg-slate-50"
+                      }`}
+                    >
+                      Specific dates
+                    </button>
+                  </div>
+                </div>
+
+                {/* Frequency mode */}
+                {installScheduleType === "frequency" && (
+                  <>
+                    <div>
+                      <label className="label">Frequency</label>
+                      <select
+                        className="input"
+                        value={installFrequency}
+                        onChange={(e) => setInstallFrequency(e.target.value)}
+                      >
+                        <option value="weekly">Weekly</option>
+                        <option value="monthly">Monthly</option>
+                        <option value="quarterly">Quarterly</option>
+                        <option value="yearly">Yearly</option>
+                      </select>
+                    </div>
+                    <label className="flex items-center gap-2.5 cursor-pointer select-none">
+                      <Toggle checked={installFirstToday} onChange={() => setInstallFirstToday(!installFirstToday)} />
+                      <input
+                        type="checkbox"
+                        checked={installFirstToday}
+                        onChange={() => setInstallFirstToday(!installFirstToday)}
+                        className="sr-only"
+                      />
+                      <div>
+                        <span className="text-sm text-slate-700 font-medium">Charge first payment today</span>
+                        <p className="text-xs text-slate-500 mt-0.5">
+                          {installFirstToday
+                            ? `First payment charged immediately; ${installCount - 1} more scheduled automatically.`
+                            : `All ${installCount} payments scheduled (first runs tonight at 2 AM UTC).`}
+                        </p>
+                      </div>
+                    </label>
+                  </>
+                )}
+
+                {/* Custom dates mode */}
+                {installScheduleType === "dates" && (
+                  <div className="space-y-2">
+                    <p className="text-xs text-slate-500">
+                      First payment on or before today is charged immediately when the customer submits.
+                    </p>
+                    {Array.from({ length: installCount }).map((_, i) => (
+                      <div key={i} className="flex items-center gap-2">
+                        <span className="text-xs text-slate-500 w-20 shrink-0">Payment {i + 1}</span>
+                        <input
+                          type="date"
+                          className="input flex-1"
+                          required
+                          value={installDates[i] ?? ""}
+                          onChange={(e) => setDate(i, e.target.value)}
+                        />
+                        <input
+                          type="text"
+                          inputMode="decimal"
+                          className="input w-24"
+                          placeholder={perPayment ?? "amount"}
+                          value={installAmounts[i] ?? ""}
+                          onChange={(e) => setInstallAmt(i, e.target.value)}
+                        />
+                      </div>
+                    ))}
+                    <p className="text-xs text-slate-400">
+                      Leave amount blank to split total equally.
                     </p>
                   </div>
-                </label>
+                )}
+
+                {/* Divider */}
+                <div className="border-t border-slate-100 pt-2">
+                  <label className="flex items-center gap-2.5 cursor-pointer select-none">
+                    <Toggle checked={installIncludeSub} onChange={() => setInstallIncludeSub(!installIncludeSub)} />
+                    <input
+                      type="checkbox"
+                      checked={installIncludeSub}
+                      onChange={() => setInstallIncludeSub(!installIncludeSub)}
+                      className="sr-only"
+                    />
+                    <div>
+                      <span className="text-sm text-slate-700 font-medium">
+                        Start a subscription after the last payment
+                      </span>
+                      <p className="text-xs text-slate-500 mt-0.5">
+                        Recurring charge begins automatically after all installments are paid.
+                      </p>
+                    </div>
+                  </label>
+
+                  {installIncludeSub && (
+                    <div className="grid grid-cols-2 gap-3 mt-3 pl-11">
+                      <div>
+                        <label className="label">Monthly amount (USD)</label>
+                        <input
+                          className="input"
+                          required
+                          inputMode="decimal"
+                          placeholder="99.00"
+                          value={installSubAmount}
+                          onChange={(e) => setInstallSubAmount(e.target.value)}
+                        />
+                      </div>
+                      <div>
+                        <label className="label">Frequency</label>
+                        <select
+                          className="input"
+                          value={installSubFrequency}
+                          onChange={(e) => setInstallSubFrequency(e.target.value)}
+                        >
+                          <option value="weekly">Weekly</option>
+                          <option value="monthly">Monthly</option>
+                          <option value="quarterly">Quarterly</option>
+                          <option value="yearly">Yearly</option>
+                        </select>
+                      </div>
+                    </div>
+                  )}
+                </div>
               </>
             )}
 
@@ -400,6 +581,8 @@ export function CreateLinkModal({
                     ? "Monthly wellness plan"
                     : mode === "combined"
                     ? "Onboarding + monthly plan"
+                    : mode === "installments"
+                    ? "Procedure financing"
                     : "Lab work"
                 }
                 value={description}
@@ -414,19 +597,10 @@ export function CreateLinkModal({
             )}
 
             <div className="flex gap-3 pt-1">
-              <button
-                type="button"
-                className="btn-secondary flex-1"
-                onClick={onClose}
-                disabled={loading}
-              >
+              <button type="button" className="btn-secondary flex-1" onClick={onClose} disabled={loading}>
                 Cancel
               </button>
-              <button
-                type="submit"
-                className="btn-primary flex-1"
-                disabled={loading}
-              >
+              <button type="submit" className="btn-primary flex-1" disabled={loading}>
                 {loading ? "Creating…" : "Generate link"}
               </button>
             </div>

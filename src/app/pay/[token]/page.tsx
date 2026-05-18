@@ -40,11 +40,17 @@ type Meta = {
   startOn?: string;
   // installments
   installments?: boolean;
+  scheduleType?: "frequency" | "dates";
   totalCents?: number;
   count?: number;
-  perPaymentCents?: number;
+  perPaymentCents?: number[];
   remainingCount?: number;
   installFirstToday?: boolean;
+  scheduledDates?: string[];
+  firstIsToday?: boolean;
+  // optional subscription after last installment
+  subAmountCents?: number;
+  subFrequency?: string;
 };
 
 function resolveStartAfterDays(meta: Meta): number {
@@ -292,10 +298,43 @@ function CombinedSummary({
 function InstallmentsSummary({ meta }: { meta: Meta }) {
   const total = meta.totalCents ?? 0;
   const count = meta.count ?? 0;
-  const perPayment = meta.perPaymentCents ?? 0;
-  const firstToday = meta.installFirstToday ?? true;
-  const remaining = meta.remainingCount ?? 0;
+  const perArr = Array.isArray(meta.perPaymentCents)
+    ? meta.perPaymentCents
+    : Array(count).fill(meta.perPaymentCents ?? 0);
+  const scheduleType = meta.scheduleType ?? "frequency";
+
+  // Determine today's charge
+  const firstCents = perArr[0] ?? 0;
+  const chargedToday =
+    scheduleType === "dates"
+      ? meta.firstIsToday
+      : meta.installFirstToday ?? true;
+
   const freqLabel = frequencyLabel(meta.frequency ?? null);
+
+  // Build payment rows
+  const paymentRows: { label: string; cents: number }[] = [];
+  if (scheduleType === "dates" && meta.scheduledDates) {
+    meta.scheduledDates.forEach((date, i) => {
+      paymentRows.push({
+        label: new Date(`${date}T00:00:00`).toLocaleDateString("en-US", {
+          month: "short",
+          day: "numeric",
+          year: "numeric",
+        }),
+        cents: perArr[i] ?? firstCents,
+      });
+    });
+  } else {
+    paymentRows.push({ label: chargedToday ? "Today" : "Payment 1 (tonight)", cents: firstCents });
+    const remaining = meta.remainingCount ?? count - (chargedToday ? 1 : 0);
+    if (remaining > 0) {
+      paymentRows.push({
+        label: `+ ${remaining} more ${freqLabel ?? ""} payment${remaining !== 1 ? "s" : ""}`,
+        cents: perArr[1] ?? firstCents,
+      });
+    }
+  }
 
   return (
     <div>
@@ -306,29 +345,28 @@ function InstallmentsSummary({ meta }: { meta: Meta }) {
         {formatMoney(total)}
       </p>
       <p className="text-sm text-slate-500 mb-3">
-        {count} payments of {formatMoney(perPayment)} {freqLabel ?? ""}
+        {count} payment{count !== 1 ? "s" : ""}
+        {scheduleType === "frequency" && freqLabel ? ` · ${freqLabel}` : ""}
       </p>
 
       <ul className="text-sm text-slate-600 space-y-1.5 border-t border-slate-100 pt-3">
-        <li className="flex justify-between font-medium">
-          <span>{firstToday ? "Due today" : `Payment 1 (tonight)`}</span>
-          <span className="tabular-nums">{formatMoney(perPayment)}</span>
-        </li>
-        {remaining > 0 && (
-          <li className="flex justify-between text-slate-500 text-xs">
-            <span>
-              Then {remaining} more {freqLabel ?? "payment"} payment
-              {remaining !== 1 ? "s" : ""}
-            </span>
-            <span className="tabular-nums">{formatMoney(perPayment)} each</span>
+        {paymentRows.map((row, i) => (
+          <li key={i} className={`flex justify-between ${i === 0 && chargedToday ? "font-medium" : "text-slate-500 text-xs"}`}>
+            <span>{row.label}</span>
+            <span className="tabular-nums">{formatMoney(row.cents)}</span>
+          </li>
+        ))}
+        {meta.subAmountCents && meta.subAmountCents >= 50 && (
+          <li className="flex justify-between text-slate-500 text-xs border-t border-slate-100 pt-2 mt-1">
+            <span>Then subscription {frequencyLabel(meta.subFrequency ?? null) ?? ""}</span>
+            <span className="tabular-nums">{formatMoney(meta.subAmountCents)}</span>
           </li>
         )}
       </ul>
 
-      {!firstToday && (
+      {!chargedToday && (
         <p className="text-xs text-slate-500 mt-3">
-          No charge today — your card is saved. The first payment runs tonight
-          at 2 AM UTC.
+          No charge today — your card is saved and the first payment processes on the scheduled date.
         </p>
       )}
     </div>

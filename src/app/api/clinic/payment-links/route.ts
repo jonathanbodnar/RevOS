@@ -38,8 +38,14 @@ const Body = z.object({
   // installments-mode fields
   installTotal: z.string().optional(),
   installCount: z.string().optional(),
+  installAmounts: z.string().optional(),       // JSON: string[] of per-payment USD amounts
+  installScheduleType: z.enum(["frequency", "dates"]).optional(),
   installFrequency: z.enum(["weekly", "monthly", "quarterly", "yearly"]).optional(),
   installFirstToday: z.string().optional(),
+  installDates: z.string().optional(),         // JSON: string[] of "YYYY-MM-DD" per payment
+  // optional subscription that starts after last installment
+  installSubAmount: z.string().optional(),
+  installSubFrequency: z.enum(["weekly", "monthly", "quarterly", "yearly"]).optional(),
 });
 
 export async function POST(req: Request) {
@@ -151,12 +157,6 @@ export async function POST(req: Request) {
       startsToday,
     };
   } else if (parsed.data.mode === "installments") {
-    if (!parsed.data.installFrequency) {
-      return NextResponse.json(
-        { error: "Frequency is required for installments" },
-        { status: 400 },
-      );
-    }
     const totalCents = parseMoneyInputToCents(parsed.data.installTotal ?? "");
     if (totalCents === null || totalCents < 100) {
       return NextResponse.json(
@@ -171,27 +171,111 @@ export async function POST(req: Request) {
         { status: 400 },
       );
     }
-    const installFirstToday = parsed.data.installFirstToday !== "false";
-    const perPaymentCents = Math.round(totalCents / count);
-    if (perPaymentCents < 50) {
+
+    // Parse per-payment amounts (may be blank = evenly split)
+    let rawAmounts: string[] = [];
+    try {
+      rawAmounts = JSON.parse(parsed.data.installAmounts ?? "[]") as string[];
+    } catch { /* ignore, fall back to even split */ }
+
+    // Resolve each payment's cents: use supplied amount if valid, else split total
+    const perPaymentCents = rawAmounts.map((a) => {
+      const c = parseMoneyInputToCents(a ?? "");
+      return c && c >= 50 ? c : Math.round(totalCents / count);
+    });
+    if (perPaymentCents.length < count) {
+      while (perPaymentCents.length < count) {
+        perPaymentCents.push(Math.round(totalCents / count));
+      }
+    }
+
+    if (perPaymentCents.some((c) => c < 50)) {
       return NextResponse.json(
         { error: "Each payment must be at least $0.50" },
         { status: 400 },
       );
     }
-    // amountCents = day-of charge (first installment if installFirstToday, else 0)
-    amountCents = installFirstToday ? perPaymentCents : 0;
-    metadata = {
-      ...metadata,
-      installments: true,
-      totalCents,
-      count,
-      perPaymentCents,
-      frequency: parsed.data.installFrequency,
-      installFirstToday,
-      // Number of future payments (those not charged immediately)
-      remainingCount: installFirstToday ? count - 1 : count,
-    };
+
+    const scheduleType = parsed.data.installScheduleType ?? "frequency";
+
+    if (scheduleType === "dates") {
+      // ── Custom-dates mode ──────────────────────────────────────────
+      let dates: string[] = [];
+      try {
+        dates = JSON.parse(parsed.data.installDates ?? "[]") as string[];
+      } catch {
+        return NextResponse.json({ error: "Invalid installDates" }, { status: 400 });
+      }
+      if (dates.length !== count) {
+        return NextResponse.json(
+          { error: `Expected ${count} dates, got ${dates.length}` },
+          { status: 400 },
+        );
+      }
+
+      const today = new Date().toISOString().slice(0, 10);
+      const firstIsToday = dates[0] <= today;
+      // Day-of charge = first payment if its date is today or in the past
+      amountCents = firstIsToday ? perPaymentCents[0] : 0;
+
+      // Optional subscription after last payment
+      let subMeta: Record<string, unknown> = {};
+      if (parsed.data.installSubAmount && parsed.data.installSubFrequency) {
+        const subCents = parseMoneyInputToCents(parsed.data.installSubAmount);
+        if (subCents && subCents >= 50) {
+          subMeta = {
+            subAmountCents: subCents,
+            subFrequency: parsed.data.installSubFrequency,
+          };
+        }
+      }
+
+      metadata = {
+        ...metadata,
+        installments: true,
+        scheduleType: "dates",
+        totalCents,
+        count,
+        perPaymentCents,
+        scheduledDates: dates,
+        firstIsToday,
+        ...subMeta,
+      };
+    } else {
+      // ── Frequency mode ─────────────────────────────────────────────
+      if (!parsed.data.installFrequency) {
+        return NextResponse.json(
+          { error: "Frequency is required for installments" },
+          { status: 400 },
+        );
+      }
+      const installFirstToday = parsed.data.installFirstToday !== "false";
+      amountCents = installFirstToday ? perPaymentCents[0] : 0;
+
+      let subMeta: Record<string, unknown> = {};
+      if (parsed.data.installSubAmount && parsed.data.installSubFrequency) {
+        const subCents = parseMoneyInputToCents(parsed.data.installSubAmount);
+        if (subCents && subCents >= 50) {
+          subMeta = {
+            subAmountCents: subCents,
+            subFrequency: parsed.data.installSubFrequency,
+          };
+        }
+      }
+
+      metadata = {
+        ...metadata,
+        installments: true,
+        scheduleType: "frequency",
+        totalCents,
+        count,
+        perPaymentCents,
+        frequency: parsed.data.installFrequency,
+        installFirstToday,
+        remainingCount: installFirstToday ? count - 1 : count,
+        ...subMeta,
+      };
+    }
   }
 
   const token = randomBytes(24).toString("hex");
