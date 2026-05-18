@@ -531,10 +531,10 @@ export function CreateLinkModal({
                     />
                     <div>
                       <span className="text-sm text-slate-700 font-medium">
-                        Start a subscription after the last payment
+                        Also start a subscription
                       </span>
                       <p className="text-xs text-slate-500 mt-0.5">
-                        Recurring charge begins automatically after all installments are paid.
+                        Subscription runs alongside the installments, starting the day the customer signs up.
                       </p>
                     </div>
                   </label>

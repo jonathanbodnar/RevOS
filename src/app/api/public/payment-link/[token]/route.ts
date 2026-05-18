@@ -309,20 +309,9 @@ export async function POST(
         });
       }
 
-      // Optional subscription after last installment
+      // Optional subscription — starts immediately alongside the installments
       if (meta.subAmountCents && meta.subFrequency && meta.subAmountCents >= 50) {
-        // Start subscription the day after the last scheduled payment
-        const lastDate = meta.scheduledDates
-          ? meta.scheduledDates[meta.scheduledDates.length - 1]
-          : (() => {
-              const freq: Frequency = (meta.frequency as Frequency) || "monthly";
-              const count = meta.count ?? 1;
-              let d = new Date();
-              for (let i = 0; i < count; i++) d = addOneFrequency(d, freq);
-              return d.toISOString().slice(0, 10);
-            })();
-
-        const lpStartOn = subtractOneFrequency(lastDate, meta.subFrequency);
+        const lpStartOn = todayIso();
 
         const lpSub = await lunarpay.createSubscription({
           customerId: lpCustomerId,
