@@ -43,9 +43,10 @@ const Body = z.object({
   installFrequency: z.enum(["weekly", "monthly", "quarterly", "yearly"]).optional(),
   installFirstToday: z.string().optional(),
   installDates: z.string().optional(),         // JSON: string[] of "YYYY-MM-DD" per payment
-  // optional subscription that starts after last installment
+  // optional concurrent subscription
   installSubAmount: z.string().optional(),
   installSubFrequency: z.enum(["weekly", "monthly", "quarterly", "yearly"]).optional(),
+  installSubFirstCharge: z.string().optional(), // "YYYY-MM-DD"; blank = start immediately
 });
 
 export async function POST(req: Request) {
@@ -226,6 +227,7 @@ export async function POST(req: Request) {
           subMeta = {
             subAmountCents: subCents,
             subFrequency: parsed.data.installSubFrequency,
+            subFirstChargeDate: parsed.data.installSubFirstCharge ?? null,
           };
         }
       }
@@ -259,6 +261,7 @@ export async function POST(req: Request) {
           subMeta = {
             subAmountCents: subCents,
             subFrequency: parsed.data.installSubFrequency,
+            subFirstChargeDate: parsed.data.installSubFirstCharge ?? null,
           };
         }
       }

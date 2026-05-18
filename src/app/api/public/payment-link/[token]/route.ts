@@ -103,9 +103,10 @@ export async function POST(
     // custom-dates installments
     scheduledDates?: string[];
     firstIsToday?: boolean;
-    // optional subscription after last installment
+    // optional concurrent subscription
     subAmountCents?: number;
     subFrequency?: Frequency;
+    subFirstChargeDate?: string | null; // "YYYY-MM-DD"; null = start immediately
   };
 
   try {
@@ -309,9 +310,14 @@ export async function POST(
         });
       }
 
-      // Optional subscription — starts immediately alongside the installments
+      // Optional concurrent subscription — startOn computed from desired first charge date.
       if (meta.subAmountCents && meta.subFrequency && meta.subAmountCents >= 50) {
-        const lpStartOn = todayIso();
+        // If a first charge date was set, back-calculate startOn so LunarPay's
+        // nextPaymentOn lands exactly on that date.
+        // Formula: startOn = firstChargeDate − 1 frequency
+        const lpStartOn = meta.subFirstChargeDate
+          ? subtractOneFrequency(meta.subFirstChargeDate, meta.subFrequency)
+          : todayIso();
 
         const lpSub = await lunarpay.createSubscription({
           customerId: lpCustomerId,

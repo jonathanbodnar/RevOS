@@ -48,9 +48,10 @@ type Meta = {
   installFirstToday?: boolean;
   scheduledDates?: string[];
   firstIsToday?: boolean;
-  // optional subscription after last installment
+  // optional concurrent subscription
   subAmountCents?: number;
   subFrequency?: string;
+  subFirstChargeDate?: string | null;
 };
 
 function resolveStartAfterDays(meta: Meta): number {
@@ -358,7 +359,13 @@ function InstallmentsSummary({ meta }: { meta: Meta }) {
         ))}
         {meta.subAmountCents && meta.subAmountCents >= 50 && (
           <li className="flex justify-between text-slate-500 text-xs border-t border-slate-100 pt-2 mt-1">
-            <span>+ Subscription starting today {frequencyLabel(meta.subFrequency ?? null) ?? ""}</span>
+            <span>
+              + Subscription{" "}
+              {meta.subFirstChargeDate
+                ? `starting ${new Date(`${meta.subFirstChargeDate}T00:00:00`).toLocaleDateString("en-US", { month: "short", day: "numeric" })}`
+                : "starting today"}{" "}
+              {frequencyLabel(meta.subFrequency ?? null) ?? ""}
+            </span>
             <span className="tabular-nums">{formatMoney(meta.subAmountCents)}</span>
           </li>
         )}

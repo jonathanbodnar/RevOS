@@ -20,16 +20,10 @@ function buildDefaultDates(count: number, firstToday: boolean): string[] {
   return Array.from({ length: count }, (_, i) => addMonths(base, i));
 }
 
-function Toggle({
-  checked,
-  onChange,
-}: {
-  checked: boolean;
-  onChange: () => void;
-}) {
+/** Pure visual toggle — no onClick. Parent <label> handles all interaction. */
+function Toggle({ checked }: { checked: boolean }) {
   return (
     <span
-      onClick={onChange}
       className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer items-center rounded-full transition-colors ${
         checked ? "bg-brand-600" : "bg-slate-200"
       }`}
@@ -77,10 +71,11 @@ export function CreateLinkModal({
     buildDefaultDates(3, true),
   );
 
-  // installments — optional subscription after last payment
+  // installments — optional concurrent subscription
   const [installIncludeSub, setInstallIncludeSub] = useState(false);
   const [installSubAmount, setInstallSubAmount] = useState("");
   const [installSubFrequency, setInstallSubFrequency] = useState("monthly");
+  const [installSubFirstCharge, setInstallSubFirstCharge] = useState(""); // "YYYY-MM-DD" or blank = immediate
 
   const [description, setDescription] = useState("");
   const [loading, setLoading] = useState(false);
@@ -161,6 +156,7 @@ export function CreateLinkModal({
       if (installIncludeSub) {
         body.installSubAmount = installSubAmount;
         body.installSubFrequency = installSubFrequency;
+        if (installSubFirstCharge) body.installSubFirstCharge = installSubFirstCharge;
       }
     }
 
@@ -316,7 +312,7 @@ export function CreateLinkModal({
                   </div>
                 </div>
                 <label className="flex items-center gap-2.5 cursor-pointer select-none">
-                  <Toggle checked={trial} onChange={() => setTrial(!trial)} />
+                  <Toggle checked={trial} />
                   <input type="checkbox" checked={trial} onChange={() => setTrial(!trial)} className="sr-only" />
                   <div>
                     <span className="text-sm text-slate-700 font-medium">Free trial — no charge today</span>
@@ -468,7 +464,7 @@ export function CreateLinkModal({
                       </select>
                     </div>
                     <label className="flex items-center gap-2.5 cursor-pointer select-none">
-                      <Toggle checked={installFirstToday} onChange={() => setInstallFirstToday(!installFirstToday)} />
+                      <Toggle checked={installFirstToday} />
                       <input
                         type="checkbox"
                         checked={installFirstToday}
@@ -522,7 +518,7 @@ export function CreateLinkModal({
                 {/* Divider */}
                 <div className="border-t border-slate-100 pt-2">
                   <label className="flex items-center gap-2.5 cursor-pointer select-none">
-                    <Toggle checked={installIncludeSub} onChange={() => setInstallIncludeSub(!installIncludeSub)} />
+                    <Toggle checked={installIncludeSub} />
                     <input
                       type="checkbox"
                       checked={installIncludeSub}
@@ -534,36 +530,53 @@ export function CreateLinkModal({
                         Also start a subscription
                       </span>
                       <p className="text-xs text-slate-500 mt-0.5">
-                        Subscription runs alongside the installments, starting the day the customer signs up.
+                        Recurring charge runs alongside the installments.
                       </p>
                     </div>
                   </label>
 
                   {installIncludeSub && (
-                    <div className="grid grid-cols-2 gap-3 mt-3 pl-11">
-                      <div>
-                        <label className="label">Monthly amount (USD)</label>
-                        <input
-                          className="input"
-                          required
-                          inputMode="decimal"
-                          placeholder="99.00"
-                          value={installSubAmount}
-                          onChange={(e) => setInstallSubAmount(e.target.value)}
-                        />
+                    <div className="space-y-3 mt-3 pl-11">
+                      <div className="grid grid-cols-2 gap-3">
+                        <div>
+                          <label className="label">Amount (USD)</label>
+                          <input
+                            className="input"
+                            required
+                            inputMode="decimal"
+                            placeholder="99.00"
+                            value={installSubAmount}
+                            onChange={(e) => setInstallSubAmount(e.target.value)}
+                          />
+                        </div>
+                        <div>
+                          <label className="label">Frequency</label>
+                          <select
+                            className="input"
+                            value={installSubFrequency}
+                            onChange={(e) => setInstallSubFrequency(e.target.value)}
+                          >
+                            <option value="weekly">Weekly</option>
+                            <option value="monthly">Monthly</option>
+                            <option value="quarterly">Quarterly</option>
+                            <option value="yearly">Yearly</option>
+                          </select>
+                        </div>
                       </div>
                       <div>
-                        <label className="label">Frequency</label>
-                        <select
+                        <label className="label">First charge date (optional)</label>
+                        <input
+                          type="date"
                           className="input"
-                          value={installSubFrequency}
-                          onChange={(e) => setInstallSubFrequency(e.target.value)}
-                        >
-                          <option value="weekly">Weekly</option>
-                          <option value="monthly">Monthly</option>
-                          <option value="quarterly">Quarterly</option>
-                          <option value="yearly">Yearly</option>
-                        </select>
+                          value={installSubFirstCharge}
+                          min={todayStr()}
+                          onChange={(e) => setInstallSubFirstCharge(e.target.value)}
+                        />
+                        <p className="text-xs text-slate-500 mt-1">
+                          {installSubFirstCharge
+                            ? `First subscription charge on ${new Date(`${installSubFirstCharge}T00:00:00`).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}, then ${installSubFrequency}.`
+                            : "Leave blank to start immediately (first charge in 1 billing cycle)."}
+                        </p>
                       </div>
                     </div>
                   )}
