@@ -162,7 +162,7 @@ export async function POST(
       );
     }
 
-    // ─── TRANSACTION FLOW (one-time payment) ──────────────────────────────
+    // ─── PURE TRANSACTION FLOW (one-time payment, no vault) ───────────────
     // Fortis already charged the card inside the iframe (with processing fee
     // included in the intention amount). Record the fee-included total in DB.
     if (isTransactionFlow) {
@@ -242,33 +242,56 @@ export async function POST(
       ? `[${clinicLabel}] ${sess.description}`
       : `[${clinicLabel}]`;
 
-    // 4) Charge the today total — skipped entirely for trial subscriptions.
+    // 4) Day-of charge — skipped entirely for trial subscriptions.
     //    Combined mode's `amountCents` already bundles setup fee + (sub if
-    //    starting today); subscription mode uses its amount. Processing fee
-    //    (3.9% + $0.39) is added on top before sending to LunarPay.
+    //    starting today); subscription mode uses its amount; installments
+    //    use the first-payment amount. Processing fee (3.9% + $0.39) is
+    //    added on top before sending to Fortis/LunarPay.
+    //
+    //    Two paths:
+    //      a) `transactionId` is present → Fortis already charged the card
+    //         via `action: "sale"` in the iframe. Just record it.
+    //      b) Otherwise → call lunarpay.createCharge ourselves (legacy
+    //         tokenization path that didn't include a day-of charge).
     if (!meta.trial && sess.amountCents > 0) {
       const { totalCents: chargeTotal } = calcFee(sess.amountCents);
-      const lpCharge = await lunarpay.createCharge({
-        customerId: lpCustomerId,
-        paymentMethodId: lpPm.data.id,
-        amount: chargeTotal,
-        description,
-      });
-
-      await prisma.charge.create({
-        data: {
-          clinicId: resolvedClinicId,
-          customerId: customer.id,
-          paymentMethodId: pm.id,
-          paymentLinkId: sess.id,
-          lunarpayChargeId: String(lpCharge.data.id),
-          fortisTransactionId: lpCharge.data.fortisTransactionId ?? null,
-          amountCents: lpCharge.data.amount,
-          status: lpCharge.data.status,
-          paymentMethodType: lpCharge.data.paymentMethod,
-          description: sess.description ?? null,
-        },
-      });
+      if (transactionId) {
+        await prisma.charge.create({
+          data: {
+            clinicId: resolvedClinicId,
+            customerId: customer.id,
+            paymentMethodId: pm.id,
+            paymentLinkId: sess.id,
+            lunarpayChargeId: transactionId,
+            fortisTransactionId: transactionId,
+            amountCents: chargeTotal,
+            status: "paid",
+            paymentMethodType: paymentMethod ?? "cc",
+            description: sess.description ?? null,
+          },
+        });
+      } else {
+        const lpCharge = await lunarpay.createCharge({
+          customerId: lpCustomerId,
+          paymentMethodId: lpPm.data.id,
+          amount: chargeTotal,
+          description,
+        });
+        await prisma.charge.create({
+          data: {
+            clinicId: resolvedClinicId,
+            customerId: customer.id,
+            paymentMethodId: pm.id,
+            paymentLinkId: sess.id,
+            lunarpayChargeId: String(lpCharge.data.id),
+            fortisTransactionId: lpCharge.data.fortisTransactionId ?? null,
+            amountCents: lpCharge.data.amount,
+            status: lpCharge.data.status,
+            paymentMethodType: lpCharge.data.paymentMethod,
+            description: sess.description ?? null,
+          },
+        });
+      }
     }
 
     // 5a) Create installment schedule if this is an installments link.

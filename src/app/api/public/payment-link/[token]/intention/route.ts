@@ -6,13 +6,23 @@ import { calcFee } from "@/lib/fees";
 /**
  * Mint a Fortis clientToken for the public payment-link page.
  *
- * Intention type depends on the link mode:
- *   - "payment" → transaction intention: Fortis charges the card directly
- *                 inside the iframe. Backend must NOT charge again.
- *   - "subscription" / "combined" / "installments" / trial
- *                → tokenization intention: Fortis vaults the card with NO
- *                  $0.01 verification charge. Backend creates the
- *                  subscription / installment schedule against the vault id.
+ * Three possible intention shapes:
+ *
+ *   - One-time payment (mode === "payment"):
+ *       transaction intention (amount only). Fortis charges in iframe.
+ *
+ *   - Vault + charge today (sub starting today, combined w/ setup fee,
+ *     installments where the first payment is today):
+ *       action: "sale" + amount. Fortis charges the day-of amount AND
+ *       vaults the card in one shot. Backend records the charge from
+ *       the transactionId and uses the tokenizeId for the recurring/
+ *       scheduled payments — it must NOT call createCharge again.
+ *
+ *   - Pure vault, no charge (trial subs, installments where the first
+ *     payment is in the future, save-card flows):
+ *       action: "tokenization" (no amount). Fortis vaults the card with
+ *       NO $0.01 verification charge. Backend creates the subscription /
+ *       schedule against the vault id.
  */
 export async function POST(
   _req: Request,
@@ -49,17 +59,31 @@ export async function POST(
     : {};
   const isTrial = !!meta.trial;
 
-  // One-time payments: transaction intention → Fortis charges in iframe.
-  // Anything else: tokenization intention → card vaulted with no $0.01 auth.
-  //
-  // NOTE: tokenization intentions must NOT include `paymentMethods` — adding
-  // ach there makes Fortis fall back to transaction validation and reject the
-  // form with "Amount is required and must be an integer (in cents)".
   const isOneTime = sess.mode === "payment";
-  const { totalCents } = calcFee(sess.amountCents);
-  const intentionBody = isOneTime
-    ? { amount: totalCents, paymentMethods: ["cc", "ach"] }
-    : { action: "tokenization" };
+  // Day-of money owed (always 0 for trials and for installments/combined
+  // where nothing is due today). sess.amountCents already encodes whatever
+  // the create-link route decided was the day-of base amount.
+  const dayOfBaseCents = isTrial ? 0 : sess.amountCents;
+  const dayOfTotalCents = dayOfBaseCents > 0 ? calcFee(dayOfBaseCents).totalCents : 0;
+
+  let intentionBody: Record<string, unknown>;
+  let intentionType: "transaction" | "sale" | "tokenization";
+  if (isOneTime) {
+    intentionBody = { amount: dayOfTotalCents, paymentMethods: ["cc", "ach"] };
+    intentionType = "transaction";
+  } else if (dayOfTotalCents > 0) {
+    // Need to BOTH charge today AND vault for future sub/schedule payments.
+    intentionBody = {
+      action: "sale",
+      amount: dayOfTotalCents,
+      paymentMethods: ["cc", "ach"],
+    };
+    intentionType = "sale";
+  } else {
+    // Pure vault, no charge today.
+    intentionBody = { action: "tokenization", paymentMethods: ["cc", "ach"] };
+    intentionType = "tokenization";
+  }
 
   const res = await fetch(`${base}/api/v1/intentions`, {
     method: "POST",
@@ -86,11 +110,12 @@ export async function POST(
 
   return NextResponse.json({
     clientToken: data.clientToken,
-    // Expose intentionType so the client knows whether the charge already
-    // happened in the iframe ("transaction") or whether it should listen for
-    // tokenize_success and send a tokenizeId ("tokenization").
-    intentionType:
-      data.intentionType ?? (isOneTime ? "transaction" : "tokenization"),
+    // The client uses intentionType to decide which Fortis events to listen
+    // for and what to send to the submit endpoint:
+    //   "transaction"  → done       → { transactionId }
+    //   "tokenization" → tokenize_success → { tokenizeId, ... }
+    //   "sale"         → both → { transactionId, tokenizeId, ... }
+    intentionType: (data.intentionType as string | undefined) ?? intentionType,
     isTrial,
   });
 }

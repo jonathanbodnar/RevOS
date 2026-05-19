@@ -38,7 +38,7 @@ export async function POST(
       Authorization: `Bearer ${pk}`,
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({ action: "tokenization" }),
+    body: JSON.stringify({ action: "tokenization", paymentMethods: ["cc"] }),
     cache: "no-store",
   });
   const data = await res.json().catch(() => ({}));
