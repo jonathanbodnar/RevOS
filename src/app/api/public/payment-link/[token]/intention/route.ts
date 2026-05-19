@@ -51,11 +51,15 @@ export async function POST(
 
   // One-time payments: transaction intention → Fortis charges in iframe.
   // Anything else: tokenization intention → card vaulted with no $0.01 auth.
+  //
+  // NOTE: tokenization intentions must NOT include `paymentMethods` — adding
+  // ach there makes Fortis fall back to transaction validation and reject the
+  // form with "Amount is required and must be an integer (in cents)".
   const isOneTime = sess.mode === "payment";
   const { totalCents } = calcFee(sess.amountCents);
   const intentionBody = isOneTime
     ? { amount: totalCents, paymentMethods: ["cc", "ach"] }
-    : { action: "tokenization", paymentMethods: ["cc", "ach"] };
+    : { action: "tokenization" };
 
   const res = await fetch(`${base}/api/v1/intentions`, {
     method: "POST",
