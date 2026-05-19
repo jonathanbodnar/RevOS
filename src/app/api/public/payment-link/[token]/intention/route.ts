@@ -63,17 +63,29 @@ export async function POST(
   const isTrial = !!meta.trial;
 
   const isOneTime = sess.mode === "payment";
+  // Day-of base amount. Pure trials / deferred installments have 0 here.
+  const dayOfBaseCents = isTrial ? 0 : sess.amountCents;
+  const dayOfTotalCents = dayOfBaseCents > 0 ? calcFee(dayOfBaseCents).totalCents : 0;
+
   let intentionBody: Record<string, unknown>;
   let intentionType: "transaction" | "tokenization";
   if (isOneTime) {
     // Fortis charges in iframe. Backend just records the charge.
-    const { totalCents } = calcFee(sess.amountCents);
-    intentionBody = { amount: totalCents, paymentMethods: ["cc", "ach"] };
+    intentionBody = {
+      amount: calcFee(sess.amountCents).totalCents,
+      paymentMethods: ["cc", "ach"],
+    };
     intentionType = "transaction";
   } else {
-    // Vault only. Backend handles every actual charge (day-of, recurring,
-    // scheduled) using the vaulted payment method.
-    intentionBody = { action: "tokenization", paymentMethods: ["cc", "ach"] };
+    // Vault only. Backend handles every actual charge using the vaulted
+    // payment method. We still include `amount` because Fortis Elements'
+    // iframe validates the JWT and rejects intentions with no amount —
+    // it doesn't actually charge here, just displays the amount in the UI.
+    intentionBody = {
+      action: "tokenization",
+      amount: dayOfTotalCents, // 0 for trials / deferred installments
+      paymentMethods: ["cc", "ach"],
+    };
     intentionType = "tokenization";
   }
 

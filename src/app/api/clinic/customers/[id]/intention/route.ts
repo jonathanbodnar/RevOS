@@ -38,7 +38,13 @@ export async function POST(
       Authorization: `Bearer ${pk}`,
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({ action: "tokenization", paymentMethods: ["cc"] }),
+    // Fortis Elements rejects intentions with no `amount` even for pure
+    // tokenization (vault-only) flows, so we pass 0 to satisfy the validator.
+    body: JSON.stringify({
+      action: "tokenization",
+      amount: 0,
+      paymentMethods: ["cc"],
+    }),
     cache: "no-store",
   });
   const data = await res.json().catch(() => ({}));
