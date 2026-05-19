@@ -2,6 +2,8 @@ import { requireSuperAdmin } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
 import { AdminPaymentLinksClient } from "./payment-links-client";
 
+export const dynamic = "force-dynamic";
+
 export default async function AdminPaymentLinksPage() {
   await requireSuperAdmin();
 

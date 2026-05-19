@@ -2,6 +2,8 @@ import { requireClinicContext } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
 import { PaymentLinksClient } from "./payment-links-client";
 
+export const dynamic = "force-dynamic";
+
 export default async function InvoicesPage() {
   const { clinicId } = await requireClinicContext();
 
