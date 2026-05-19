@@ -10,7 +10,7 @@ export default async function InvoicesPage() {
     prisma.checkoutSession.findMany({
       where: {
         clinicId,
-        mode: { in: ["payment", "subscription", "combined"] },
+        mode: { in: ["payment", "subscription", "combined", "installments"] },
         customerId: null,
         isGlobal: false,
       },
@@ -24,7 +24,7 @@ export default async function InvoicesPage() {
     prisma.checkoutSession.findMany({
       where: {
         isGlobal: true,
-        mode: { in: ["payment", "subscription", "combined"] },
+        mode: { in: ["payment", "subscription", "combined", "installments"] },
         customerId: null,
         status: "open",
       },
