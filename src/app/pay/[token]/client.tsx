@@ -110,7 +110,13 @@ export function PayClient({
           { method: "POST" },
         );
         if (!res.ok) {
-          const d = (await res.json().catch(() => ({}))) as { error?: string };
+          const d = (await res.json().catch(() => ({}))) as {
+            error?: string;
+            sentBody?: unknown;
+            lunarPayResponse?: unknown;
+          };
+          // eslint-disable-next-line no-console
+          console.error("[intention] init failed", d);
           throw new Error(d.error || "Could not initialize form");
         }
         const intention = (await res.json()) as {

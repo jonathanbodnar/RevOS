@@ -2,6 +2,8 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireStringParams } from "@/lib/route-params";
 
+export const dynamic = "force-dynamic";
+
 export async function POST(
   _req: Request,
   ctx: { params: Promise<{ token: string }> },
@@ -18,23 +20,41 @@ export async function POST(
   if (!pk) {
     return NextResponse.json({ error: "Payments not configured" }, { status: 503 });
   }
+  // Pure vault — playbook says the body is exactly this, no `amount`.
+  const intentionBody = {
+    action: "tokenization",
+    paymentMethods: ["cc"],
+  };
+  const bodyString = JSON.stringify(intentionBody);
+  console.info(
+    `[intention/save-card] token=${token} → POST ${base}/api/v1/intentions body=${bodyString}`,
+  );
   const res = await fetch(`${base}/api/v1/intentions`, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${pk}`,
       "Content-Type": "application/json",
     },
-    // Pure vault — playbook says the body is exactly this, no `amount`.
-    body: JSON.stringify({
-      action: "tokenization",
-      paymentMethods: ["cc"],
-    }),
+    body: bodyString,
     cache: "no-store",
   });
-  const data = await res.json().catch(() => ({}));
+  const rawText = await res.text();
+  let data: { error?: string; message?: string } = {};
+  try {
+    data = JSON.parse(rawText);
+  } catch {
+    // not JSON
+  }
+  console.info(
+    `[intention/save-card] LunarPay response status=${res.status} body=${rawText}`,
+  );
   if (!res.ok) {
     return NextResponse.json(
-      { error: (data as { error?: string })?.error || "Upstream error" },
+      {
+        error: data.error || data.message || "Upstream error",
+        sentBody: intentionBody,
+        lunarPayResponse: rawText,
+      },
       { status: res.status },
     );
   }

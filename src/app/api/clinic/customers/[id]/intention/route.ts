@@ -2,6 +2,8 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireClinicApi } from "@/lib/api-guard";
 
+export const dynamic = "force-dynamic";
+
 /**
  * Mint a Fortis `clientToken` the admin's browser can use to mount
  * the Fortis Elements iframe. We hit LunarPay with the publishable key
@@ -32,23 +34,41 @@ export async function POST(
       { status: 503 },
     );
   }
+  // Pure vault — playbook says the body is exactly this, no `amount`.
+  const intentionBody = {
+    action: "tokenization",
+    paymentMethods: ["cc"],
+  };
+  const bodyString = JSON.stringify(intentionBody);
+  console.info(
+    `[intention/clinic-customer] customerId=${id} → POST ${base}/api/v1/intentions body=${bodyString}`,
+  );
   const res = await fetch(`${base}/api/v1/intentions`, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${pk}`,
       "Content-Type": "application/json",
     },
-    // Pure vault — playbook says the body is exactly this, no `amount`.
-    body: JSON.stringify({
-      action: "tokenization",
-      paymentMethods: ["cc"],
-    }),
+    body: bodyString,
     cache: "no-store",
   });
-  const data = await res.json().catch(() => ({}));
+  const rawText = await res.text();
+  let data: { error?: string; message?: string } = {};
+  try {
+    data = JSON.parse(rawText);
+  } catch {
+    // not JSON
+  }
+  console.info(
+    `[intention/clinic-customer] LunarPay response status=${res.status} body=${rawText}`,
+  );
   if (!res.ok) {
     return NextResponse.json(
-      { error: (data as { error?: string })?.error || "Intention failed" },
+      {
+        error: data.error || data.message || "Intention failed",
+        sentBody: intentionBody,
+        lunarPayResponse: rawText,
+      },
       { status: res.status },
     );
   }

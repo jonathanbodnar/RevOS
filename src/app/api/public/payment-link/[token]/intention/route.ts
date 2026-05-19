@@ -3,6 +3,11 @@ import { prisma } from "@/lib/prisma";
 import { requireStringParams } from "@/lib/route-params";
 import { calcFee } from "@/lib/fees";
 
+// POST routes are dynamic by default, but pin this explicitly to make sure
+// the route handler never gets cached on the edge — the LunarPay clientToken
+// is single-use and we must mint a fresh one on every page load.
+export const dynamic = "force-dynamic";
+
 /**
  * Mint a Fortis clientToken for the public payment-link page.
  *
@@ -86,25 +91,44 @@ export async function POST(
     intentionType = "tokenization";
   }
 
+  // Verbose logging so we can prove from Vercel logs exactly what we send
+  // and exactly what LunarPay returns. The LunarPay error
+  //   "Amount is required and must be an integer (in cents)"
+  // ONLY fires when their validator sees data.action === "sale" — so if it
+  // comes back, this log will show the literal body that triggered it.
+  const bodyString = JSON.stringify(intentionBody);
+  console.info(
+    `[intention/payment-link] token=${token} mode=${sess.mode} →`,
+    `POST ${base}/api/v1/intentions`,
+    `body=${bodyString}`,
+  );
+
   const res = await fetch(`${base}/api/v1/intentions`, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${pk}`,
       "Content-Type": "application/json",
     },
-    body: JSON.stringify(intentionBody),
+    body: bodyString,
     cache: "no-store",
   });
 
-  const data = (await res.json().catch(() => ({}))) as {
-    clientToken?: string;
-    intentionType?: string;
-    error?: string;
-  };
+  const rawText = await res.text();
+  let data: { clientToken?: string; intentionType?: string; error?: string; message?: string } = {};
+  try {
+    data = JSON.parse(rawText);
+  } catch {
+    // not JSON — leave data empty and rely on rawText below
+  }
+
+  console.info(
+    `[intention/payment-link] LunarPay response status=${res.status}`,
+    `body=${rawText}`,
+  );
 
   if (!res.ok) {
     return NextResponse.json(
-      { error: data.error || "Upstream error" },
+      { error: data.error || data.message || "Upstream error", sentBody: intentionBody, lunarPayResponse: rawText },
       { status: res.status },
     );
   }
