@@ -5,24 +5,19 @@ import { useEffect, useRef, useState } from "react";
 /**
  * Public payment-link page client.
  *
- * Flow depends on the intention type returned by the server:
+ * Two flows depending on the intention type returned by the server:
  *
- * "transaction" (one-time payment):
+ * "transaction" (one-time payment, mode === "payment"):
  *   Fortis charges the card in the iframe. On `done`, we POST
- *   { transactionId } to our backend, which records the charge — it does NOT
- *   call the LunarPay charge API again (double-charge would occur).
+ *   { transactionId } to our backend, which records the charge.
  *
- * "tokenization" (trial subs, deferred-start installments, save-card):
+ * "tokenization" (everything else: sub / combined / installments, trial
+ * or not):
  *   Fortis vaults the card — NO $0.01 verification charge. On
  *   `tokenize_success`, we POST { tokenizeId, lastFour, expMonth, expYear }
- *   so the backend can create the sub / schedule against the vault id.
- *
- * "sale" (sub starting today, combined w/ setup fee, installments w/ first
- * payment today):
- *   Fortis charges the day-of amount AND vaults the card in one shot. We
- *   wait for BOTH `done` (transactionId) and `tokenize_success` (tokenizeId)
- *   then submit both together — backend records the charge and uses the
- *   vault id for recurring/scheduled payments.
+ *   so the backend can save the payment method, run the day-of charge
+ *   (if any) via createCharge, then create the LunarPay subscription /
+ *   schedule against the vault id.
  */
 
 type Status = "loading" | "ready" | "submitting" | "done" | "error" | "sdk-missing";
@@ -31,10 +26,6 @@ interface FortisDonePayload {
   data?: {
     id?: string;
     account_holder_name?: string;
-    // Present when Fortis uses action: "sale" — vault created alongside charge.
-    account_vault_id?: string;
-    last_four?: string;
-    exp_date?: string; // "MMYY"
   };
 }
 
@@ -86,12 +77,10 @@ export function PayClient({
 
   const mountRef = useRef<HTMLDivElement | null>(null);
   const elementsRef = useRef<FortisElementsInstance | null>(null);
-  // Determines which Fortis events to listen for and what to send to backend.
-  const intentionTypeRef = useRef<"transaction" | "tokenization" | "sale">(
+  const intentionTypeRef = useRef<"transaction" | "tokenization">(
     "tokenization",
   );
 
-  // Buffer the two IDs Fortis may emit (one or both, depending on intention).
   const pendingRef = useRef<{
     transactionId?: string;
     tokenizeId?: string;
@@ -115,7 +104,7 @@ export function PayClient({
         }
         const intention = (await res.json()) as {
           clientToken: string;
-          intentionType?: "transaction" | "tokenization" | "sale";
+          intentionType?: "transaction" | "tokenization";
         };
         intentionTypeRef.current = intention.intentionType ?? "tokenization";
 
@@ -133,42 +122,14 @@ export function PayClient({
 
         const elements = new Commerce.elements(intention.clientToken);
 
-        // For sale intentions we need BOTH transactionId AND tokenizeId.
-        // If only one arrives within this window, surface a clear error
-        // instead of silently waiting forever.
-        let saleWaitTimer: ReturnType<typeof setTimeout> | null = null;
-        const armSaleTimeout = () => {
-          if (intentionTypeRef.current !== "sale") return;
-          if (saleWaitTimer) return;
-          saleWaitTimer = setTimeout(() => {
-            const p = pendingRef.current;
-            if (p.submitted) return;
-            if (!p.transactionId || !p.tokenizeId) {
-              setStatus("error");
-              setError(
-                "Card processing did not complete. Please try again — no charges were made.",
-              );
-            }
-          }, 8000);
-        };
-
         const submitIfReady = async () => {
           const p = pendingRef.current;
           if (p.submitted) return;
           const type = intentionTypeRef.current;
-          // Decide whether we have enough info to submit yet.
           const ready =
             (type === "transaction" && !!p.transactionId) ||
-            (type === "tokenization" && !!p.tokenizeId) ||
-            (type === "sale" && !!p.transactionId && !!p.tokenizeId);
-          if (!ready) {
-            armSaleTimeout();
-            return;
-          }
-          if (saleWaitTimer) {
-            clearTimeout(saleWaitTimer);
-            saleWaitTimer = null;
-          }
+            (type === "tokenization" && !!p.tokenizeId);
+          if (!ready) return;
           p.submitted = true;
 
           const { email, firstName, lastName, phone } = formRef.current;
@@ -218,46 +179,33 @@ export function PayClient({
           setStatus("done");
         };
 
-        // `done` fires when Fortis completes a charge (transaction or sale).
+        // For transaction intentions (mode === "payment") Fortis fires
+        // `done` with the transaction id once the charge succeeds.
         elements.on("done", async (payload: unknown) => {
           const p = payload as FortisDonePayload;
           const id = p.data?.id;
           if (!id) {
-            // `done` fired without a transaction id — charge may have failed.
-            if (intentionTypeRef.current !== "tokenization") {
-              setStatus("error");
-              setError("Payment could not be processed. Please try again.");
-            }
+            setStatus("error");
+            setError("Payment could not be processed. Please try again.");
             return;
           }
           pendingRef.current.transactionId = id;
-
-          // For `action: "sale"`, some Fortis versions embed the vault token
-          // directly in `done` alongside the transaction id. If present, grab
-          // it so we don't need to wait for a separate tokenize_success event.
-          const vaultId = p.data?.account_vault_id;
-          if (vaultId && !pendingRef.current.tokenizeId) {
-            pendingRef.current.tokenizeId = vaultId;
-            pendingRef.current.lastFour = p.data?.last_four;
-            pendingRef.current.expMonth = p.data?.exp_date?.slice(0, 2);
-            pendingRef.current.expYear = p.data?.exp_date?.slice(2);
-          }
-
           await submitIfReady();
         });
 
-        // `tokenize_success` fires when Fortis vaults a card (tokenization or
-        // sale intentions). Carries the account vault id + card metadata.
+        // For tokenization intentions Fortis fires `tokenize_success` with
+        // the account vault id + card metadata, no money moved.
         elements.on("tokenize_success", async (payload: unknown) => {
           const p = (payload ?? {}) as FortisTokenizePayload;
-          if (!p.id) return;
-          // Only update if we don't already have vault info from `done`.
-          if (!pendingRef.current.tokenizeId) {
-            pendingRef.current.tokenizeId = p.id;
-            pendingRef.current.lastFour = p.last_four;
-            pendingRef.current.expMonth = p.exp_date?.slice(0, 2);
-            pendingRef.current.expYear = p.exp_date?.slice(2);
+          if (!p.id) {
+            setStatus("error");
+            setError("Card could not be saved. Please try again.");
+            return;
           }
+          pendingRef.current.tokenizeId = p.id;
+          pendingRef.current.lastFour = p.last_four;
+          pendingRef.current.expMonth = p.exp_date?.slice(0, 2);
+          pendingRef.current.expYear = p.exp_date?.slice(2);
           await submitIfReady();
         });
 
@@ -269,52 +217,13 @@ export function PayClient({
           setError(p.message || "Card entry failed. Please try again.");
         });
 
-        // Some Fortis SDK versions emit `sale_success` for action: "sale"
-        // instead of (or in addition to) `done` + `tokenize_success`. The
-        // payload shape includes both the transaction id and the vault id.
-        elements.on("sale_success", async (payload: unknown) => {
-          // eslint-disable-next-line no-console
-          console.info("[fortis] sale_success", payload);
-          const p = (payload ?? {}) as {
-            id?: string;
-            transaction_id?: string;
-            account_vault_id?: string;
-            last_four?: string;
-            exp_date?: string;
-            data?: {
-              id?: string;
-              transaction_id?: string;
-              account_vault_id?: string;
-              last_four?: string;
-              exp_date?: string;
-            };
-          };
-          const txId = p.transaction_id ?? p.data?.transaction_id ?? p.id ?? p.data?.id;
-          const vaultId = p.account_vault_id ?? p.data?.account_vault_id;
-          const lastFour = p.last_four ?? p.data?.last_four;
-          const expDate = p.exp_date ?? p.data?.exp_date;
-          if (txId && !pendingRef.current.transactionId) {
-            pendingRef.current.transactionId = txId;
-          }
-          if (vaultId && !pendingRef.current.tokenizeId) {
-            pendingRef.current.tokenizeId = vaultId;
-            pendingRef.current.lastFour = lastFour;
-            pendingRef.current.expMonth = expDate?.slice(0, 2);
-            pendingRef.current.expYear = expDate?.slice(2);
-          }
-          await submitIfReady();
+        // Diagnostic logging — helps debug if Fortis emits unexpected events.
+        ["submit", "ready", "validation_error"].forEach((evt) => {
+          elements.on(evt, (payload: unknown) => {
+            // eslint-disable-next-line no-console
+            console.info(`[fortis] ${evt}`, payload);
+          });
         });
-
-        // Diagnostic logging for any other events Fortis emits so we can
-        // observe the actual event sequence in the customer's browser.
-        ["submit", "ready", "validation_error", "transaction_success"].forEach(
-          (evt) => {
-            elements.on(evt, (payload: unknown) => {
-              // eslint-disable-next-line no-console
-              console.info(`[fortis] ${evt}`, payload);
-            });
-          },
-        );
 
         if (mountRef.current) {
           elements.create({

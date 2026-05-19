@@ -6,23 +6,26 @@ import { calcFee } from "@/lib/fees";
 /**
  * Mint a Fortis clientToken for the public payment-link page.
  *
- * Three possible intention shapes:
+ * Two intention shapes:
  *
  *   - One-time payment (mode === "payment"):
  *       transaction intention (amount only). Fortis charges in iframe.
+ *       Backend just records the charge.
  *
- *   - Vault + charge today (sub starting today, combined w/ setup fee,
- *     installments where the first payment is today):
- *       action: "sale" + amount. Fortis charges the day-of amount AND
- *       vaults the card in one shot. Backend records the charge from
- *       the transactionId and uses the tokenizeId for the recurring/
- *       scheduled payments — it must NOT call createCharge again.
- *
- *   - Pure vault, no charge (trial subs, installments where the first
- *     payment is in the future, save-card flows):
+ *   - Anything else (subscription / combined / installments, trial or not):
  *       action: "tokenization" (no amount). Fortis vaults the card with
- *       NO $0.01 verification charge. Backend creates the subscription /
- *       schedule against the vault id.
+ *       NO $0.01 verification charge. Backend then:
+ *         1) attaches the vaulted card to the customer (savePaymentMethod)
+ *         2) runs the day-of charge via createCharge (skipped for trials
+ *            and for installments where the first payment is deferred)
+ *         3) creates the LunarPay subscription / installment schedule
+ *
+ * We deliberately do NOT use action: "sale" because, in practice, Fortis
+ * treats sale intentions as pure transactions and never fires
+ * tokenize_success — which leaves us with no vault id for the recurring /
+ * scheduled payments. Charging twice (once in iframe, once via createCharge)
+ * is also error-prone. Doing the vault first then charging server-side
+ * keeps the flow deterministic.
  */
 export async function POST(
   _req: Request,
@@ -60,27 +63,16 @@ export async function POST(
   const isTrial = !!meta.trial;
 
   const isOneTime = sess.mode === "payment";
-  // Day-of money owed (always 0 for trials and for installments/combined
-  // where nothing is due today). sess.amountCents already encodes whatever
-  // the create-link route decided was the day-of base amount.
-  const dayOfBaseCents = isTrial ? 0 : sess.amountCents;
-  const dayOfTotalCents = dayOfBaseCents > 0 ? calcFee(dayOfBaseCents).totalCents : 0;
-
   let intentionBody: Record<string, unknown>;
-  let intentionType: "transaction" | "sale" | "tokenization";
+  let intentionType: "transaction" | "tokenization";
   if (isOneTime) {
-    intentionBody = { amount: dayOfTotalCents, paymentMethods: ["cc", "ach"] };
+    // Fortis charges in iframe. Backend just records the charge.
+    const { totalCents } = calcFee(sess.amountCents);
+    intentionBody = { amount: totalCents, paymentMethods: ["cc", "ach"] };
     intentionType = "transaction";
-  } else if (dayOfTotalCents > 0) {
-    // Need to BOTH charge today AND vault for future sub/schedule payments.
-    intentionBody = {
-      action: "sale",
-      amount: dayOfTotalCents,
-      paymentMethods: ["cc", "ach"],
-    };
-    intentionType = "sale";
   } else {
-    // Pure vault, no charge today.
+    // Vault only. Backend handles every actual charge (day-of, recurring,
+    // scheduled) using the vaulted payment method.
     intentionBody = { action: "tokenization", paymentMethods: ["cc", "ach"] };
     intentionType = "tokenization";
   }
@@ -110,12 +102,12 @@ export async function POST(
 
   return NextResponse.json({
     clientToken: data.clientToken,
-    // The client uses intentionType to decide which Fortis events to listen
-    // for and what to send to the submit endpoint:
-    //   "transaction"  → done       → { transactionId }
-    //   "tokenization" → tokenize_success → { tokenizeId, ... }
-    //   "sale"         → both → { transactionId, tokenizeId, ... }
-    intentionType: (data.intentionType as string | undefined) ?? intentionType,
+    // Always use OUR computed intentionType, never trust LunarPay's
+    // response — Fortis classifies sale/tokenization differently internally
+    // and that classification doesn't map 1:1 to our client routing.
+    //   "transaction"  → done             → submit { transactionId }
+    //   "tokenization" → tokenize_success → submit { tokenizeId, ... }
+    intentionType,
     isTrial,
   });
 }

@@ -17,11 +17,13 @@ import { calcFee } from "@/lib/fees";
  *    again — the money already moved.
  *
  * B) tokenizeId present (mode: "subscription" | "combined" | "installments" →
- *    tokenization intention): Fortis vaulted the card without ANY charge
- *    (no $0.01 auth). We:
+ *    tokenization intention): Fortis vaulted the card without ANY charge.
+ *    We:
  *    1) Create LunarPay customer.
  *    2) Attach the saved payment method via tokenizeId.
- *    3) Charge the setup fee (if amountCents > 0 and not a trial).
+ *    3) Run the day-of charge via createCharge (setup fee, first sub
+ *       payment, or first installment) — skipped for trials and for
+ *       installments where the first payment is deferred.
  *    4) Create the LunarPay subscription / installment schedule.
  *
  * `ticketId` (legacy hasRecurring path) is still accepted for backward compat.
@@ -99,9 +101,9 @@ export async function POST(
   const resolvedClinicId = sess.clinicId ?? bodyClinicId ?? null;
 
   // Only the one-time "payment" mode can use the pure-transaction shortcut.
-  // For sub/combined/installments we MUST vault the card (need a payment
-  // method id for future charges), so a tokenizeId/ticketId is required even
-  // if Fortis already collected the day-of charge via action: "sale".
+  // For sub/combined/installments we MUST have a vaulted card (need a
+  // payment method id for future charges), so a tokenizeId/ticketId is
+  // required.
   const isTransactionFlow = sess.mode === "payment" && !!transactionId;
   if (sess.mode !== "payment" && !tokenizeId && !ticketId) {
     return NextResponse.json(
@@ -264,54 +266,32 @@ export async function POST(
     // 4) Day-of charge — skipped entirely for trial subscriptions.
     //    Combined mode's `amountCents` already bundles setup fee + (sub if
     //    starting today); subscription mode uses its amount; installments
-    //    use the first-payment amount. Processing fee (3.9% + $0.39) is
-    //    added on top before sending to Fortis/LunarPay.
-    //
-    //    Two paths:
-    //      a) `transactionId` is present → Fortis already charged the card
-    //         via `action: "sale"` in the iframe. Just record it.
-    //      b) Otherwise → call lunarpay.createCharge ourselves (legacy
-    //         tokenization path that didn't include a day-of charge).
+    //    use the first-payment amount (or 0 if first payment is deferred).
+    //    Processing fee (3.9% + $0.39) is added on top before sending to
+    //    LunarPay.
     if (!meta.trial && sess.amountCents > 0) {
       const { totalCents: chargeTotal } = calcFee(sess.amountCents);
-      if (transactionId) {
-        await prisma.charge.create({
-          data: {
-            clinicId: resolvedClinicId,
-            customerId: customer.id,
-            paymentMethodId: pm.id,
-            paymentLinkId: sess.id,
-            lunarpayChargeId: transactionId,
-            fortisTransactionId: transactionId,
-            amountCents: chargeTotal,
-            status: "paid",
-            paymentMethodType: paymentMethod ?? "cc",
-            description: sess.description ?? null,
-          },
-        });
-      } else {
-        stage = "createCharge.dayOf";
-        const lpCharge = await lunarpay.createCharge({
-          customerId: lpCustomerId,
-          paymentMethodId: lpPm.data.id,
-          amount: chargeTotal,
-          description,
-        });
-        await prisma.charge.create({
-          data: {
-            clinicId: resolvedClinicId,
-            customerId: customer.id,
-            paymentMethodId: pm.id,
-            paymentLinkId: sess.id,
-            lunarpayChargeId: String(lpCharge.data.id),
-            fortisTransactionId: lpCharge.data.fortisTransactionId ?? null,
-            amountCents: lpCharge.data.amount,
-            status: lpCharge.data.status,
-            paymentMethodType: lpCharge.data.paymentMethod,
-            description: sess.description ?? null,
-          },
-        });
-      }
+      stage = "createCharge.dayOf";
+      const lpCharge = await lunarpay.createCharge({
+        customerId: lpCustomerId,
+        paymentMethodId: lpPm.data.id,
+        amount: chargeTotal,
+        description,
+      });
+      await prisma.charge.create({
+        data: {
+          clinicId: resolvedClinicId,
+          customerId: customer.id,
+          paymentMethodId: pm.id,
+          paymentLinkId: sess.id,
+          lunarpayChargeId: String(lpCharge.data.id),
+          fortisTransactionId: lpCharge.data.fortisTransactionId ?? null,
+          amountCents: lpCharge.data.amount,
+          status: lpCharge.data.status,
+          paymentMethodType: lpCharge.data.paymentMethod,
+          description: sess.description ?? null,
+        },
+      });
     }
 
     // 5a) Create installment schedule if this is an installments link.
