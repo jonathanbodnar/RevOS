@@ -20,6 +20,7 @@ export type IconName =
   | "chevron-right"
   | "chevron-left"
   | "shield"
+  | "calendar"
   | "settings";
 
 const COMMON: SVGProps<SVGSVGElement> = {
@@ -132,6 +133,16 @@ export function Icon({
       return (
         <svg {...COMMON} className={className}>
           <path d="M12 3 4 6v6c0 4.5 3.2 8.4 8 9 4.8-.6 8-4.5 8-9V6z" />
+        </svg>
+      );
+    case "calendar":
+      return (
+        <svg {...COMMON} className={className}>
+          <rect x="3" y="5" width="18" height="16" rx="2" />
+          <path d="M16 3v4M8 3v4M3 10h18" />
+          <circle cx="8" cy="14" r="0.75" fill="currentColor" stroke="none" />
+          <circle cx="12" cy="14" r="0.75" fill="currentColor" stroke="none" />
+          <circle cx="16" cy="14" r="0.75" fill="currentColor" stroke="none" />
         </svg>
       );
     case "settings":

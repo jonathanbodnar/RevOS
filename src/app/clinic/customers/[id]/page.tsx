@@ -9,6 +9,7 @@ import { NewSubscriptionForm } from "./new-subscription";
 import { NewInvoiceForm } from "./new-invoice";
 import { RefundButton } from "./refund-button";
 import { CancelSubscriptionButton } from "./cancel-subscription";
+import { CancelScheduleButton } from "./cancel-schedule";
 import { DeleteCustomerButton } from "./delete-customer-button";
 import { HoldsSection } from "./holds-section";
 
@@ -234,6 +235,77 @@ export default async function CustomerDetailPage({
                     <td className="text-right pr-3">
                       {s.status === "active" && canPerformSensitiveActions && (
                         <CancelSubscriptionButton subscriptionId={s.id} />
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          <div className="card-pad">
+            <div className="flex items-baseline justify-between mb-1">
+              <h3 className="text-sm font-semibold text-slate-900">
+                Installment plans
+              </h3>
+              {customer.schedules.length > 0 && (
+                <p className="text-xs text-slate-400">
+                  Refund individual paid installments from the Transactions
+                  list above.
+                </p>
+              )}
+            </div>
+            <table className="table">
+              <thead>
+                <tr>
+                  <th>Total</th>
+                  <th>Paid</th>
+                  <th>Status</th>
+                  <th>Description</th>
+                  <th>Started</th>
+                  <th className="text-right pr-3">Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {customer.schedules.length === 0 && (
+                  <tr>
+                    <td colSpan={6} className="text-center text-slate-500 py-6">
+                      No installment plans.
+                    </td>
+                  </tr>
+                )}
+                {customer.schedules.map((s) => (
+                  <tr key={s.id}>
+                    <td className="font-medium">
+                      {formatMoneyCents(s.totalAmountCents)}
+                    </td>
+                    <td className="text-slate-600">
+                      {formatMoneyCents(s.paidAmountCents)}
+                      <span className="text-slate-400">
+                        {" "}
+                        / {formatMoneyCents(s.totalAmountCents)}
+                      </span>
+                    </td>
+                    <td>
+                      <span
+                        className={
+                          s.status === "active"
+                            ? "badge-green"
+                            : s.status === "completed"
+                              ? "badge-indigo"
+                              : "badge-slate"
+                        }
+                      >
+                        {s.status}
+                      </span>
+                    </td>
+                    <td className="text-slate-600">{s.description || "—"}</td>
+                    <td className="text-slate-500 text-xs">
+                      {formatDate(s.createdAt)}
+                    </td>
+                    <td className="text-right pr-3">
+                      {s.status === "active" && canPerformSensitiveActions && (
+                        <CancelScheduleButton scheduleId={s.id} />
                       )}
                     </td>
                   </tr>
