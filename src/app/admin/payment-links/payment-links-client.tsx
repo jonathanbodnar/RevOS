@@ -24,12 +24,14 @@ const MODE_LABELS: Record<string, string> = {
   payment: "One-time",
   subscription: "Subscription",
   combined: "Setup + sub",
+  installments: "Installments",
 };
 
 const MODE_COLORS: Record<string, string> = {
   payment: "badge-indigo",
   subscription: "badge-green",
   combined: "badge-purple",
+  installments: "badge-yellow",
 };
 
 function formatMoney(cents: number) {
@@ -40,13 +42,15 @@ function formatMoney(cents: number) {
 }
 
 function formatDate(d: Date) {
-  return new Date(d).toLocaleString("en-US", {
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-    hour: "numeric",
-    minute: "2-digit",
-  });
+  // Use a fixed ISO-ish format to avoid server/client locale hydration mismatches.
+  const dt = new Date(d);
+  const mo = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"][dt.getMonth()];
+  const day = dt.getDate();
+  const yr = dt.getFullYear();
+  const hh = dt.getHours();
+  const mm = String(dt.getMinutes()).padStart(2, "0");
+  const ampm = hh >= 12 ? "PM" : "AM";
+  return `${mo} ${day}, ${yr}, ${hh % 12 || 12}:${mm} ${ampm}`;
 }
 
 export function AdminPaymentLinksClient({ links }: { links: LinkRow[] }) {
