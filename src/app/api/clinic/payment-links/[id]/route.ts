@@ -24,8 +24,10 @@ export async function DELETE(
   if (!params.ok) return params.response;
   const { id } = params.value;
 
+  // Allow deleting global links (clinicId = null) as well as clinic-owned
+  // ones — both are visible in the payment links table.
   const cs = await prisma.checkoutSession.findFirst({
-    where: { id, clinicId },
+    where: { id, OR: [{ clinicId }, { clinicId: null }] },
     include: {
       _count: { select: { charges: true, subscriptions: true } },
     },

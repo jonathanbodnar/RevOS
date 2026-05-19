@@ -19,10 +19,7 @@ export async function DELETE(
     return NextResponse.json({ error: "Link not found" }, { status: 404 });
   }
 
-  await prisma.checkoutSession.update({
-    where: { id },
-    data: { status: "expired" },
-  });
+  await prisma.checkoutSession.delete({ where: { id } });
 
   await logAudit({
     actorId: session.user.id,

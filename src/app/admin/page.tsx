@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { prisma } from "@/lib/prisma";
 import { formatMoneyCents } from "@/lib/format";
+import { WipeTestDataButton } from "./wipe-button";
 
 export default async function AdminOverviewPage() {
   const [clinicCount, customerCount, chargeAgg, activeSubs] = await Promise.all([
@@ -28,6 +29,9 @@ export default async function AdminOverviewPage() {
 
   return (
     <div className="space-y-6">
+      <div className="flex justify-end">
+        <WipeTestDataButton />
+      </div>
       <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
         {stats.map((s) => (
           <div key={s.label} className="card-pad">
