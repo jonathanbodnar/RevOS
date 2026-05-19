@@ -52,21 +52,33 @@ export function SaveCardClient({ token }: { token: string }) {
 
         const elements = new Commerce.elements(intention.clientToken);
 
-        elements.on("done", async (payload: unknown) => {
-          // Fortis payload shape: { "@type": "done", "data": { "id": "<ticketId>", ... } }
-          const p = payload as { data?: { id?: string } };
-          const ticketId = p.data?.id;
-          const paymentMethod: "cc" | "ach" = "cc";
-          if (!ticketId) {
+        // Tokenization intention → Fortis vaults the card with no $0.01 auth.
+        // Payload: { id, last_four, exp_date: "MMYY", account_holder_name, ... }
+        elements.on("tokenize_success", async (payload: unknown) => {
+          const p = (payload ?? {}) as {
+            id?: string;
+            last_four?: string;
+            exp_date?: string;
+            account_holder_name?: string;
+          };
+          const tokenizeId = p.id;
+          if (!tokenizeId) {
             setStatus("error");
-            setError("No ticket returned.");
+            setError("No token returned.");
             return;
           }
           setStatus("saving");
           const saveRes = await fetch(`/api/public/save-card/${token}`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ ticketId, paymentMethod }),
+            body: JSON.stringify({
+              tokenizeId,
+              paymentMethod: "cc",
+              lastFour: p.last_four,
+              expMonth: p.exp_date?.slice(0, 2),
+              expYear: p.exp_date?.slice(2),
+              nameHolder: p.account_holder_name,
+            }),
           });
           if (!saveRes.ok) {
             const d = (await saveRes.json().catch(() => ({}))) as {

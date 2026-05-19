@@ -24,7 +24,7 @@ export async function POST(
       Authorization: `Bearer ${pk}`,
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({ hasRecurring: true, paymentMethods: ["cc"] }),
+    body: JSON.stringify({ action: "tokenization", paymentMethods: ["cc"] }),
     cache: "no-store",
   });
   const data = await res.json().catch(() => ({}));

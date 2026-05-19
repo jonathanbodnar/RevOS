@@ -175,13 +175,25 @@ export const lunarpay = {
   },
 
   // PAYMENT METHODS
+  //
+  // Two ways to save a card:
+  //  - tokenizeId (preferred): account vault ID from a `tokenization` intention.
+  //                            NO money changes hands — not even a $0.01 auth.
+  //  - ticketId (legacy):      ticket ID from a `hasRecurring: true` intention.
+  //                            Triggers a $0.01 auth + refund visible to the
+  //                            customer. Avoid unless you must.
   savePaymentMethod(
     customerId: number,
     input: {
-      ticketId: string;
+      tokenizeId?: string;
+      ticketId?: string;
       paymentMethod?: "cc" | "ach";
       nameHolder?: string;
       setDefault?: boolean;
+      // Optional metadata Fortis returns alongside tokenize_success.
+      lastFour?: string;
+      expMonth?: string;
+      expYear?: string;
     },
   ) {
     return request<{ data: LPPaymentMethod }>(

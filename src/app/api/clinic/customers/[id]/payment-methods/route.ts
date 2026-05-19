@@ -5,12 +5,22 @@ import { requireClinicApi } from "@/lib/api-guard";
 import { lunarpay, LunarPayError } from "@/lib/lunarpay";
 import { logAudit } from "@/lib/audit";
 
-const Body = z.object({
-  ticketId: z.string().min(1),
-  paymentMethod: z.enum(["cc", "ach"]).optional(),
-  nameHolder: z.string().optional(),
-  setDefault: z.boolean().optional(),
-});
+const Body = z
+  .object({
+    // Preferred: tokenizeId from a tokenization intention (no $0.01 auth).
+    tokenizeId: z.string().min(1).optional(),
+    // Legacy: ticketId from a hasRecurring intention (triggers $0.01 auth).
+    ticketId: z.string().min(1).optional(),
+    paymentMethod: z.enum(["cc", "ach"]).optional(),
+    nameHolder: z.string().optional(),
+    setDefault: z.boolean().optional(),
+    lastFour: z.string().optional(),
+    expMonth: z.string().optional(),
+    expYear: z.string().optional(),
+  })
+  .refine((d) => !!d.tokenizeId || !!d.ticketId, {
+    message: "tokenizeId or ticketId required",
+  });
 
 export async function POST(
   req: Request,
@@ -43,9 +53,13 @@ export async function POST(
     const setDefault = parsed.data.setDefault ?? pmCount === 0;
 
     const lp = await lunarpay.savePaymentMethod(customer.lunarpayCustomerId, {
+      tokenizeId: parsed.data.tokenizeId,
       ticketId: parsed.data.ticketId,
       paymentMethod: parsed.data.paymentMethod,
       nameHolder: parsed.data.nameHolder,
+      lastFour: parsed.data.lastFour,
+      expMonth: parsed.data.expMonth,
+      expYear: parsed.data.expYear,
       setDefault,
     });
 

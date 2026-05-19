@@ -7,11 +7,12 @@ import { calcFee } from "@/lib/fees";
  * Mint a Fortis clientToken for the public payment-link page.
  *
  * Intention type depends on the link mode:
- *   - "payment"  → transaction intention: Fortis charges the card directly
- *                  inside the iframe. Backend must NOT charge again.
- *   - "subscription" / "combined" / trial
- *                → ticket intention (hasRecurring: true): Fortis only saves
- *                  the card. Backend charges setup fee and creates subscription.
+ *   - "payment" → transaction intention: Fortis charges the card directly
+ *                 inside the iframe. Backend must NOT charge again.
+ *   - "subscription" / "combined" / "installments" / trial
+ *                → tokenization intention: Fortis vaults the card with NO
+ *                  $0.01 verification charge. Backend creates the
+ *                  subscription / installment schedule against the vault id.
  */
 export async function POST(
   _req: Request,
@@ -48,16 +49,13 @@ export async function POST(
     : {};
   const isTrial = !!meta.trial;
 
-  // One-time payments: use a transaction intention so Fortis charges the card
-  // directly in the iframe — no backend charge call needed.
-  // Everything else (subscription, combined, trial, installments): use a ticket
-  // intention (hasRecurring: true) so the card is vaulted without charging.
+  // One-time payments: transaction intention → Fortis charges in iframe.
+  // Anything else: tokenization intention → card vaulted with no $0.01 auth.
   const isOneTime = sess.mode === "payment";
-  // For transaction flow the customer pays base + processing fee.
   const { totalCents } = calcFee(sess.amountCents);
   const intentionBody = isOneTime
     ? { amount: totalCents, paymentMethods: ["cc", "ach"] }
-    : { hasRecurring: true, paymentMethods: ["cc", "ach"] };
+    : { action: "tokenization", paymentMethods: ["cc", "ach"] };
 
   const res = await fetch(`${base}/api/v1/intentions`, {
     method: "POST",
@@ -85,9 +83,10 @@ export async function POST(
   return NextResponse.json({
     clientToken: data.clientToken,
     // Expose intentionType so the client knows whether the charge already
-    // happened in the iframe (transaction) or needs to be done server-side
-    // (ticket).
-    intentionType: data.intentionType ?? (isOneTime ? "transaction" : "ticket"),
+    // happened in the iframe ("transaction") or whether it should listen for
+    // tokenize_success and send a tokenizeId ("tokenization").
+    intentionType:
+      data.intentionType ?? (isOneTime ? "transaction" : "tokenization"),
     isTrial,
   });
 }

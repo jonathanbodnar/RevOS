@@ -5,8 +5,8 @@ import { requireClinicApi } from "@/lib/api-guard";
 /**
  * Mint a Fortis `clientToken` the admin's browser can use to mount
  * the Fortis Elements iframe. We hit LunarPay with the publishable key
- * (safe to use without the secret key) and request a ticket intention so
- * the card is vaulted instead of charged.
+ * (safe to use without the secret key) and request a tokenization intention
+ * so the card is vaulted with NO $0.01 verification charge.
  */
 export async function POST(
   _req: Request,
@@ -38,7 +38,7 @@ export async function POST(
       Authorization: `Bearer ${pk}`,
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({ hasRecurring: true, paymentMethods: ["cc"] }),
+    body: JSON.stringify({ action: "tokenization", paymentMethods: ["cc"] }),
     cache: "no-store",
   });
   const data = await res.json().catch(() => ({}));

@@ -5,11 +5,19 @@ import { lunarpay, LunarPayError } from "@/lib/lunarpay";
 import { logAudit } from "@/lib/audit";
 import { requireStringParams } from "@/lib/route-params";
 
-const Body = z.object({
-  ticketId: z.string().min(1),
-  paymentMethod: z.enum(["cc", "ach"]).optional(),
-  nameHolder: z.string().optional(),
-});
+const Body = z
+  .object({
+    tokenizeId: z.string().min(1).optional(),
+    ticketId: z.string().min(1).optional(),
+    paymentMethod: z.enum(["cc", "ach"]).optional(),
+    nameHolder: z.string().optional(),
+    lastFour: z.string().optional(),
+    expMonth: z.string().optional(),
+    expYear: z.string().optional(),
+  })
+  .refine((d) => !!d.tokenizeId || !!d.ticketId, {
+    message: "tokenizeId or ticketId required",
+  });
 
 export async function POST(
   req: Request,
@@ -39,9 +47,13 @@ export async function POST(
     // Cards added via the update-card link always become the new default —
     // the customer is explicitly replacing their billing card.
     const lp = await lunarpay.savePaymentMethod(customer.lunarpayCustomerId, {
+      tokenizeId: parsed.data.tokenizeId,
       ticketId: parsed.data.ticketId,
       paymentMethod: parsed.data.paymentMethod,
       nameHolder: parsed.data.nameHolder,
+      lastFour: parsed.data.lastFour,
+      expMonth: parsed.data.expMonth,
+      expYear: parsed.data.expYear,
       setDefault: true,
     });
 

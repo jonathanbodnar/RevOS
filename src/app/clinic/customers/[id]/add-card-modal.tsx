@@ -6,12 +6,13 @@ import { useEffect, useRef, useState } from "react";
  * In-admin "add card" using Fortis Elements.
  *
  * Flow:
- *  1) Ask the server for a Fortis `clientToken` (via LunarPay /intentions
- *     with `hasRecurring: true` so the card is saved, not just charged).
+ *  1) Ask the server for a Fortis `clientToken` via LunarPay /intentions
+ *     with `action: "tokenization"` so the card is vaulted with no $0.01
+ *     verification charge visible to the customer.
  *  2) Load the Fortis Elements SDK from `NEXT_PUBLIC_FORTIS_ELEMENTS_URL`.
- *  3) Mount the Elements iframe; when Fortis returns a `ticket_id`, send it
- *     to our backend which calls LunarPay to vault the card against the
- *     customer.
+ *  3) Mount the Elements iframe; on `tokenize_success`, send the account
+ *     vault id (+ card metadata) to our backend, which calls LunarPay to
+ *     attach the saved payment method to the customer.
  *
  * Fortis Elements' SDK shape (CommerceHub) is stable, but the exact CDN URL
  * may vary by merchant. If the SDK fails to load, we show a helpful message
@@ -19,7 +20,7 @@ import { useEffect, useRef, useState } from "react";
  */
 type IntentionResponse = {
   clientToken: string;
-  intentionType: "ticket" | "transaction";
+  intentionType: "tokenization" | "transaction";
   paymentMethod: "cc" | "ach" | "any";
   locationId?: string;
   environment?: string;
@@ -97,26 +98,36 @@ export function AddCardModal({
         // 3) Create elements instance and wire events.
         const elements = new window.Commerce.elements(intention.clientToken);
 
-        elements.on("done", async (payload) => {
-          // Fortis payload shape: { "@type": "done", "data": { "id": "<ticketId>", ... } }
-          const p = payload as {
-            data?: {
-              id?: string;
-              account_holder_name?: string;
-              first_six?: string;
-              last_four?: string;
-              exp_date?: string;
-            };
+        // Tokenization payload shape from Fortis:
+        //   { id: "<vaultId>", last_four: "4242", exp_date: "1228",
+        //     account_holder_name: "...", account_type: "visa", ... }
+        elements.on("tokenize_success", async (payload) => {
+          const p = (payload ?? {}) as {
+            id?: string;
+            last_four?: string;
+            exp_date?: string;
+            account_holder_name?: string;
           };
-          const ticketId = p.data?.id;
-          const paymentMethod = "cc";
+          const tokenizeId = p.id;
+          if (!tokenizeId) {
+            setStatus("error");
+            setError("No token returned from card form.");
+            return;
+          }
           setStatus("saving");
           const saveRes = await fetch(
             `/api/clinic/customers/${customerId}/payment-methods`,
             {
               method: "POST",
               headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ ticketId, paymentMethod }),
+              body: JSON.stringify({
+                tokenizeId,
+                paymentMethod: "cc",
+                lastFour: p.last_four,
+                expMonth: p.exp_date?.slice(0, 2),
+                expYear: p.exp_date?.slice(2),
+                nameHolder: p.account_holder_name,
+              }),
             },
           );
           if (!saveRes.ok) {

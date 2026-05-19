@@ -16,20 +16,28 @@ import { calcFee } from "@/lib/fees";
  *    and record the charge in our DB. We must NOT call lunarpay.createCharge()
  *    again — the money already moved.
  *
- * B) ticketId present (mode: "subscription" | "combined" → ticket intention):
- *    Fortis only saved the card. We:
+ * B) tokenizeId present (mode: "subscription" | "combined" | "installments" →
+ *    tokenization intention): Fortis vaulted the card without ANY charge
+ *    (no $0.01 auth). We:
  *    1) Create LunarPay customer.
- *    2) Vault the card via the ticket ID.
+ *    2) Attach the saved payment method via tokenizeId.
  *    3) Charge the setup fee (if amountCents > 0 and not a trial).
- *    4) Create the LunarPay subscription.
+ *    4) Create the LunarPay subscription / installment schedule.
+ *
+ * `ticketId` (legacy hasRecurring path) is still accepted for backward compat.
  *
  * The CheckoutSession is never marked completed — payment links are reusable.
  */
 const Body = z.object({
   // Exactly one of these must be present:
-  ticketId: z.string().min(1).optional(),      // ticket (save-card) flow
+  tokenizeId: z.string().min(1).optional(),    // tokenization (vault-only) flow
+  ticketId: z.string().min(1).optional(),      // legacy hasRecurring flow
   transactionId: z.string().min(1).optional(), // transaction (charge-in-iframe) flow
   paymentMethod: z.enum(["cc", "ach"]).optional(),
+  // Card metadata Fortis returns alongside tokenize_success.
+  lastFour: z.string().optional(),
+  expMonth: z.string().optional(),
+  expYear: z.string().optional(),
   email: z.string().email(),
   firstName: z.string().min(1),
   lastName: z.string().min(1),
@@ -37,9 +45,10 @@ const Body = z.object({
   // For global links (clinicId = null on the session), the pay page passes the
   // clinic that shared the link so transactions are attributed correctly.
   clinicId: z.string().optional(),
-}).refine((d) => !!d.ticketId || !!d.transactionId, {
-  message: "Either ticketId or transactionId is required",
-});
+}).refine(
+  (d) => !!d.tokenizeId || !!d.ticketId || !!d.transactionId,
+  { message: "tokenizeId, ticketId, or transactionId required" },
+);
 
 type Frequency = "weekly" | "monthly" | "quarterly" | "yearly";
 
@@ -72,9 +81,13 @@ export async function POST(
   }
 
   const {
+    tokenizeId,
     ticketId,
     transactionId,
     paymentMethod,
+    lastFour,
+    expMonth,
+    expYear,
     email,
     firstName,
     lastName,
@@ -84,7 +97,7 @@ export async function POST(
   // For global links (sess.clinicId = null) use the clinic passed by the pay
   // page so transactions are attributed to the clinic that shared the link.
   const resolvedClinicId = sess.clinicId ?? bodyClinicId ?? null;
-  const isTransactionFlow = !!transactionId && !ticketId;
+  const isTransactionFlow = !!transactionId && !tokenizeId && !ticketId;
   const meta = (sess.metadataJson ? safeJson(sess.metadataJson) : {}) as {
     frequency?: Frequency;
     setupFeeCents?: number;
@@ -183,19 +196,23 @@ export async function POST(
       return NextResponse.json({ ok: true });
     }
 
-    // ─── TICKET FLOW (subscription / combined / trial) ────────────────────
-    // Fortis saved the card only. Vault it, optionally charge, create sub.
+    // ─── VAULT FLOW (subscription / combined / installments / trial) ──────
+    // Fortis saved the card only (no $0.01 auth when using tokenization).
+    // Vault it, optionally charge, then create the sub / schedule.
 
-    // Save the card.
     const existingCount = await prisma.paymentMethod.count({
       where: { customerId: customer.id, isActive: true },
     });
     const setDefault = existingCount === 0;
 
     const lpPm = await lunarpay.savePaymentMethod(lpCustomerId, {
-      ticketId: ticketId!,
+      tokenizeId,
+      ticketId,
       paymentMethod,
       nameHolder: `${firstName} ${lastName}`.trim(),
+      lastFour,
+      expMonth,
+      expYear,
       setDefault,
     });
 
