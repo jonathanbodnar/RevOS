@@ -17,6 +17,56 @@ export const dynamic = "force-dynamic";
  *
  * (No auth required — read-only diagnostic, no PII, no LunarPay write.)
  */
+type ProbeResult = {
+  label: string;
+  body: Record<string, unknown>;
+  status?: number;
+  ok: boolean;
+  responseBody?: string;
+  responseHeaders?: Record<string, string>;
+  networkError?: string;
+};
+
+async function probe(
+  fullUrl: string,
+  pk: string,
+  label: string,
+  body: Record<string, unknown>,
+): Promise<ProbeResult> {
+  try {
+    const res = await fetch(fullUrl, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${pk}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(body),
+      cache: "no-store",
+      redirect: "manual",
+    });
+    const respHeaders: Record<string, string> = {};
+    res.headers.forEach((v, k) => {
+      respHeaders[k] = v;
+    });
+    const rawText = await res.text();
+    return {
+      label,
+      body,
+      status: res.status,
+      ok: res.status >= 200 && res.status < 300,
+      responseBody: rawText,
+      responseHeaders: respHeaders,
+    };
+  } catch (e) {
+    return {
+      label,
+      body,
+      ok: false,
+      networkError: e instanceof Error ? e.message : String(e),
+    };
+  }
+}
+
 export async function POST() {
   const pk = process.env.LUNARPAY_PUBLISHABLE_KEY;
   const base = process.env.LUNARPAY_BASE_URL || "https://app.lunarpay.com";
@@ -38,51 +88,53 @@ export async function POST() {
   const fullUrl = `${base}/api/v1/intentions`;
   const pkPrefix = pk.slice(0, 8);
 
-  // Playbook-exact body. If LunarPay still returns the sale-validator error
-  // here, the bug is 100% on their side — this body matches their own
-  // example character for character.
-  const intentionBody = {
-    action: "tokenization",
-    paymentMethods: ["cc"],
-  };
+  // Try a series of bodies to figure out which one (if any) gets us a
+  // clientToken back. The first one is the playbook-exact body that
+  // LunarPay support says should work; the rest are progressively-more-
+  // tolerant fallbacks that probe different validator branches.
+  const probes = await Promise.all([
+    probe(fullUrl, pk, "playbook tokenization (cc only)", {
+      action: "tokenization",
+      paymentMethods: ["cc"],
+    }),
+    probe(fullUrl, pk, "tokenization + amount=0", {
+      action: "tokenization",
+      amount: 0,
+      paymentMethods: ["cc"],
+    }),
+    probe(fullUrl, pk, "tokenization + amount=1 (1 cent)", {
+      action: "tokenization",
+      amount: 1,
+      paymentMethods: ["cc"],
+    }),
+    probe(fullUrl, pk, "tokenization + amount=100", {
+      action: "tokenization",
+      amount: 100,
+      paymentMethods: ["cc"],
+    }),
+    probe(fullUrl, pk, "legacy hasRecurring ticket (cc)", {
+      hasRecurring: true,
+      paymentMethods: ["cc"],
+    }),
+    probe(fullUrl, pk, "legacy hasRecurring ticket + amount=1", {
+      hasRecurring: true,
+      amount: 1,
+      paymentMethods: ["cc"],
+    }),
+    probe(fullUrl, pk, "sale + amount=1 (cents)", {
+      action: "sale",
+      amount: 1,
+      paymentMethods: ["cc"],
+    }),
+  ]);
 
-  let networkError: string | null = null;
-  let status = 0;
-  let respHeaders: Record<string, string> = {};
-  let rawText = "";
-
-  try {
-    const res = await fetch(fullUrl, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${pk}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(intentionBody),
-      cache: "no-store",
-      redirect: "manual",
-    });
-    status = res.status;
-    res.headers.forEach((v, k) => {
-      respHeaders[k] = v;
-    });
-    rawText = await res.text();
-  } catch (e) {
-    networkError = e instanceof Error ? e.message : String(e);
-  }
-
-  console.info(
-    "[debug/lunarpay-intentions]",
-    `url=${fullUrl}`,
-    `auth=Bearer ${pkPrefix}…(len=${pk.length})`,
-    `status=${status}`,
-    `headers=${JSON.stringify(respHeaders)}`,
-    `body=${rawText}`,
-    networkError ? `networkError=${networkError}` : "",
-  );
+  const firstWorking = probes.find((p) => p.ok);
 
   return NextResponse.json({
-    ok: !networkError && status >= 200 && status < 300,
+    summary: {
+      anyProbeWorked: !!firstWorking,
+      firstWorkingLabel: firstWorking?.label ?? null,
+    },
     env: {
       LUNARPAY_BASE_URL: base,
       LUNARPAY_PUBLISHABLE_KEY_prefix: pkPrefix,
@@ -93,22 +145,8 @@ export async function POST() {
         ? "SECRET (wrong — should be publishable!)"
         : "unknown prefix",
     },
-    request: {
-      url: fullUrl,
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${pkPrefix}…`,
-        "Content-Type": "application/json",
-      },
-      body: intentionBody,
-    },
-    response: networkError
-      ? { networkError }
-      : {
-          status,
-          headers: respHeaders,
-          body: rawText,
-        },
+    requestUrl: fullUrl,
+    probes,
   });
 }
 
