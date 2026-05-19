@@ -35,22 +35,39 @@ async function request<T>(
       503,
     );
   }
+  const reqBody = body ? JSON.stringify(body) : undefined;
+  const startedAt = Date.now();
   const res = await fetch(`${BASE_URL}${path}`, {
     method,
     headers: {
       Authorization: `Bearer ${SECRET_KEY}`,
       "Content-Type": "application/json",
     },
-    body: body ? JSON.stringify(body) : undefined,
+    body: reqBody,
     cache: "no-store",
   });
   const text = await res.text();
   const json = text ? safeJson(text) : {};
+  const elapsedMs = Date.now() - startedAt;
+
   if (!res.ok) {
     const j = json as { error?: string; message?: string; errors?: unknown };
     const msg = j?.error || j?.message || `LunarPay ${res.status}`;
+    // CRITICAL: log every failed LunarPay call with the request body so we
+    // can diagnose 400 validation errors (wrong field name, dollars vs cents
+    // mismatch, etc.). Sensitive fields like card numbers never flow through
+    // this layer — only ids and amounts.
+    // eslint-disable-next-line no-console
+    console.error(
+      `[lunarpay] ${method} ${path} → ${res.status} (${elapsedMs}ms)`,
+      { request: body, response: json },
+    );
     throw new LunarPayError(msg, res.status, json);
   }
+
+  // Log successful calls at info level so we have a paper trail too.
+  // eslint-disable-next-line no-console
+  console.info(`[lunarpay] ${method} ${path} → ${res.status} (${elapsedMs}ms)`);
   return json as T;
 }
 

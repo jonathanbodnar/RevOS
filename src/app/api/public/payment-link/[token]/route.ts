@@ -97,7 +97,21 @@ export async function POST(
   // For global links (sess.clinicId = null) use the clinic passed by the pay
   // page so transactions are attributed to the clinic that shared the link.
   const resolvedClinicId = sess.clinicId ?? bodyClinicId ?? null;
-  const isTransactionFlow = !!transactionId && !tokenizeId && !ticketId;
+
+  // Only the one-time "payment" mode can use the pure-transaction shortcut.
+  // For sub/combined/installments we MUST vault the card (need a payment
+  // method id for future charges), so a tokenizeId/ticketId is required even
+  // if Fortis already collected the day-of charge via action: "sale".
+  const isTransactionFlow = sess.mode === "payment" && !!transactionId;
+  if (sess.mode !== "payment" && !tokenizeId && !ticketId) {
+    return NextResponse.json(
+      {
+        error:
+          "Card was not vaulted — cannot start subscription/installment plan. Please try again.",
+      },
+      { status: 400 },
+    );
+  }
   const meta = (sess.metadataJson ? safeJson(sess.metadataJson) : {}) as {
     frequency?: Frequency;
     setupFeeCents?: number;
@@ -123,10 +137,14 @@ export async function POST(
     subFirstChargeDate?: string | null; // "YYYY-MM-DD"; null = start immediately
   };
 
+  // Track which stage we're in so the error log tells us exactly where the
+  // failure happened (LunarPay call N out of M).
+  let stage = "start";
   try {
     // Always create a fresh Customer + LunarPay customer for this submit.
     // Reusable links must not collapse repeat submissions (even with the
     // same email) into a single customer record.
+    stage = "createCustomer";
     const lpCustomer = await lunarpay.createCustomer({
       firstName,
       lastName,
@@ -205,6 +223,7 @@ export async function POST(
     });
     const setDefault = existingCount === 0;
 
+    stage = "savePaymentMethod";
     const lpPm = await lunarpay.savePaymentMethod(lpCustomerId, {
       tokenizeId,
       ticketId,
@@ -271,6 +290,7 @@ export async function POST(
           },
         });
       } else {
+        stage = "createCharge.dayOf";
         const lpCharge = await lunarpay.createCharge({
           customerId: lpCustomerId,
           paymentMethodId: lpPm.data.id,
@@ -328,6 +348,7 @@ export async function POST(
       }
 
       if (payments.length > 0) {
+        stage = "createSchedule.installments";
         const lpSchedule = await lunarpay.createSchedule({
           customerId: lpCustomerId,
           paymentMethodId: lpPm.data.id,
@@ -361,6 +382,7 @@ export async function POST(
           : todayIso();
 
         const { totalCents: subTotal } = calcFee(meta.subAmountCents);
+        stage = "createSubscription.concurrent";
         const lpSub = await lunarpay.createSubscription({
           customerId: lpCustomerId,
           paymentMethodId: lpPm.data.id,
@@ -442,6 +464,7 @@ export async function POST(
 
       if (subAmountCents >= 50) {
         const { totalCents: subBillingTotal } = calcFee(subAmountCents);
+        stage = "createSubscription";
         const lpSub = await lunarpay.createSubscription({
           customerId: lpCustomerId,
           paymentMethodId: lpPm.data.id,
@@ -519,8 +542,14 @@ export async function POST(
       }
     }
 
-    console.error("[payment-link/public] error:", displayMsg, details);
-    return NextResponse.json({ error: displayMsg, details }, { status });
+    console.error(
+      `[payment-link/public] FAILED at stage="${stage}" token=${token}`,
+      { error: displayMsg, details, sessMode: sess.mode, sessAmountCents: sess.amountCents },
+    );
+    return NextResponse.json(
+      { error: `${displayMsg} (stage: ${stage})`, stage, details },
+      { status },
+    );
   }
 }
 

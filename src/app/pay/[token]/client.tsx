@@ -133,6 +133,25 @@ export function PayClient({
 
         const elements = new Commerce.elements(intention.clientToken);
 
+        // For sale intentions we need BOTH transactionId AND tokenizeId.
+        // If only one arrives within this window, surface a clear error
+        // instead of silently waiting forever.
+        let saleWaitTimer: ReturnType<typeof setTimeout> | null = null;
+        const armSaleTimeout = () => {
+          if (intentionTypeRef.current !== "sale") return;
+          if (saleWaitTimer) return;
+          saleWaitTimer = setTimeout(() => {
+            const p = pendingRef.current;
+            if (p.submitted) return;
+            if (!p.transactionId || !p.tokenizeId) {
+              setStatus("error");
+              setError(
+                "Card processing did not complete. Please try again — no charges were made.",
+              );
+            }
+          }, 8000);
+        };
+
         const submitIfReady = async () => {
           const p = pendingRef.current;
           if (p.submitted) return;
@@ -142,7 +161,14 @@ export function PayClient({
             (type === "transaction" && !!p.transactionId) ||
             (type === "tokenization" && !!p.tokenizeId) ||
             (type === "sale" && !!p.transactionId && !!p.tokenizeId);
-          if (!ready) return;
+          if (!ready) {
+            armSaleTimeout();
+            return;
+          }
+          if (saleWaitTimer) {
+            clearTimeout(saleWaitTimer);
+            saleWaitTimer = null;
+          }
           p.submitted = true;
 
           const { email, firstName, lastName, phone } = formRef.current;
@@ -237,9 +263,58 @@ export function PayClient({
 
         elements.on("error", (payload: unknown) => {
           const p = (payload ?? {}) as { message?: string };
+          // eslint-disable-next-line no-console
+          console.error("[fortis] error", payload);
           setStatus("error");
           setError(p.message || "Card entry failed. Please try again.");
         });
+
+        // Some Fortis SDK versions emit `sale_success` for action: "sale"
+        // instead of (or in addition to) `done` + `tokenize_success`. The
+        // payload shape includes both the transaction id and the vault id.
+        elements.on("sale_success", async (payload: unknown) => {
+          // eslint-disable-next-line no-console
+          console.info("[fortis] sale_success", payload);
+          const p = (payload ?? {}) as {
+            id?: string;
+            transaction_id?: string;
+            account_vault_id?: string;
+            last_four?: string;
+            exp_date?: string;
+            data?: {
+              id?: string;
+              transaction_id?: string;
+              account_vault_id?: string;
+              last_four?: string;
+              exp_date?: string;
+            };
+          };
+          const txId = p.transaction_id ?? p.data?.transaction_id ?? p.id ?? p.data?.id;
+          const vaultId = p.account_vault_id ?? p.data?.account_vault_id;
+          const lastFour = p.last_four ?? p.data?.last_four;
+          const expDate = p.exp_date ?? p.data?.exp_date;
+          if (txId && !pendingRef.current.transactionId) {
+            pendingRef.current.transactionId = txId;
+          }
+          if (vaultId && !pendingRef.current.tokenizeId) {
+            pendingRef.current.tokenizeId = vaultId;
+            pendingRef.current.lastFour = lastFour;
+            pendingRef.current.expMonth = expDate?.slice(0, 2);
+            pendingRef.current.expYear = expDate?.slice(2);
+          }
+          await submitIfReady();
+        });
+
+        // Diagnostic logging for any other events Fortis emits so we can
+        // observe the actual event sequence in the customer's browser.
+        ["submit", "ready", "validation_error", "transaction_success"].forEach(
+          (evt) => {
+            elements.on(evt, (payload: unknown) => {
+              // eslint-disable-next-line no-console
+              console.info(`[fortis] ${evt}`, payload);
+            });
+          },
+        );
 
         if (mountRef.current) {
           elements.create({
