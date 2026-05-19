@@ -93,19 +93,23 @@ export async function POST(
     intentionType = "tokenization";
   }
 
-  // Verbose logging so we can prove from Vercel logs exactly what we send
+  // Verbose logging so we can prove from server logs exactly what we send
   // and exactly what LunarPay returns. The LunarPay error
   //   "Amount is required and must be an integer (in cents)"
   // ONLY fires when their validator sees data.action === "sale" — so if it
   // comes back, this log will show the literal body that triggered it.
   const bodyString = JSON.stringify(intentionBody);
+  const fullUrl = `${base}/api/v1/intentions`;
+  // Log key prefix only — never log full credentials.
+  const pkPrefix = pk.slice(0, 8); // e.g. "lp_pk_ab"
   console.info(
     `[intention/payment-link] token=${token} mode=${sess.mode} →`,
-    `POST ${base}/api/v1/intentions`,
+    `POST ${fullUrl}`,
+    `auth=Bearer ${pkPrefix}…(len=${pk.length})`,
     `body=${bodyString}`,
   );
 
-  const res = await fetch(`${base}/api/v1/intentions`, {
+  const res = await fetch(fullUrl, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${pk}`,
@@ -113,6 +117,14 @@ export async function POST(
     },
     body: bodyString,
     cache: "no-store",
+    redirect: "manual",
+  });
+
+  // Capture response headers too — if LunarPay 3xx-redirects us to the
+  // deprecated endpoint that defaults action: "sale", we'll see it here.
+  const respHeaders: Record<string, string> = {};
+  res.headers.forEach((v, k) => {
+    respHeaders[k] = v;
   });
 
   const rawText = await res.text();
@@ -125,12 +137,23 @@ export async function POST(
 
   console.info(
     `[intention/payment-link] LunarPay response status=${res.status}`,
+    `headers=${JSON.stringify(respHeaders)}`,
     `body=${rawText}`,
   );
 
   if (!res.ok) {
     return NextResponse.json(
-      { error: data.error || data.message || "Upstream error", sentBody: intentionBody, lunarPayResponse: rawText },
+      {
+        error: data.error || data.message || "Upstream error",
+        diagnostics: {
+          requestUrl: fullUrl,
+          requestAuthPrefix: pkPrefix,
+          requestBody: intentionBody,
+          responseStatus: res.status,
+          responseHeaders: respHeaders,
+          responseBody: rawText,
+        },
+      },
       { status: res.status },
     );
   }
