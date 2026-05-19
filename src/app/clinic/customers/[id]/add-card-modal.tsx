@@ -230,7 +230,7 @@ export function AddCardModal({
               : "hidden"
           }
         >
-          <div ref={mountRef} style={{ marginTop: -72, marginBottom: -56 }} />
+          <div ref={mountRef} style={{ marginTop: -130, marginBottom: -56 }} />
         </div>
 
         {(status === "ready" || status === "saving") && (

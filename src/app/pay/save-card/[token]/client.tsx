@@ -159,7 +159,7 @@ export function SaveCardClient({ token }: { token: string }) {
             : "hidden"
         }
       >
-        <div ref={mountRef} style={{ marginTop: -72, marginBottom: -56 }} />
+        <div ref={mountRef} style={{ marginTop: -130, marginBottom: -56 }} />
       </div>
       <button
         type="button"

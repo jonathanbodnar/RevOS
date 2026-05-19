@@ -31,6 +31,10 @@ interface FortisDonePayload {
   data?: {
     id?: string;
     account_holder_name?: string;
+    // Present when Fortis uses action: "sale" — vault created alongside charge.
+    account_vault_id?: string;
+    last_four?: string;
+    exp_date?: string; // "MMYY"
   };
 }
 
@@ -149,60 +153,92 @@ export function PayClient({
             return;
           }
           setStatus("submitting");
-          const submit = await fetch(`/api/public/payment-link/${token}`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              transactionId: p.transactionId,
-              tokenizeId: p.tokenizeId,
-              lastFour: p.lastFour,
-              expMonth: p.expMonth,
-              expYear: p.expYear,
-              paymentMethod: "cc",
-              email,
-              firstName,
-              lastName,
-              phone: phone || undefined,
-              clinicId: clinicId || undefined,
-            }),
-          });
-          if (!submit.ok) {
-            const d = (await submit.json().catch(() => ({}))) as { error?: string };
+          try {
+            const submit = await fetch(`/api/public/payment-link/${token}`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                transactionId: p.transactionId,
+                tokenizeId: p.tokenizeId,
+                lastFour: p.lastFour,
+                expMonth: p.expMonth,
+                expYear: p.expYear,
+                paymentMethod: "cc",
+                email,
+                firstName,
+                lastName,
+                phone: phone || undefined,
+                clinicId: clinicId || undefined,
+              }),
+            });
+            // Require explicit { ok: true } in the response body — a 200 with
+            // an error message still counts as a failure.
+            const body = (await submit.json().catch(() => ({}))) as {
+              ok?: boolean;
+              error?: string;
+            };
+            if (!submit.ok || !body.ok) {
+              setStatus("error");
+              setError(body.error || "Payment failed. Please try again.");
+              p.submitted = false;
+              return;
+            }
+          } catch {
             setStatus("error");
-            setError(d.error || "Payment failed.");
+            setError("Network error. Please check your connection and try again.");
             p.submitted = false;
             return;
           }
           setStatus("done");
         };
 
-        // `done` fires for both "transaction" and "sale" intentions; carries
-        // the transaction id of the charge Fortis just ran in the iframe.
+        // `done` fires when Fortis completes a charge (transaction or sale).
         elements.on("done", async (payload: unknown) => {
           const p = payload as FortisDonePayload;
           const id = p.data?.id;
-          if (id) {
-            pendingRef.current.transactionId = id;
-            await submitIfReady();
+          if (!id) {
+            // `done` fired without a transaction id — charge may have failed.
+            if (intentionTypeRef.current !== "tokenization") {
+              setStatus("error");
+              setError("Payment could not be processed. Please try again.");
+            }
+            return;
           }
+          pendingRef.current.transactionId = id;
+
+          // For `action: "sale"`, some Fortis versions embed the vault token
+          // directly in `done` alongside the transaction id. If present, grab
+          // it so we don't need to wait for a separate tokenize_success event.
+          const vaultId = p.data?.account_vault_id;
+          if (vaultId && !pendingRef.current.tokenizeId) {
+            pendingRef.current.tokenizeId = vaultId;
+            pendingRef.current.lastFour = p.data?.last_four;
+            pendingRef.current.expMonth = p.data?.exp_date?.slice(0, 2);
+            pendingRef.current.expYear = p.data?.exp_date?.slice(2);
+          }
+
+          await submitIfReady();
         });
 
-        // `tokenize_success` fires for "tokenization" and "sale" intentions;
-        // carries the vaulted account id + card metadata.
+        // `tokenize_success` fires when Fortis vaults a card (tokenization or
+        // sale intentions). Carries the account vault id + card metadata.
         elements.on("tokenize_success", async (payload: unknown) => {
           const p = (payload ?? {}) as FortisTokenizePayload;
           if (!p.id) return;
-          pendingRef.current.tokenizeId = p.id;
-          pendingRef.current.lastFour = p.last_four;
-          pendingRef.current.expMonth = p.exp_date?.slice(0, 2);
-          pendingRef.current.expYear = p.exp_date?.slice(2);
+          // Only update if we don't already have vault info from `done`.
+          if (!pendingRef.current.tokenizeId) {
+            pendingRef.current.tokenizeId = p.id;
+            pendingRef.current.lastFour = p.last_four;
+            pendingRef.current.expMonth = p.exp_date?.slice(0, 2);
+            pendingRef.current.expYear = p.exp_date?.slice(2);
+          }
           await submitIfReady();
         });
 
         elements.on("error", (payload: unknown) => {
           const p = (payload ?? {}) as { message?: string };
           setStatus("error");
-          setError(p.message || "Card entry failed.");
+          setError(p.message || "Card entry failed. Please try again.");
         });
 
         if (mountRef.current) {
@@ -350,7 +386,7 @@ export function PayClient({
         >
           <div
             ref={mountRef}
-            style={{ marginTop: -72, marginBottom: -56 }}
+            style={{ marginTop: -130, marginBottom: -56 }}
           />
         </div>
 
