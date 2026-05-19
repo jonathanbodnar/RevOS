@@ -71,24 +71,32 @@ export async function POST(
   let intentionBody: Record<string, unknown>;
   let intentionType: "transaction" | "tokenization";
   if (isOneTime) {
-    // Fortis charges in iframe; backend records the charge.
+    // One-time charge — Fortis charges the card in the iframe and our
+    // backend records the resulting transaction. Explicit
+    // `action: "sale"` is required (validated by 7-probe diagnostic).
     intentionBody = {
+      action: "sale",
       amount: calcFee(sess.amountCents).totalCents,
       paymentMethods: ["cc", "ach"],
     };
     intentionType = "transaction";
   } else {
-    // PURE vault — per LunarPay playbook, the body is LITERALLY just
-    // { action: "tokenization", paymentMethods: ["cc"] }. We deliberately
-    // omit "ach" here: in practice LunarPay's intentions validator
-    // returned "Amount is required and must be an integer (in cents)"
-    // (the sale-validator error) when ACH was included alongside a
-    // tokenization action — so we card-only for the vault flow. Recurring
-    // / installment plans have to be on a card anyway; ACH for ad-hoc
-    // payments still works via the one-time `transaction` intention.
+    // PURE vault — no charge, no $0.01 auth. We MUST send both "cc" and
+    // "ach" in paymentMethods even though we only want cards: LunarPay's
+    // /api/v1/intentions handler has a bug where requesting a single
+    // payment method (paymentMethods: ["cc"]) attaches an unsupported
+    // `product_transaction_id` to the Fortis tokenization request,
+    // which Fortis then rejects with
+    //   "\"product_transaction_id\" is not allowed".
+    // Sending both methods routes LunarPay through their
+    // `paymentMethod = "any"` branch which skips the bad field. The ACH
+    // tab is hidden in the UI by the iframe crop, so the customer only
+    // sees the card form anyway. Per 7-probe diagnostic this returns
+    //   intentionType: "tokenization", amount: null
+    // — exactly the no-charge vault flow we want.
     intentionBody = {
       action: "tokenization",
-      paymentMethods: ["cc"],
+      paymentMethods: ["cc", "ach"],
     };
     intentionType = "tokenization";
   }

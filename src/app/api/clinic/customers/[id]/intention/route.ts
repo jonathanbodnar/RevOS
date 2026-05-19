@@ -34,10 +34,16 @@ export async function POST(
       { status: 503 },
     );
   }
-  // Pure vault — playbook says the body is exactly this, no `amount`.
+  // Pure vault — no charge. We MUST send both "cc" and "ach" to bypass a
+  // LunarPay-side bug where paymentMethods: ["cc"] attaches an
+  // unsupported `product_transaction_id` to the Fortis tokenization
+  // request (Fortis rejects it). Both methods → `paymentMethod = "any"`
+  // on LunarPay's side → product_transaction_id branch skipped → 200.
+  // The ACH tab is cropped out of the modal UI so the admin only sees
+  // the card form anyway.
   const intentionBody = {
     action: "tokenization",
-    paymentMethods: ["cc"],
+    paymentMethods: ["cc", "ach"],
   };
   const bodyString = JSON.stringify(intentionBody);
   console.info(
