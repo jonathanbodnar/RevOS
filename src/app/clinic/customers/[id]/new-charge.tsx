@@ -1,7 +1,25 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useEffect, useState, useTransition } from "react";
+import { useEffect, useMemo, useState, useTransition } from "react";
+
+const FEE_PERCENT = 0.039;
+const FEE_FLAT_CENTS = 39;
+
+function calcFee(baseCents: number) {
+  const feeCents = Math.round(baseCents * FEE_PERCENT) + FEE_FLAT_CENTS;
+  return { feeCents, totalCents: baseCents + feeCents };
+}
+
+function formatMoney(cents: number) {
+  return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(cents / 100);
+}
+
+function parseAmount(raw: string): number | null {
+  const n = parseFloat(raw.replace(/[^0-9.]/g, ""));
+  if (isNaN(n) || n <= 0) return null;
+  return Math.round(n * 100);
+}
 
 export function NewChargeForm({
   customerId,
@@ -18,10 +36,15 @@ export function NewChargeForm({
   const [paymentMethodId, setPaymentMethodId] = useState(methods[0]?.id ?? "");
   const [error, setError] = useState<string | null>(null);
 
-  // Sync when methods arrive after a card is added on the same page load
   useEffect(() => {
     if (!paymentMethodId && methods[0]?.id) setPaymentMethodId(methods[0].id);
   }, [methods, paymentMethodId]);
+
+  const feePreview = useMemo(() => {
+    const base = parseAmount(amount);
+    if (!base) return null;
+    return calcFee(base);
+  }, [amount]);
 
   const disabled = methods.length === 0;
 
@@ -56,9 +79,7 @@ export function NewChargeForm({
     <div className="card-pad">
       <h3 className="text-sm font-semibold text-slate-900 mb-3">One-time charge</h3>
       {disabled ? (
-        <p className="text-sm text-slate-500">
-          Add a payment method first.
-        </p>
+        <p className="text-sm text-slate-500">Add a payment method first.</p>
       ) : (
         <form onSubmit={onSubmit} className="space-y-3">
           <div>
@@ -72,6 +93,24 @@ export function NewChargeForm({
               onChange={(e) => setAmount(e.target.value)}
             />
           </div>
+
+          {feePreview && (
+            <div className="text-xs text-slate-500 bg-slate-50 border border-slate-100 rounded-md px-3 py-2 space-y-1">
+              <div className="flex justify-between">
+                <span>Subtotal</span>
+                <span className="tabular-nums">{formatMoney(feePreview.totalCents - feePreview.feeCents)}</span>
+              </div>
+              <div className="flex justify-between">
+                <span>Processing fee (3.9% + $0.39)</span>
+                <span className="tabular-nums">{formatMoney(feePreview.feeCents)}</span>
+              </div>
+              <div className="flex justify-between font-medium text-slate-700 border-t border-slate-200 pt-1">
+                <span>Customer will be charged</span>
+                <span className="tabular-nums">{formatMoney(feePreview.totalCents)}</span>
+              </div>
+            </div>
+          )}
+
           <div>
             <label className="label">Payment method</label>
             <select
@@ -101,7 +140,11 @@ export function NewChargeForm({
             </div>
           )}
           <button className="btn-primary w-full" disabled={loading}>
-            {loading ? "Processing…" : "Charge"}
+            {loading
+              ? "Processing…"
+              : feePreview
+              ? `Charge ${formatMoney(feePreview.totalCents)}`
+              : "Charge"}
           </button>
         </form>
       )}

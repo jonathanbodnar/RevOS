@@ -1,6 +1,7 @@
 import { notFound } from "next/navigation";
 import { prisma } from "@/lib/prisma";
 import { PayClient } from "./client";
+import { calcFee, FEE_LABEL } from "@/lib/fees";
 
 export const dynamic = "force-dynamic";
 
@@ -136,16 +137,33 @@ export default async function PayPage({
             <>
               {/* Charge breakdown */}
               <div className="mb-5">
-                {session.mode === "payment" && (
-                  <>
-                    <p className="text-xs font-medium text-slate-500 uppercase tracking-wide mb-1">
-                      Amount due
-                    </p>
-                    <p className="text-3xl font-semibold text-slate-900 tabular-nums">
-                      {formatMoney(session.amountCents)}
-                    </p>
-                  </>
-                )}
+                {session.mode === "payment" && (() => {
+                  const { feeCents, totalCents } = calcFee(session.amountCents);
+                  return (
+                    <>
+                      <p className="text-xs font-medium text-slate-500 uppercase tracking-wide mb-1">
+                        Amount due
+                      </p>
+                      <p className="text-3xl font-semibold text-slate-900 tabular-nums">
+                        {formatMoney(totalCents)}
+                      </p>
+                      <ul className="text-sm text-slate-600 space-y-1 border-t border-slate-100 pt-3 mt-3">
+                        <li className="flex justify-between">
+                          <span>Subtotal</span>
+                          <span className="tabular-nums">{formatMoney(session.amountCents)}</span>
+                        </li>
+                        <li className="flex justify-between text-slate-500 text-xs">
+                          <span>Processing fee ({FEE_LABEL})</span>
+                          <span className="tabular-nums">{formatMoney(feeCents)}</span>
+                        </li>
+                        <li className="flex justify-between font-medium border-t border-slate-100 pt-1 mt-1">
+                          <span>Total</span>
+                          <span className="tabular-nums">{formatMoney(totalCents)}</span>
+                        </li>
+                      </ul>
+                    </>
+                  );
+                })()}
 
                 {session.mode === "subscription" && (
                   <>
@@ -154,38 +172,53 @@ export default async function PayPage({
                         <p className="text-xs font-medium text-slate-500 uppercase tracking-wide mb-1">
                           Trial subscription
                         </p>
-                        <p className="text-3xl font-semibold text-slate-900 tabular-nums">
-                          {formatMoney(meta.subscriptionAmountCents ?? session.amountCents)}
-                          {subTitle && (
-                            <span className="text-base font-normal text-slate-500">
-                              {" "}
-                              / {subTitle}
-                            </span>
-                          )}
-                        </p>
-                        <p className="text-xs text-slate-500 mt-3">
-                          No charge today — your card will be saved securely.
-                          The first payment runs on the next billing cycle.
-                        </p>
+                        {(() => {
+                          const base = meta.subscriptionAmountCents ?? session.amountCents;
+                          const { feeCents, totalCents } = calcFee(base);
+                          return (
+                            <>
+                              <p className="text-3xl font-semibold text-slate-900 tabular-nums">
+                                {formatMoney(totalCents)}
+                                {subTitle && <span className="text-base font-normal text-slate-500"> / {subTitle}</span>}
+                              </p>
+                              <p className="text-xs text-slate-500 mt-2">
+                                Includes {formatMoney(feeCents)} processing fee ({FEE_LABEL}).
+                                No charge today — card saved, first payment on next billing cycle.
+                              </p>
+                            </>
+                          );
+                        })()}
                       </>
                     ) : (
                       <>
                         <p className="text-xs font-medium text-slate-500 uppercase tracking-wide mb-1">
                           Subscription
                         </p>
-                        <p className="text-3xl font-semibold text-slate-900 tabular-nums">
-                          {formatMoney(session.amountCents)}
-                          {subTitle && (
-                            <span className="text-base font-normal text-slate-500">
-                              {" "}
-                              / {subTitle}
-                            </span>
-                          )}
-                        </p>
-                        <p className="text-xs text-slate-500 mt-3">
-                          The first charge runs today. Future charges run
-                          automatically {subTitle}.
-                        </p>
+                        {(() => {
+                          const { feeCents, totalCents } = calcFee(session.amountCents);
+                          return (
+                            <>
+                              <p className="text-3xl font-semibold text-slate-900 tabular-nums">
+                                {formatMoney(totalCents)}
+                                {subTitle && <span className="text-base font-normal text-slate-500"> / {subTitle}</span>}
+                              </p>
+                              <ul className="text-sm text-slate-600 space-y-1 border-t border-slate-100 pt-3 mt-3">
+                                <li className="flex justify-between">
+                                  <span>Subscription</span>
+                                  <span className="tabular-nums">{formatMoney(session.amountCents)}</span>
+                                </li>
+                                <li className="flex justify-between text-slate-500 text-xs">
+                                  <span>Processing fee ({FEE_LABEL})</span>
+                                  <span className="tabular-nums">{formatMoney(feeCents)}</span>
+                                </li>
+                                <li className="flex justify-between font-medium border-t border-slate-100 pt-1 mt-1">
+                                  <span>Billed {subTitle}</span>
+                                  <span className="tabular-nums">{formatMoney(totalCents)}</span>
+                                </li>
+                              </ul>
+                            </>
+                          );
+                        })()}
                       </>
                     )}
                   </>
@@ -250,13 +283,20 @@ function CombinedSummary({
   const startsToday = startAfterDays === 0;
   const subTitle = frequencyLabel(meta.frequency ?? null);
 
+  // Day-of charge base = setup + (first sub if starts today)
+  const dayOfBase = session.amountCents;
+  const { feeCents: dayOfFee, totalCents: dayOfTotal } = calcFee(dayOfBase);
+
+  // Recurring billing = sub amount + fee
+  const { feeCents: subFee, totalCents: subTotal } = calcFee(subAmount);
+
   return (
     <div>
       <p className="text-xs font-medium text-slate-500 uppercase tracking-wide mb-2">
         Today&apos;s charge
       </p>
       <p className="text-3xl font-semibold text-slate-900 tabular-nums mb-3">
-        {formatMoney(session.amountCents)}
+        {formatMoney(dayOfTotal)}
       </p>
 
       {session.description && (
@@ -276,19 +316,31 @@ function CombinedSummary({
             <span className="tabular-nums">{formatMoney(subAmount)}</span>
           </li>
         )}
-        <li className="flex justify-between text-slate-500 text-xs pt-2 mt-1 border-t border-slate-100">
-          <span>Then {subTitle ?? "recurring"}</span>
-          <span className="tabular-nums">
-            {formatMoney(subAmount)}
-            {subTitle ? ` / ${subTitle.replace("every ", "")}` : ""}
-          </span>
+        <li className="flex justify-between text-slate-500 text-xs">
+          <span>Processing fee ({FEE_LABEL})</span>
+          <span className="tabular-nums">{formatMoney(dayOfFee)}</span>
         </li>
-        {!startsToday && (
+        <li className="flex justify-between font-medium border-t border-slate-100 pt-1 mt-1">
+          <span>Total today</span>
+          <span className="tabular-nums">{formatMoney(dayOfTotal)}</span>
+        </li>
+        {subAmount > 0 && (
+          <>
+            <li className="flex justify-between text-slate-500 text-xs pt-2 mt-1 border-t border-slate-100">
+              <span>Then {subTitle ?? "recurring"}</span>
+              <span className="tabular-nums">
+                {formatMoney(subTotal)}{subTitle ? ` / ${subTitle.replace("every ", "")}` : ""}
+              </span>
+            </li>
+            <li className="flex justify-between text-slate-400 text-xs">
+              <span>Incl. {formatMoney(subFee)} processing fee</span>
+            </li>
+          </>
+        )}
+        {!startsToday && subAmount > 0 && (
           <li className="flex justify-between text-slate-500 text-xs">
             <span>First subscription charge</span>
-            <span>
-              in {startAfterDays} day{startAfterDays === 1 ? "" : "s"}
-            </span>
+            <span>in {startAfterDays} day{startAfterDays === 1 ? "" : "s"}</span>
           </li>
         )}
       </ul>
@@ -304,38 +356,45 @@ function InstallmentsSummary({ meta }: { meta: Meta }) {
     : Array(count).fill(meta.perPaymentCents ?? 0);
   const scheduleType = meta.scheduleType ?? "frequency";
 
-  // Determine today's charge
   const firstCents = perArr[0] ?? 0;
   const chargedToday =
-    scheduleType === "dates"
-      ? meta.firstIsToday
-      : meta.installFirstToday ?? true;
+    scheduleType === "dates" ? meta.firstIsToday : meta.installFirstToday ?? true;
 
   const freqLabel = frequencyLabel(meta.frequency ?? null);
 
-  // Build payment rows
-  const paymentRows: { label: string; cents: number }[] = [];
+  // Fee per installment payment row
+  const paymentRows: { label: string; base: number; total: number }[] = [];
   if (scheduleType === "dates" && meta.scheduledDates) {
     meta.scheduledDates.forEach((date, i) => {
+      const base = perArr[i] ?? firstCents;
       paymentRows.push({
         label: new Date(`${date}T00:00:00`).toLocaleDateString("en-US", {
-          month: "short",
-          day: "numeric",
-          year: "numeric",
+          month: "short", day: "numeric", year: "numeric",
         }),
-        cents: perArr[i] ?? firstCents,
+        base,
+        total: calcFee(base).totalCents,
       });
     });
   } else {
-    paymentRows.push({ label: chargedToday ? "Today" : "Payment 1 (tonight)", cents: firstCents });
+    const { totalCents: t1 } = calcFee(firstCents);
+    paymentRows.push({ label: chargedToday ? "Today" : "Payment 1 (tonight)", base: firstCents, total: t1 });
     const remaining = meta.remainingCount ?? count - (chargedToday ? 1 : 0);
     if (remaining > 0) {
+      const base = perArr[1] ?? firstCents;
       paymentRows.push({
         label: `+ ${remaining} more ${freqLabel ?? ""} payment${remaining !== 1 ? "s" : ""}`,
-        cents: perArr[1] ?? firstCents,
+        base,
+        total: calcFee(base).totalCents,
       });
     }
   }
+
+  // Total with fees across all installments
+  const totalWithFees = perArr.reduce((sum, c) => sum + calcFee(c ?? firstCents).totalCents, 0);
+
+  // Concurrent subscription
+  const subBase = meta.subAmountCents ?? 0;
+  const { feeCents: subFee, totalCents: subTotal } = calcFee(subBase);
 
   return (
     <div>
@@ -343,10 +402,10 @@ function InstallmentsSummary({ meta }: { meta: Meta }) {
         Installment plan
       </p>
       <p className="text-3xl font-semibold text-slate-900 tabular-nums mb-1">
-        {formatMoney(total)}
+        {formatMoney(totalWithFees)}
       </p>
       <p className="text-sm text-slate-500 mb-3">
-        {count} payment{count !== 1 ? "s" : ""}
+        {count} payment{count !== 1 ? "s" : ""} · incl. processing fees
         {scheduleType === "frequency" && freqLabel ? ` · ${freqLabel}` : ""}
       </p>
 
@@ -354,10 +413,10 @@ function InstallmentsSummary({ meta }: { meta: Meta }) {
         {paymentRows.map((row, i) => (
           <li key={i} className={`flex justify-between ${i === 0 && chargedToday ? "font-medium" : "text-slate-500 text-xs"}`}>
             <span>{row.label}</span>
-            <span className="tabular-nums">{formatMoney(row.cents)}</span>
+            <span className="tabular-nums">{formatMoney(row.total)}</span>
           </li>
         ))}
-        {meta.subAmountCents && meta.subAmountCents >= 50 && (
+        {subBase >= 50 && (
           <li className="flex justify-between text-slate-500 text-xs border-t border-slate-100 pt-2 mt-1">
             <span>
               + Subscription{" "}
@@ -366,7 +425,12 @@ function InstallmentsSummary({ meta }: { meta: Meta }) {
                 : "starting today"}{" "}
               {frequencyLabel(meta.subFrequency ?? null) ?? ""}
             </span>
-            <span className="tabular-nums">{formatMoney(meta.subAmountCents)}</span>
+            <span className="tabular-nums">{formatMoney(subTotal)}</span>
+          </li>
+        )}
+        {subBase >= 50 && (
+          <li className="flex justify-between text-slate-400 text-xs">
+            <span>Incl. {formatMoney(subFee)} processing fee per billing cycle</span>
           </li>
         )}
       </ul>

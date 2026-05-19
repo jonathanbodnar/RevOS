@@ -5,6 +5,7 @@ import { requireClinicApi } from "@/lib/api-guard";
 import { lunarpay, LunarPayError } from "@/lib/lunarpay";
 import { logAudit } from "@/lib/audit";
 import { parseMoneyInputToCents } from "@/lib/format";
+import { calcFee } from "@/lib/fees";
 
 /**
  * Create a subscription via hosted checkout (mode: "subscription").
@@ -57,8 +58,9 @@ export async function POST(
     : `[${clinicLabel}] Subscription — ${parsed.data.frequency}`;
 
   try {
+    const { feeCents, totalCents } = calcFee(cents);
     const lp = await lunarpay.createCheckoutSession({
-      amount: cents / 100, // LP checkout API takes dollars, not cents
+      amount: totalCents / 100, // LP checkout API takes dollars; fee included
       description,
       customer_email: customer.email || undefined,
       customer_name:
@@ -77,7 +79,7 @@ export async function POST(
         customerId: customer.id,
         type: "subscription",
       },
-      expires_in: 60 * 60 * 24, // 24 hours
+      expires_in: 60 * 60 * 24,
     });
 
     const checkoutSession = await prisma.checkoutSession.create({
@@ -87,7 +89,7 @@ export async function POST(
         lunarpaySessionId: lp.id,
         token: lp.token,
         url: lp.url,
-        amountCents: cents,
+        amountCents: totalCents,
         description: parsed.data.description ?? `Subscription — ${parsed.data.frequency}`,
         mode: "subscription",
         status: lp.status,
@@ -95,6 +97,8 @@ export async function POST(
           clinicId,
           customerId: customer.id,
           frequency: parsed.data.frequency,
+          baseCents: cents,
+          feeCents,
         }),
       },
     });
@@ -106,7 +110,7 @@ export async function POST(
       action: "subscription.create",
       targetType: "CheckoutSession",
       targetId: checkoutSession.id,
-      metadata: { amountCents: cents, frequency: parsed.data.frequency },
+      metadata: { baseCents: cents, totalCents, frequency: parsed.data.frequency },
     });
 
     return NextResponse.json({ url: lp.url, id: checkoutSession.id });

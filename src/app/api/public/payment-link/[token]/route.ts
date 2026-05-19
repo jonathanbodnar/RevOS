@@ -4,6 +4,7 @@ import { prisma } from "@/lib/prisma";
 import { lunarpay, LunarPayError } from "@/lib/lunarpay";
 import { logAudit } from "@/lib/audit";
 import { requireStringParams } from "@/lib/route-params";
+import { calcFee } from "@/lib/fees";
 
 /**
  * Public submit endpoint for a reusable hosted payment link.
@@ -149,20 +150,20 @@ export async function POST(
     }
 
     // ─── TRANSACTION FLOW (one-time payment) ──────────────────────────────
-    // Fortis already charged the card inside the iframe. Record the customer
-    // and charge in our DB, then return — do NOT call createCharge again.
+    // Fortis already charged the card inside the iframe (with processing fee
+    // included in the intention amount). Record the fee-included total in DB.
     if (isTransactionFlow) {
       const clinicLabel = sess.clinic?.name ?? "RevOS";
+      const { totalCents } = calcFee(sess.amountCents);
       await prisma.charge.create({
         data: {
           clinicId: resolvedClinicId,
           customerId: customer.id,
           paymentMethodId: null,
           paymentLinkId: sess.id,
-          // The transaction ID from Fortis is our charge identifier here.
           lunarpayChargeId: transactionId!,
           fortisTransactionId: transactionId!,
-          amountCents: sess.amountCents,
+          amountCents: totalCents,
           status: "paid",
           paymentMethodType: paymentMethod ?? "cc",
           description: sess.description ?? `[${clinicLabel}]`,
@@ -176,7 +177,7 @@ export async function POST(
         action: "charge.complete.payment_link",
         targetType: "CheckoutSession",
         targetId: sess.id,
-        metadata: { amountCents: sess.amountCents, customerId: customer.id, transactionId },
+        metadata: { amountCents: totalCents, customerId: customer.id, transactionId },
       });
 
       return NextResponse.json({ ok: true });
@@ -226,12 +227,14 @@ export async function POST(
 
     // 4) Charge the today total — skipped entirely for trial subscriptions.
     //    Combined mode's `amountCents` already bundles setup fee + (sub if
-    //    starting today); payment / subscription modes use their single amount.
+    //    starting today); subscription mode uses its amount. Processing fee
+    //    (3.9% + $0.39) is added on top before sending to LunarPay.
     if (!meta.trial && sess.amountCents > 0) {
+      const { totalCents: chargeTotal } = calcFee(sess.amountCents);
       const lpCharge = await lunarpay.createCharge({
         customerId: lpCustomerId,
         paymentMethodId: lpPm.data.id,
-        amount: sess.amountCents,
+        amount: chargeTotal,
         description,
       });
 
@@ -265,18 +268,19 @@ export async function POST(
       if (scheduleType === "dates") {
         const dates = meta.scheduledDates ?? [];
         const firstIsToday = meta.firstIsToday ?? false;
-        const startIdx = firstIsToday ? 1 : 0; // skip first if already charged
-        payments = dates.slice(startIdx).map((date, i) => ({
-          amount: perPaymentCentsArr[startIdx + i] ?? perPaymentCentsArr[0],
-          date,
-        }));
+        const startIdx = firstIsToday ? 1 : 0;
+        payments = dates.slice(startIdx).map((date, i) => {
+          const base = perPaymentCentsArr[startIdx + i] ?? perPaymentCentsArr[0];
+          return { amount: calcFee(base).totalCents, date };
+        });
       } else {
         const frequency: Frequency = (meta.frequency as Frequency) || "monthly";
         const remainingCount = meta.remainingCount ?? 0;
         let nextDate = addOneFrequency(new Date(), frequency);
         for (let i = 0; i < remainingCount; i++) {
+          const base = perPaymentCentsArr[i + 1] ?? perPaymentCentsArr[0];
           payments.push({
-            amount: perPaymentCentsArr[i + 1] ?? perPaymentCentsArr[0],
+            amount: calcFee(base).totalCents,
             date: nextDate.toISOString().slice(0, 10),
           });
           nextDate = addOneFrequency(nextDate, frequency);
@@ -312,17 +316,15 @@ export async function POST(
 
       // Optional concurrent subscription — startOn computed from desired first charge date.
       if (meta.subAmountCents && meta.subFrequency && meta.subAmountCents >= 50) {
-        // If a first charge date was set, back-calculate startOn so LunarPay's
-        // nextPaymentOn lands exactly on that date.
-        // Formula: startOn = firstChargeDate − 1 frequency
         const lpStartOn = meta.subFirstChargeDate
           ? subtractOneFrequency(meta.subFirstChargeDate, meta.subFrequency)
           : todayIso();
 
+        const { totalCents: subTotal } = calcFee(meta.subAmountCents);
         const lpSub = await lunarpay.createSubscription({
           customerId: lpCustomerId,
           paymentMethodId: lpPm.data.id,
-          amount: meta.subAmountCents,
+          amount: subTotal,
           frequency: meta.subFrequency,
           startOn: lpStartOn,
         });
@@ -338,7 +340,7 @@ export async function POST(
             paymentMethodId: pm.id,
             paymentLinkId: sess.id,
             lunarpaySubscriptionId: lpSub.data.id,
-            amountCents: meta.subAmountCents,
+            amountCents: subTotal,
             frequency: meta.subFrequency,
             status: lpSub.data.status,
             startOn: new Date(lpStartOn),
@@ -399,10 +401,11 @@ export async function POST(
       }
 
       if (subAmountCents >= 50) {
+        const { totalCents: subBillingTotal } = calcFee(subAmountCents);
         const lpSub = await lunarpay.createSubscription({
           customerId: lpCustomerId,
           paymentMethodId: lpPm.data.id,
-          amount: subAmountCents,
+          amount: subBillingTotal,
           frequency,
           startOn: lpStartOn,
           trial: !!meta.trial,
@@ -419,7 +422,7 @@ export async function POST(
             paymentMethodId: pm.id,
             paymentLinkId: sess.id,
             lunarpaySubscriptionId: lpSub.data.id,
-            amountCents: subAmountCents,
+            amountCents: subBillingTotal,
             frequency,
             status: lpSub.data.status,
             startOn: lpSub.data.startOn ? new Date(lpSub.data.startOn) : new Date(lpStartOn),

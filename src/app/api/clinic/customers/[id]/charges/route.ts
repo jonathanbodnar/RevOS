@@ -5,6 +5,7 @@ import { requireClinicApi } from "@/lib/api-guard";
 import { lunarpay, LunarPayError } from "@/lib/lunarpay";
 import { logAudit } from "@/lib/audit";
 import { parseMoneyInputToCents } from "@/lib/format";
+import { calcFee } from "@/lib/fees";
 
 const Body = z.object({
   paymentMethodId: z.string().min(1),
@@ -58,10 +59,11 @@ export async function POST(
     : `[${clinicLabel}]`;
 
   try {
+    const { totalCents } = calcFee(cents);
     const lp = await lunarpay.createCharge({
       customerId: customer.lunarpayCustomerId,
       paymentMethodId: pm.lunarpayPaymentMethodId,
-      amount: cents,
+      amount: totalCents,
       description,
     });
 
@@ -86,7 +88,7 @@ export async function POST(
       action: "charge.create",
       targetType: "Charge",
       targetId: charge.id,
-      metadata: { amountCents: cents },
+      metadata: { baseCents: cents, totalCents },
     });
 
     return NextResponse.json({ data: { id: charge.id } }, { status: 201 });

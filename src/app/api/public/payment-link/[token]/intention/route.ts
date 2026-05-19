@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireStringParams } from "@/lib/route-params";
+import { calcFee } from "@/lib/fees";
 
 /**
  * Mint a Fortis clientToken for the public payment-link page.
@@ -52,8 +53,10 @@ export async function POST(
   // Everything else (subscription, combined, trial, installments): use a ticket
   // intention (hasRecurring: true) so the card is vaulted without charging.
   const isOneTime = sess.mode === "payment";
+  // For transaction flow the customer pays base + processing fee.
+  const { totalCents } = calcFee(sess.amountCents);
   const intentionBody = isOneTime
-    ? { amount: sess.amountCents, paymentMethods: ["cc", "ach"] }
+    ? { amount: totalCents, paymentMethods: ["cc", "ach"] }
     : { hasRecurring: true, paymentMethods: ["cc", "ach"] };
 
   const res = await fetch(`${base}/api/v1/intentions`, {
