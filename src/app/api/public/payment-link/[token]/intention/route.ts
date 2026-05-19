@@ -79,14 +79,16 @@ export async function POST(
     intentionType = "transaction";
   } else {
     // PURE vault — per LunarPay playbook, the body is LITERALLY just
-    // { action: "tokenization", paymentMethods: [...] }. Do NOT add an
-    // `amount` field: when both `action: "tokenization"` and `amount` are
-    // present, LunarPay reinterprets the intention as `action: "sale"`
-    // (which charges the card and never fires tokenize_success), breaking
-    // the whole vault flow.
+    // { action: "tokenization", paymentMethods: ["cc"] }. We deliberately
+    // omit "ach" here: in practice LunarPay's intentions validator
+    // returned "Amount is required and must be an integer (in cents)"
+    // (the sale-validator error) when ACH was included alongside a
+    // tokenization action — so we card-only for the vault flow. Recurring
+    // / installment plans have to be on a card anyway; ACH for ad-hoc
+    // payments still works via the one-time `transaction` intention.
     intentionBody = {
       action: "tokenization",
-      paymentMethods: ["cc", "ach"],
+      paymentMethods: ["cc"],
     };
     intentionType = "tokenization";
   }
