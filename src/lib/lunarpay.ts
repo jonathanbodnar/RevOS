@@ -238,9 +238,15 @@ export const lunarpay = {
     paymentMethodId: number;
     amount: number;
     description?: string;
-    capture?: boolean; // false = authorize-only (hold); omit or true = charge immediately
+    capture?: boolean;
   }) {
-    return request<{ data: LPCharge }>("POST", "/api/v1/charges", input);
+    // LunarPay rejects non-integer amounts with "Amount must be an integer
+    // (in cents)". Math.round here is defensive in case any caller computed
+    // amount via a non-integer expression.
+    return request<{ data: LPCharge }>("POST", "/api/v1/charges", {
+      ...input,
+      amount: Math.round(input.amount),
+    });
   },
   captureCharge(chargeId: string, amount?: number) {
     // Captures a previously authorized hold. Pass amount to partially capture.
@@ -284,7 +290,7 @@ export const lunarpay = {
     return request<{ data: LPSubscription }>(
       "POST",
       "/api/v1/subscriptions",
-      input,
+      { ...input, amount: Math.round(input.amount) },
     );
   },
   updateSubscription(
@@ -316,12 +322,19 @@ export const lunarpay = {
     customerId: number;
     paymentMethodId: number;
     description?: string;
+    // `date` is a plain YYYY-MM-DD string (NOT a datetime), per playbook.
     payments: { amount: number; date: string }[];
   }) {
     return request<{ data: LPPaymentSchedule }>(
       "POST",
       "/api/v1/payment-schedules",
-      input,
+      {
+        ...input,
+        payments: input.payments.map((p) => ({
+          amount: Math.round(p.amount),
+          date: p.date,
+        })),
+      },
     );
   },
   getSchedule(id: number) {

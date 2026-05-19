@@ -98,50 +98,95 @@ export function AddCardModal({
         // 3) Create elements instance and wire events.
         const elements = new window.Commerce.elements(intention.clientToken);
 
-        // Tokenization payload shape from Fortis:
-        //   { id: "<vaultId>", last_four: "4242", exp_date: "1228",
-        //     account_holder_name: "...", account_type: "visa", ... }
+        let saved = false;
+        const saveCard = async (
+          tokenizeId: string,
+          lastFour?: string,
+          expDate?: string,
+          nameHolder?: string,
+        ) => {
+          if (saved) return;
+          saved = true;
+          setStatus("saving");
+          try {
+            const saveRes = await fetch(
+              `/api/clinic/customers/${customerId}/payment-methods`,
+              {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  tokenizeId,
+                  paymentMethod: "cc",
+                  lastFour,
+                  expMonth: expDate?.slice(0, 2),
+                  expYear: expDate?.slice(2),
+                  nameHolder,
+                }),
+              },
+            );
+            const body = (await saveRes.json().catch(() => ({}))) as {
+              data?: { id?: string };
+              error?: string;
+            };
+            if (!saveRes.ok || !body.data?.id) {
+              setStatus("error");
+              setError(body.error || "Failed to save card.");
+              saved = false;
+              return;
+            }
+            onSaved();
+          } catch {
+            setStatus("error");
+            setError("Network error. Please try again.");
+            saved = false;
+          }
+        };
+
+        // Per LunarPay playbook: tokenization intentions fire `done` with
+        // data.id = account_vault_id. Some SDK versions also emit
+        // `tokenize_success`.
+        elements.on("done", async (payload) => {
+          // eslint-disable-next-line no-console
+          console.info("[fortis] done", payload);
+          const p = (payload ?? {}) as {
+            data?: {
+              id?: string;
+              last_four?: string;
+              exp_date?: string;
+              account_holder_name?: string;
+              account?: { last_four?: string; exp_date?: string };
+            };
+          };
+          const id = p.data?.id;
+          if (!id) {
+            setStatus("error");
+            setError("Card not saved. Please try again.");
+            return;
+          }
+          await saveCard(
+            id,
+            p.data?.last_four ?? p.data?.account?.last_four,
+            p.data?.exp_date ?? p.data?.account?.exp_date,
+            p.data?.account_holder_name,
+          );
+        });
+
         elements.on("tokenize_success", async (payload) => {
+          // eslint-disable-next-line no-console
+          console.info("[fortis] tokenize_success", payload);
           const p = (payload ?? {}) as {
             id?: string;
             last_four?: string;
             exp_date?: string;
             account_holder_name?: string;
           };
-          const tokenizeId = p.id;
-          if (!tokenizeId) {
-            setStatus("error");
-            setError("No token returned from card form.");
-            return;
-          }
-          setStatus("saving");
-          const saveRes = await fetch(
-            `/api/clinic/customers/${customerId}/payment-methods`,
-            {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                tokenizeId,
-                paymentMethod: "cc",
-                lastFour: p.last_four,
-                expMonth: p.exp_date?.slice(0, 2),
-                expYear: p.exp_date?.slice(2),
-                nameHolder: p.account_holder_name,
-              }),
-            },
-          );
-          if (!saveRes.ok) {
-            const d = (await saveRes.json().catch(() => ({}))) as {
-              error?: string;
-            };
-            setStatus("error");
-            setError(d.error || "Failed to save card.");
-            return;
-          }
-          onSaved();
+          if (!p.id) return;
+          await saveCard(p.id, p.last_four, p.exp_date, p.account_holder_name);
         });
 
         elements.on("error", (payload) => {
+          // eslint-disable-next-line no-console
+          console.error("[fortis] error", payload);
           const p = payload as { message?: string };
           setStatus("error");
           setError(p.message || "Card entry failed.");
@@ -155,7 +200,9 @@ export function AddCardModal({
               (process.env.NEXT_PUBLIC_FORTIS_ENVIRONMENT as
                 | "sandbox"
                 | "production") || "production",
-            showSubmitButton: false,
+            // Fortis ignores elements.submit() when this is false. Let
+            // Fortis render its own button (playbook-compliant).
+            showSubmitButton: true,
             showReceipt: false,
           });
           elementsRef.current = elements;
@@ -230,20 +277,11 @@ export function AddCardModal({
               : "hidden"
           }
         >
-          <div ref={mountRef} style={{ marginTop: -130, marginBottom: -56 }} />
+          <div ref={mountRef} style={{ marginTop: -130 }} />
         </div>
 
-        {(status === "ready" || status === "saving") && (
-          <button
-            type="button"
-            onClick={() => {
-              if (status === "ready") elementsRef.current?.submit();
-            }}
-            disabled={status !== "ready"}
-            className="btn-primary w-full mt-4"
-          >
-            {status === "saving" ? "Saving…" : "Save card"}
-          </button>
+        {status === "saving" && (
+          <div className="text-sm text-slate-500 py-3 text-center">Saving…</div>
         )}
       </div>
     </div>

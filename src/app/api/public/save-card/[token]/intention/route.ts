@@ -24,11 +24,9 @@ export async function POST(
       Authorization: `Bearer ${pk}`,
       "Content-Type": "application/json",
     },
-    // Fortis Elements rejects intentions with no `amount` even for pure
-    // tokenization (vault-only) flows, so we pass 0 to satisfy the validator.
+    // Pure vault — playbook says the body is exactly this, no `amount`.
     body: JSON.stringify({
       action: "tokenization",
-      amount: 0,
       paymentMethods: ["cc"],
     }),
     cache: "no-store",

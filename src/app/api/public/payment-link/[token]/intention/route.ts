@@ -63,27 +63,24 @@ export async function POST(
   const isTrial = !!meta.trial;
 
   const isOneTime = sess.mode === "payment";
-  // Day-of base amount. Pure trials / deferred installments have 0 here.
-  const dayOfBaseCents = isTrial ? 0 : sess.amountCents;
-  const dayOfTotalCents = dayOfBaseCents > 0 ? calcFee(dayOfBaseCents).totalCents : 0;
-
   let intentionBody: Record<string, unknown>;
   let intentionType: "transaction" | "tokenization";
   if (isOneTime) {
-    // Fortis charges in iframe. Backend just records the charge.
+    // Fortis charges in iframe; backend records the charge.
     intentionBody = {
       amount: calcFee(sess.amountCents).totalCents,
       paymentMethods: ["cc", "ach"],
     };
     intentionType = "transaction";
   } else {
-    // Vault only. Backend handles every actual charge using the vaulted
-    // payment method. We still include `amount` because Fortis Elements'
-    // iframe validates the JWT and rejects intentions with no amount —
-    // it doesn't actually charge here, just displays the amount in the UI.
+    // PURE vault — per LunarPay playbook, the body is LITERALLY just
+    // { action: "tokenization", paymentMethods: [...] }. Do NOT add an
+    // `amount` field: when both `action: "tokenization"` and `amount` are
+    // present, LunarPay reinterprets the intention as `action: "sale"`
+    // (which charges the card and never fires tokenize_success), breaking
+    // the whole vault flow.
     intentionBody = {
       action: "tokenization",
-      amount: dayOfTotalCents, // 0 for trials / deferred installments
       paymentMethods: ["cc", "ach"],
     };
     intentionType = "tokenization";

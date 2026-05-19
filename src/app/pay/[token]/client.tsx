@@ -22,17 +22,28 @@ import { useEffect, useRef, useState } from "react";
 
 type Status = "loading" | "ready" | "submitting" | "done" | "error" | "sdk-missing";
 
+// For BOTH transaction and tokenization intentions, Fortis fires `done`.
+// The semantics of `data.id` differ:
+//   - transaction intention  → data.id is the transaction id
+//   - tokenization intention → data.id is the account_vault_id (= tokenizeId)
+// Card metadata is also on data (last_four, exp_date) for tokenization.
 interface FortisDonePayload {
   data?: {
     id?: string;
     account_holder_name?: string;
+    last_four?: string;
+    exp_date?: string; // "MMYY"
+    account?: {
+      last_four?: string;
+      exp_date?: string;
+    };
   };
 }
 
 interface FortisTokenizePayload {
   id?: string;
   last_four?: string;
-  exp_date?: string; // "MMYY"
+  exp_date?: string;
   account_holder_name?: string;
 }
 
@@ -179,29 +190,45 @@ export function PayClient({
           setStatus("done");
         };
 
-        // For transaction intentions (mode === "payment") Fortis fires
-        // `done` with the transaction id once the charge succeeds.
+        // Fortis fires `done` for BOTH intention types — interpret data.id
+        // based on which intention we requested.
         elements.on("done", async (payload: unknown) => {
+          // eslint-disable-next-line no-console
+          console.info("[fortis] done", payload);
           const p = payload as FortisDonePayload;
           const id = p.data?.id;
           if (!id) {
             setStatus("error");
-            setError("Payment could not be processed. Please try again.");
+            setError(
+              intentionTypeRef.current === "tokenization"
+                ? "Card could not be saved. Please try again."
+                : "Payment could not be processed. Please try again.",
+            );
             return;
           }
-          pendingRef.current.transactionId = id;
+          if (intentionTypeRef.current === "tokenization") {
+            // For tokenization intentions, data.id IS the account vault id.
+            pendingRef.current.tokenizeId = id;
+            const lastFour = p.data?.last_four ?? p.data?.account?.last_four;
+            const expDate = p.data?.exp_date ?? p.data?.account?.exp_date;
+            pendingRef.current.lastFour = lastFour;
+            pendingRef.current.expMonth = expDate?.slice(0, 2);
+            pendingRef.current.expYear = expDate?.slice(2);
+          } else {
+            pendingRef.current.transactionId = id;
+          }
           await submitIfReady();
         });
 
-        // For tokenization intentions Fortis fires `tokenize_success` with
-        // the account vault id + card metadata, no money moved.
+        // Some SDK versions also fire `tokenize_success` for tokenization
+        // intentions. Treat it as a fallback for the vault id.
         elements.on("tokenize_success", async (payload: unknown) => {
+          // eslint-disable-next-line no-console
+          console.info("[fortis] tokenize_success", payload);
+          if (intentionTypeRef.current !== "tokenization") return;
+          if (pendingRef.current.tokenizeId) return; // already captured from `done`
           const p = (payload ?? {}) as FortisTokenizePayload;
-          if (!p.id) {
-            setStatus("error");
-            setError("Card could not be saved. Please try again.");
-            return;
-          }
+          if (!p.id) return;
           pendingRef.current.tokenizeId = p.id;
           pendingRef.current.lastFour = p.last_four;
           pendingRef.current.expMonth = p.exp_date?.slice(0, 2);
@@ -210,14 +237,13 @@ export function PayClient({
         });
 
         elements.on("error", (payload: unknown) => {
-          const p = (payload ?? {}) as { message?: string };
           // eslint-disable-next-line no-console
           console.error("[fortis] error", payload);
+          const p = (payload ?? {}) as { message?: string };
           setStatus("error");
           setError(p.message || "Card entry failed. Please try again.");
         });
 
-        // Diagnostic logging — helps debug if Fortis emits unexpected events.
         ["submit", "ready", "validation_error"].forEach((evt) => {
           elements.on(evt, (payload: unknown) => {
             // eslint-disable-next-line no-console
@@ -232,7 +258,10 @@ export function PayClient({
               (process.env.NEXT_PUBLIC_FORTIS_ENVIRONMENT as
                 | "sandbox"
                 | "production") || "production",
-            showSubmitButton: false,
+            // Per LunarPay playbook: Fortis IGNORES elements.submit() when
+            // showSubmitButton is false, so we MUST let Fortis render its
+            // own button — calling submit() from a custom button is a no-op.
+            showSubmitButton: true,
             showReceipt: false,
           });
           elementsRef.current = elements;
@@ -263,7 +292,11 @@ export function PayClient({
           </svg>
         </div>
         <h2 className="text-lg font-semibold text-slate-900 mb-1">
-          {mode === "payment" ? "Payment received" : "Subscription started"}
+          {mode === "payment"
+            ? "Payment received"
+            : mode === "installments"
+            ? "Plan started"
+            : "Subscription started"}
         </h2>
         <p className="text-sm text-slate-500">
           Thanks! You can close this window.
@@ -282,17 +315,10 @@ export function PayClient({
 
   const fieldsDisabled = status === "submitting";
 
-  function handlePay() {
-    if (status !== "ready") return;
-    const { email, firstName, lastName } = formRef.current;
-    if (!email || !firstName || !lastName) {
-      setStatus("error");
-      setError("Please fill in your name and email above.");
-      return;
-    }
-    setError(null);
-    elementsRef.current?.submit();
-  }
+  // Soft validation hint shown above the card form when name/email aren't
+  // filled — the Fortis button will trigger the flow regardless, but our
+  // submitIfReady handler will surface "fill in name/email" before sending.
+  const missingCustomerInfo = !email || !firstName || !lastName;
 
   return (
     <div className="space-y-4">
@@ -359,8 +385,15 @@ export function PayClient({
           </div>
         )}
 
-        {/* Outer clip wrapper — hides the "Payment Info" header rendered by
-            the Fortis iframe while keeping all input fields fully visible. */}
+        {missingCustomerInfo && (status === "ready" || status === "submitting") && (
+          <div className="text-xs text-amber-700 bg-amber-50 border border-amber-100 rounded-md px-3 py-2 mb-2">
+            Fill in your name and email above before submitting your card.
+          </div>
+        )}
+
+        {/* Clip wrapper — crops the "Payment Info" header from the top of
+            the Fortis iframe. The Fortis-rendered submit button at the
+            bottom stays visible so customers can complete the payment. */}
         <div
           className={
             status === "ready" || status === "submitting"
@@ -368,11 +401,14 @@ export function PayClient({
               : "hidden"
           }
         >
-          <div
-            ref={mountRef}
-            style={{ marginTop: -130, marginBottom: -56 }}
-          />
+          <div ref={mountRef} style={{ marginTop: -130 }} />
         </div>
+
+        {status === "submitting" && (
+          <div className="text-sm text-slate-500 py-3 text-center">
+            Processing payment…
+          </div>
+        )}
 
         {error && (
           <div className="text-sm text-red-700 bg-red-50 border border-red-100 rounded-md p-3 mt-3">
@@ -380,15 +416,6 @@ export function PayClient({
           </div>
         )}
       </div>
-
-      <button
-        type="button"
-        onClick={handlePay}
-        disabled={status !== "ready"}
-        className="btn-primary w-full mt-2"
-      >
-        {status === "submitting" ? "Processing…" : "Pay now"}
-      </button>
     </div>
   );
 }
