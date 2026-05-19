@@ -92,39 +92,40 @@ export async function POST() {
   // clientToken back. The first one is the playbook-exact body that
   // LunarPay support says should work; the rest are progressively-more-
   // tolerant fallbacks that probe different validator branches.
+  // Latest insight: LunarPay's "product_transaction_id is not allowed"
+  // error only fires when paymentMethods has exactly one entry (their
+  // internal `paymentMethod === 'cc'` branch sets product_transaction_id;
+  // when `paymentMethods === ['cc','ach']` they set paymentMethod = 'any'
+  // and skip the product_transaction_id branch entirely).
   const probes = await Promise.all([
-    probe(fullUrl, pk, "playbook tokenization (cc only)", {
+    probe(fullUrl, pk, "tokenization + cc only", {
       action: "tokenization",
       paymentMethods: ["cc"],
     }),
-    probe(fullUrl, pk, "tokenization + amount=0", {
+    probe(fullUrl, pk, "tokenization + cc + ach (forces paymentMethod=any)", {
       action: "tokenization",
+      paymentMethods: ["cc", "ach"],
+    }),
+    probe(fullUrl, pk, "tokenization (no paymentMethods field)", {
+      action: "tokenization",
+    }),
+    probe(fullUrl, pk, "tokenization + cc + ach + amount=0", {
+      action: "tokenization",
+      paymentMethods: ["cc", "ach"],
       amount: 0,
-      paymentMethods: ["cc"],
-    }),
-    probe(fullUrl, pk, "tokenization + amount=1 (1 cent)", {
-      action: "tokenization",
-      amount: 1,
-      paymentMethods: ["cc"],
-    }),
-    probe(fullUrl, pk, "tokenization + amount=100", {
-      action: "tokenization",
-      amount: 100,
-      paymentMethods: ["cc"],
     }),
     probe(fullUrl, pk, "legacy hasRecurring ticket (cc)", {
       hasRecurring: true,
       paymentMethods: ["cc"],
     }),
-    probe(fullUrl, pk, "legacy hasRecurring ticket + amount=1", {
+    probe(fullUrl, pk, "legacy hasRecurring ticket (cc+ach)", {
       hasRecurring: true,
-      amount: 1,
-      paymentMethods: ["cc"],
+      paymentMethods: ["cc", "ach"],
     }),
-    probe(fullUrl, pk, "sale + amount=1 (cents)", {
+    probe(fullUrl, pk, "sale + amount=100 (cc+ach)", {
       action: "sale",
-      amount: 1,
-      paymentMethods: ["cc"],
+      amount: 100,
+      paymentMethods: ["cc", "ach"],
     }),
   ]);
 
