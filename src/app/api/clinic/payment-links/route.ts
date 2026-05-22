@@ -43,6 +43,7 @@ const Body = z.object({
   installFrequency: z.enum(["weekly", "monthly", "quarterly", "yearly"]).optional(),
   installFirstToday: z.string().optional(),
   installDates: z.string().optional(),         // JSON: string[] of "YYYY-MM-DD" per payment
+  installDelays: z.string().optional(),        // JSON: number[] of delays in days
   // optional concurrent subscription
   installSubAmount: z.string().optional(),
   installSubFrequency: z.enum(["weekly", "monthly", "quarterly", "yearly"]).optional(),
@@ -200,24 +201,65 @@ export async function POST(req: Request) {
     const scheduleType = parsed.data.installScheduleType ?? "frequency";
 
     if (scheduleType === "dates") {
-      // ── Custom-dates mode ──────────────────────────────────────────
-      let dates: string[] = [];
+      // ── Custom days delay / relative schedule mode ──────────────────
+      let delays: number[] = [];
       try {
-        dates = JSON.parse(parsed.data.installDates ?? "[]") as string[];
+        delays = JSON.parse(parsed.data.installDelays ?? "[]") as number[];
       } catch {
-        return NextResponse.json({ error: "Invalid installDates" }, { status: 400 });
+        // Fallback for backward compatibility if old payload came through
+        let dates: string[] = [];
+        try {
+          dates = JSON.parse(parsed.data.installDates ?? "[]") as string[];
+        } catch {
+          return NextResponse.json({ error: "Invalid installDelays" }, { status: 400 });
+        }
+
+        if (dates.length !== count) {
+          return NextResponse.json(
+            { error: `Expected ${count} dates, got ${dates.length}` },
+            { status: 400 },
+          );
+        }
+
+        const today = new Date().toISOString().slice(0, 10);
+        const firstIsToday = dates[0] <= today;
+        amountCents = firstIsToday ? perPaymentCents[0] : 0;
+
+        let subMeta: Record<string, unknown> = {};
+        if (parsed.data.installSubAmount && parsed.data.installSubFrequency) {
+          const subCents = parseMoneyInputToCents(parsed.data.installSubAmount);
+          if (subCents && subCents >= 50) {
+            subMeta = {
+              subAmountCents: subCents,
+              subFrequency: parsed.data.installSubFrequency,
+              subFirstChargeDate: parsed.data.installSubFirstCharge ?? null,
+            };
+          }
+        }
+
+        metadata = {
+          ...metadata,
+          installments: true,
+          scheduleType: "dates",
+          totalCents,
+          count,
+          perPaymentCents,
+          scheduledDates: dates,
+          firstIsToday,
+          ...subMeta,
+        };
+        return proceedWithCreate();
       }
-      if (dates.length !== count) {
+
+      if (delays.length !== count - 1) {
         return NextResponse.json(
-          { error: `Expected ${count} dates, got ${dates.length}` },
+          { error: `Expected ${count - 1} delays, got ${delays.length}` },
           { status: 400 },
         );
       }
 
-      const today = new Date().toISOString().slice(0, 10);
-      const firstIsToday = dates[0] <= today;
-      // Day-of charge = first payment if its date is today or in the past
-      amountCents = firstIsToday ? perPaymentCents[0] : 0;
+      // First payment is always charged today in relative mode
+      amountCents = perPaymentCents[0];
 
       // Optional subscription after last payment
       let subMeta: Record<string, unknown> = {};
@@ -239,10 +281,14 @@ export async function POST(req: Request) {
         totalCents,
         count,
         perPaymentCents,
-        scheduledDates: dates,
-        firstIsToday,
+        daysDelays: delays,
+        firstIsToday: true,
         ...subMeta,
       };
+
+      function proceedWithCreate() {
+        // defined just to allow the fallback path to jump here
+      }
     } else {
       // ── Frequency mode ─────────────────────────────────────────────
       if (!parsed.data.installFrequency) {

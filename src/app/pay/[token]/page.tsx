@@ -49,6 +49,7 @@ type Meta = {
   installFirstToday?: boolean;
   scheduledDates?: string[];
   firstIsToday?: boolean;
+  daysDelays?: number[];
   // optional concurrent subscription
   subAmountCents?: number;
   subFrequency?: string;
@@ -364,17 +365,42 @@ function InstallmentsSummary({ meta }: { meta: Meta }) {
 
   // Fee per installment payment row
   const paymentRows: { label: string; base: number; total: number }[] = [];
-  if (scheduleType === "dates" && meta.scheduledDates) {
-    meta.scheduledDates.forEach((date, i) => {
-      const base = perArr[i] ?? firstCents;
-      paymentRows.push({
-        label: new Date(`${date}T00:00:00`).toLocaleDateString("en-US", {
-          month: "short", day: "numeric", year: "numeric",
-        }),
-        base,
-        total: calcFee(base).totalCents,
+  if (scheduleType === "dates") {
+    if (meta.daysDelays) {
+      const delays = meta.daysDelays;
+      const today = new Date();
+      const dates: string[] = [today.toISOString().slice(0, 10)];
+
+      let currentDate = today;
+      for (const delay of delays) {
+        const nextDate = new Date(currentDate);
+        nextDate.setDate(nextDate.getDate() + delay);
+        dates.push(nextDate.toISOString().slice(0, 10));
+        currentDate = nextDate;
+      }
+
+      dates.forEach((date, i) => {
+        const base = perArr[i] ?? firstCents;
+        paymentRows.push({
+          label: i === 0 ? "Today" : new Date(`${date}T00:00:00`).toLocaleDateString("en-US", {
+            month: "short", day: "numeric", year: "numeric",
+          }),
+          base,
+          total: calcFee(base).totalCents,
+        });
       });
-    });
+    } else if (meta.scheduledDates) {
+      meta.scheduledDates.forEach((date, i) => {
+        const base = perArr[i] ?? firstCents;
+        paymentRows.push({
+          label: new Date(`${date}T00:00:00`).toLocaleDateString("en-US", {
+            month: "short", day: "numeric", year: "numeric",
+          }),
+          base,
+          total: calcFee(base).totalCents,
+        });
+      });
+    }
   } else {
     const { totalCents: t1 } = calcFee(firstCents);
     paymentRows.push({ label: chargedToday ? "Today" : "Payment 1 (tonight)", base: firstCents, total: t1 });

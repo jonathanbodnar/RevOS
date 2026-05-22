@@ -25,6 +25,7 @@ const Body = z.object({
   installFrequency: z.enum(["weekly", "monthly", "quarterly", "yearly"]).optional(),
   installFirstToday: z.string().optional(),
   installDates: z.string().optional(),
+  installDelays: z.string().optional(),
   installSubAmount: z.string().optional(),
   installSubFrequency: z.enum(["weekly", "monthly", "quarterly", "yearly"]).optional(),
   installSubFirstCharge: z.string().optional(),
@@ -142,17 +143,45 @@ export async function POST(req: Request) {
     }
 
     if (scheduleType === "dates") {
-      let dates: string[] = [];
-      try { dates = JSON.parse(parsed.data.installDates ?? "[]") as string[]; } catch {
-        return NextResponse.json({ error: "Invalid installDates" }, { status: 400 });
+      let delays: number[] = [];
+      try {
+        delays = JSON.parse(parsed.data.installDelays ?? "[]") as number[];
+      } catch {
+        let dates: string[] = [];
+        try { dates = JSON.parse(parsed.data.installDates ?? "[]") as string[]; } catch {
+          return NextResponse.json({ error: "Invalid installDelays" }, { status: 400 });
+        }
+        if (dates.length !== count) {
+          return NextResponse.json({ error: `Expected ${count} dates, got ${dates.length}` }, { status: 400 });
+        }
+        const today = new Date().toISOString().slice(0, 10);
+        const firstIsToday = dates[0] <= today;
+        amountCents = firstIsToday ? perPaymentCents[0] : 0;
+        metadata = { ...metadata, installments: true, scheduleType: "dates", totalCents, count, perPaymentCents, scheduledDates: dates, firstIsToday, ...subMeta };
+        return proceedWithCreate();
       }
-      if (dates.length !== count) {
-        return NextResponse.json({ error: `Expected ${count} dates, got ${dates.length}` }, { status: 400 });
+
+      if (delays.length !== count - 1) {
+        return NextResponse.json({ error: `Expected ${count - 1} delays, got ${delays.length}` }, { status: 400 });
       }
-      const today = new Date().toISOString().slice(0, 10);
-      const firstIsToday = dates[0] <= today;
-      amountCents = firstIsToday ? perPaymentCents[0] : 0;
-      metadata = { ...metadata, installments: true, scheduleType: "dates", totalCents, count, perPaymentCents, scheduledDates: dates, firstIsToday, ...subMeta };
+
+      // First payment is charged day-of
+      amountCents = perPaymentCents[0];
+      metadata = {
+        ...metadata,
+        installments: true,
+        scheduleType: "dates",
+        totalCents,
+        count,
+        perPaymentCents,
+        daysDelays: delays,
+        firstIsToday: true,
+        ...subMeta,
+      };
+
+      function proceedWithCreate() {
+        // Fallback placeholder
+      }
     } else {
       if (!parsed.data.installFrequency) {
         return NextResponse.json({ error: "Frequency is required for installments" }, { status: 400 });

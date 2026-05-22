@@ -63,12 +63,15 @@ export function CreateLinkModal({
   const [installCount, setInstallCount] = useState(3);
   const [installAmounts, setInstallAmounts] = useState<string[]>(["", "", ""]);
 
-  // installments — schedule: "frequency" or "dates"
+  // installments — schedule: "frequency" or "dates" (reused as relative days)
   const [installScheduleType, setInstallScheduleType] = useState<"frequency" | "dates">("frequency");
   const [installFrequency, setInstallFrequency] = useState("monthly");
   const [installFirstToday, setInstallFirstToday] = useState(true);
   const [installDates, setInstallDates] = useState<string[]>(() =>
     buildDefaultDates(3, true),
+  );
+  const [installDelays, setInstallDelays] = useState<number[]>(() =>
+    Array(2).fill(30),
   );
 
   // installments — optional concurrent subscription
@@ -82,7 +85,7 @@ export function CreateLinkModal({
   const [error, setError] = useState<string | null>(null);
   const [generatedUrl, setGeneratedUrl] = useState<string | null>(null);
 
-  // Keep dates array in sync with count
+  // Keep dates/delays array in sync with count
   useEffect(() => {
     setInstallDates((prev) => {
       if (prev.length === installCount) return prev;
@@ -92,6 +95,11 @@ export function CreateLinkModal({
       return Array.from({ length: installCount }, (_, i) =>
         prev[i] ?? addMonths(base, i),
       );
+    });
+    setInstallDelays((prev) => {
+      const neededLength = installCount - 1;
+      if (prev.length === neededLength) return prev;
+      return Array.from({ length: neededLength }, (_, i) => prev[i] ?? 30);
     });
     setInstallAmounts((prev) => {
       if (prev.length === installCount) return prev;
@@ -150,7 +158,7 @@ export function CreateLinkModal({
         body.installFrequency = installFrequency;
         body.installFirstToday = installFirstToday ? "true" : "false";
       } else {
-        body.installDates = JSON.stringify(installDates);
+        body.installDelays = JSON.stringify(installDelays);
       }
 
       if (installIncludeSub) {
@@ -442,7 +450,7 @@ export function CreateLinkModal({
                           : "text-slate-600 bg-white hover:bg-slate-50"
                       }`}
                     >
-                      Specific dates
+                      Relative days
                     </button>
                   </div>
                 </div>
@@ -483,33 +491,60 @@ export function CreateLinkModal({
                   </>
                 )}
 
-                {/* Custom dates mode */}
+                {/* Relative days delay mode */}
                 {installScheduleType === "dates" && (
-                  <div className="space-y-2">
+                  <div className="space-y-3">
                     <p className="text-xs text-slate-500">
-                      First payment on or before today is charged immediately when the customer submits.
+                      Specify the delay in days for each subsequent installment. First payment is charged today.
                     </p>
-                    {Array.from({ length: installCount }).map((_, i) => (
-                      <div key={i} className="flex items-center gap-2">
-                        <span className="text-xs text-slate-500 w-20 shrink-0">Payment {i + 1}</span>
-                        <input
-                          type="date"
-                          className="input flex-1"
-                          required
-                          value={installDates[i] ?? ""}
-                          onChange={(e) => setDate(i, e.target.value)}
-                        />
+                    <div className="space-y-2.5">
+                      {/* Payment 1 */}
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs font-medium text-slate-600 w-20 shrink-0">Payment 1</span>
+                        <div className="flex-1 text-xs text-slate-500 italic bg-slate-50 border border-slate-200 rounded-lg px-3 py-2">
+                          Charged immediately on signup
+                        </div>
                         <input
                           type="text"
                           inputMode="decimal"
                           className="input w-24"
                           placeholder={perPayment ?? "amount"}
-                          value={installAmounts[i] ?? ""}
-                          onChange={(e) => setInstallAmt(i, e.target.value)}
+                          value={installAmounts[0] ?? ""}
+                          onChange={(e) => setInstallAmt(0, e.target.value)}
                         />
                       </div>
-                    ))}
-                    <p className="text-xs text-slate-400">
+
+                      {/* Subsequent Payments */}
+                      {Array.from({ length: installCount - 1 }).map((_, i) => (
+                        <div key={i} className="flex items-center gap-2">
+                          <span className="text-xs font-medium text-slate-600 w-20 shrink-0">Payment {i + 2}</span>
+                          <div className="flex-1 flex items-center gap-2">
+                            <input
+                              type="number"
+                              min={1}
+                              max={365}
+                              required
+                              className="input flex-1"
+                              value={installDelays[i] ?? 30}
+                              onChange={(e) => {
+                                const val = Math.max(1, parseInt(e.target.value) || 0);
+                                setInstallDelays((prev) => prev.map((d, j) => (j === i ? val : d)));
+                              }}
+                            />
+                            <span className="text-xs text-slate-500 w-24 shrink-0">days after #{i + 1}</span>
+                          </div>
+                          <input
+                            type="text"
+                            inputMode="decimal"
+                            className="input w-24"
+                            placeholder={perPayment ?? "amount"}
+                            value={installAmounts[i + 1] ?? ""}
+                            onChange={(e) => setInstallAmt(i + 1, e.target.value)}
+                          />
+                        </div>
+                      ))}
+                    </div>
+                    <p className="text-xs text-slate-400 mt-1">
                       Leave amount blank to split total equally.
                     </p>
                   </div>

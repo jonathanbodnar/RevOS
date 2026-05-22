@@ -132,6 +132,7 @@ export async function POST(
     installFirstToday?: boolean;
     // custom-dates installments
     scheduledDates?: string[];
+    daysDelays?: number[];
     firstIsToday?: boolean;
     // optional concurrent subscription
     subAmountCents?: number;
@@ -306,13 +307,35 @@ export async function POST(
       let payments: { amount: number; date: string }[] = [];
 
       if (scheduleType === "dates") {
-        const dates = meta.scheduledDates ?? [];
-        const firstIsToday = meta.firstIsToday ?? false;
-        const startIdx = firstIsToday ? 1 : 0;
-        payments = dates.slice(startIdx).map((date, i) => {
-          const base = perPaymentCentsArr[startIdx + i] ?? perPaymentCentsArr[0];
-          return { amount: calcFee(base).totalCents, date };
-        });
+        if (meta.daysDelays) {
+          // Relative days delay mode
+          const delays = meta.daysDelays;
+          const today = new Date();
+          const dates: string[] = [today.toISOString().slice(0, 10)];
+
+          let currentDate = today;
+          for (const delay of delays) {
+            const nextDate = new Date(currentDate);
+            nextDate.setDate(nextDate.getDate() + delay);
+            dates.push(nextDate.toISOString().slice(0, 10));
+            currentDate = nextDate;
+          }
+
+          // First payment is charged today, remaining are scheduled
+          payments = dates.slice(1).map((date, i) => {
+            const base = perPaymentCentsArr[1 + i] ?? perPaymentCentsArr[0];
+            return { amount: calcFee(base).totalCents, date };
+          });
+        } else {
+          // Legacy absolute dates fallback
+          const dates = meta.scheduledDates ?? [];
+          const firstIsToday = meta.firstIsToday ?? false;
+          const startIdx = firstIsToday ? 1 : 0;
+          payments = dates.slice(startIdx).map((date, i) => {
+            const base = perPaymentCentsArr[startIdx + i] ?? perPaymentCentsArr[0];
+            return { amount: calcFee(base).totalCents, date };
+          });
+        }
       } else {
         const frequency: Frequency = (meta.frequency as Frequency) || "monthly";
         const remainingCount = meta.remainingCount ?? 0;
@@ -338,7 +361,7 @@ export async function POST(
 
         const firstPaymentCents = perPaymentCentsArr[0] ?? 0;
         const chargedToday = scheduleType === "dates"
-          ? (meta.firstIsToday ? firstPaymentCents : 0)
+          ? (meta.daysDelays ? firstPaymentCents : (meta.firstIsToday ? firstPaymentCents : 0))
           : (meta.installFirstToday ? firstPaymentCents : 0);
 
         await prisma.paymentSchedule.create({
