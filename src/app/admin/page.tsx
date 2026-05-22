@@ -4,12 +4,13 @@ import { formatMoneyCents } from "@/lib/format";
 export default async function AdminOverviewPage() {
   const [clinicCount, customerCount, chargeAgg, activeSubs] = await Promise.all([
     prisma.clinic.count(),
-    prisma.customer.count(),
+    prisma.customer.count({ where: { clinicId: { not: null } } }),
     prisma.charge.aggregate({
+      where: { clinicId: { not: null } },
       _sum: { amountCents: true, refundedCents: true },
       _count: true,
     }),
-    prisma.subscription.count({ where: { status: "active" } }),
+    prisma.subscription.count({ where: { status: "active", clinicId: { not: null } } }),
   ]);
 
   const gross = chargeAgg._sum.amountCents ?? 0;
