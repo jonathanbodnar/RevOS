@@ -6,7 +6,6 @@ import { formatMoneyCents, formatDate } from "@/lib/format";
 import { PaymentMethods } from "./payment-methods";
 import { NewChargeForm } from "./new-charge";
 import { NewSubscriptionForm } from "./new-subscription";
-import { NewInvoiceForm } from "./new-invoice";
 import { RefundButton } from "./refund-button";
 import { CancelSubscriptionButton } from "./cancel-subscription";
 import { CancelScheduleButton } from "./cancel-schedule";
@@ -324,7 +323,6 @@ export default async function CustomerDetailPage({
             }))}
           />
           <NewSubscriptionForm customerId={customer.id} />
-          <NewInvoiceForm customerId={customer.id} email={customer.email ?? ""} />
         </div>
       </div>
     </div>
