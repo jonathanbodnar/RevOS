@@ -27,6 +27,7 @@ export default async function ClinicLayout({
         { href: "/clinic/charges", label: "Transactions", icon: "receipt" },
         { href: "/clinic/subscriptions", label: "Subscriptions", icon: "refresh" },
         { href: "/clinic/installments", label: "Installments", icon: "calendar" },
+        { href: "/clinic/invoices", label: "Payment links", icon: "link" },
         { href: "/clinic/team", label: "Team", icon: "user" },
         { href: "/clinic/settings", label: "Settings", icon: "settings" },
       ]}

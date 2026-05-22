@@ -56,9 +56,11 @@ function formatDate(d: Date) {
 export function PaymentLinksClient({
   links,
   clinicId,
+  isSuperAdmin = false,
 }: {
   links: LinkRow[];
   clinicId: string;
+  isSuperAdmin?: boolean;
 }) {
   const router = useRouter();
   const [search, setSearch] = useState("");
@@ -105,9 +107,11 @@ export function PaymentLinksClient({
             creates a customer profile and saves the card for future charges.
           </p>
         </div>
-        <button className="btn-primary" onClick={() => setCreating(true)}>
-          + Create link
-        </button>
+        {isSuperAdmin && (
+          <button className="btn-primary" onClick={() => setCreating(true)}>
+            + Create link
+          </button>
+        )}
       </div>
 
       {/* Search */}
@@ -221,7 +225,7 @@ export function PaymentLinksClient({
                       >
                         View →
                       </Link>
-                      {!l.isGlobal && (
+                      {isSuperAdmin && !l.isGlobal && (
                         <button
                           type="button"
                           onClick={() => deleteLink(l.id)}

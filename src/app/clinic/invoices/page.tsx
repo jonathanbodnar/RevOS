@@ -5,7 +5,8 @@ import { PaymentLinksClient } from "./payment-links-client";
 export const dynamic = "force-dynamic";
 
 export default async function InvoicesPage() {
-  const { clinicId } = await requireClinicContext();
+  const { session, clinicId } = await requireClinicContext();
+  const isSuperAdmin = session.user.originalRole === "SUPER_ADMIN";
 
   const [clinicSessions, globalSessions] = await Promise.all([
     // Clinic-specific payment links
@@ -59,5 +60,5 @@ export default async function InvoicesPage() {
     ...globalSessions.map((s) => toRow(s, true)),
   ];
 
-  return <PaymentLinksClient links={links} clinicId={clinicId} />;
+  return <PaymentLinksClient links={links} clinicId={clinicId} isSuperAdmin={isSuperAdmin} />;
 }
