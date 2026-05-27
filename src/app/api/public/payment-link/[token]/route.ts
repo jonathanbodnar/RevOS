@@ -138,6 +138,7 @@ export async function POST(
     subAmountCents?: number;
     subFrequency?: Frequency;
     subFirstChargeDate?: string | null; // "YYYY-MM-DD"; null = start immediately
+    subStartAfterDays?: number;
   };
 
   // Track which stage we're in so the error log tells us exactly where the
@@ -380,9 +381,20 @@ export async function POST(
 
       // Optional concurrent subscription — startOn computed from desired first charge date.
       if (meta.subAmountCents && meta.subFrequency && meta.subAmountCents >= 50) {
-        const lpStartOn = meta.subFirstChargeDate
-          ? subtractOneFrequency(meta.subFirstChargeDate, meta.subFrequency)
-          : todayIso();
+        let lpStartOn: string;
+        if (meta.subStartAfterDays !== undefined) {
+          const startAfterDays = Number(meta.subStartAfterDays);
+          if (startAfterDays > 0) {
+            const desired = addDaysIso(todayIso(), startAfterDays);
+            lpStartOn = subtractOneFrequency(desired, meta.subFrequency);
+          } else {
+            lpStartOn = todayIso();
+          }
+        } else if (meta.subFirstChargeDate) {
+          lpStartOn = subtractOneFrequency(meta.subFirstChargeDate, meta.subFrequency);
+        } else {
+          lpStartOn = todayIso();
+        }
 
         const { totalCents: subTotal } = calcFee(meta.subAmountCents);
         stage = "createSubscription.concurrent";

@@ -54,6 +54,7 @@ type Meta = {
   subAmountCents?: number;
   subFrequency?: string;
   subFirstChargeDate?: string | null;
+  subStartAfterDays?: number;
 };
 
 function resolveStartAfterDays(meta: Meta): number {
@@ -446,7 +447,11 @@ function InstallmentsSummary({ meta }: { meta: Meta }) {
           <li className="flex justify-between text-slate-500 text-xs border-t border-slate-100 pt-2 mt-1">
             <span>
               + Subscription{" "}
-              {meta.subFirstChargeDate
+              {meta.subStartAfterDays !== undefined
+                ? Number(meta.subStartAfterDays) === 0
+                  ? "starting today"
+                  : `starting in ${meta.subStartAfterDays} days`
+                : meta.subFirstChargeDate
                 ? `starting ${new Date(`${meta.subFirstChargeDate}T00:00:00`).toLocaleDateString("en-US", { month: "short", day: "numeric" })}`
                 : "starting today"}{" "}
               {frequencyLabel(meta.subFrequency ?? null) ?? ""}

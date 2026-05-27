@@ -78,7 +78,7 @@ export function CreateLinkModal({
   const [installIncludeSub, setInstallIncludeSub] = useState(false);
   const [installSubAmount, setInstallSubAmount] = useState("");
   const [installSubFrequency, setInstallSubFrequency] = useState("monthly");
-  const [installSubFirstCharge, setInstallSubFirstCharge] = useState(""); // "YYYY-MM-DD" or blank = immediate
+  const [installSubStartAfterDays, setInstallSubStartAfterDays] = useState("30");
 
   const [description, setDescription] = useState("");
   const [loading, setLoading] = useState(false);
@@ -164,7 +164,7 @@ export function CreateLinkModal({
       if (installIncludeSub) {
         body.installSubAmount = installSubAmount;
         body.installSubFrequency = installSubFrequency;
-        if (installSubFirstCharge) body.installSubFirstCharge = installSubFirstCharge;
+        if (installSubStartAfterDays) body.installSubStartAfterDays = installSubStartAfterDays;
       }
     }
 
@@ -599,18 +599,20 @@ export function CreateLinkModal({
                         </div>
                       </div>
                       <div>
-                        <label className="label">First charge date (optional)</label>
+                        <label className="label">First subscription charge (days after payment)</label>
                         <input
-                          type="date"
+                          type="number"
                           className="input"
-                          value={installSubFirstCharge}
-                          min={todayStr()}
-                          onChange={(e) => setInstallSubFirstCharge(e.target.value)}
+                          min={0}
+                          max={365}
+                          value={installSubStartAfterDays}
+                          placeholder="30"
+                          onChange={(e) => setInstallSubStartAfterDays(e.target.value)}
                         />
                         <p className="text-xs text-slate-500 mt-1">
-                          {installSubFirstCharge
-                            ? `First subscription charge on ${new Date(`${installSubFirstCharge}T00:00:00`).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}, then ${installSubFrequency}.`
-                            : "Leave blank to start immediately (first charge in 1 billing cycle)."}
+                          {Number(installSubStartAfterDays || 0) === 0
+                            ? "Subscription starts immediately (first charge in 1 billing cycle)."
+                            : `First subscription charge runs ${Number(installSubStartAfterDays)} day${Number(installSubStartAfterDays) === 1 ? "" : "s"} after payment.`}
                         </p>
                       </div>
                     </div>

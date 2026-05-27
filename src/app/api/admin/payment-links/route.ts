@@ -29,6 +29,7 @@ const Body = z.object({
   installSubAmount: z.string().optional(),
   installSubFrequency: z.enum(["weekly", "monthly", "quarterly", "yearly"]).optional(),
   installSubFirstCharge: z.string().optional(),
+  installSubStartAfterDays: z.string().optional(),
 });
 
 export async function GET() {
@@ -137,6 +138,7 @@ export async function POST(req: Request) {
         subMeta = {
           subAmountCents: subCents,
           subFrequency: parsed.data.installSubFrequency,
+          subStartAfterDays: parsed.data.installSubStartAfterDays ? Number(parsed.data.installSubStartAfterDays) : 0,
           subFirstChargeDate: parsed.data.installSubFirstCharge ?? null,
         };
       }
