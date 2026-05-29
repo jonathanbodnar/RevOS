@@ -31,11 +31,41 @@ export async function POST(
     return NextResponse.json({ error: "Charge not found" }, { status: 404 });
   }
 
+  // Only settled (captured) charges can be refunded. Auth holds must be
+  // voided/captured, and failed charges never moved money.
+  if (!["paid", "refunded"].includes(charge.status)) {
+    return NextResponse.json(
+      {
+        error:
+          charge.status === "authorized" || charge.status === "voided"
+            ? "This is an authorization hold, not a settled charge. Void or capture it instead of refunding."
+            : `Cannot refund a charge with status "${charge.status}".`,
+      },
+      { status: 400 },
+    );
+  }
+
+  const remainingCents = charge.amountCents - charge.refundedCents;
+  if (remainingCents <= 0) {
+    return NextResponse.json(
+      { error: "This charge has already been fully refunded." },
+      { status: 400 },
+    );
+  }
+
   let cents: number | undefined;
   if (parsed.data.amount) {
     const c = parseMoneyInputToCents(parsed.data.amount);
     if (c === null || c < 1) {
       return NextResponse.json({ error: "Invalid refund amount" }, { status: 400 });
+    }
+    if (c > remainingCents) {
+      return NextResponse.json(
+        {
+          error: `Refund amount exceeds the remaining refundable balance of ${(remainingCents / 100).toLocaleString("en-US", { style: "currency", currency: "USD" })}.`,
+        },
+        { status: 400 },
+      );
     }
     cents = c;
   }
@@ -58,7 +88,12 @@ export async function POST(
       action: "charge.refund",
       targetType: "Charge",
       targetId: charge.id,
-      metadata: { refundedAmount: lp.data.refundedAmount },
+      metadata: {
+        refundedAmount: lp.data.refundedAmount,
+        partial: !lp.data.fullRefund,
+        totalRefundedCents: newRefunded,
+        chargeAmountCents: charge.amountCents,
+      },
     });
     return NextResponse.json({ data: { id: updated.id } });
   } catch (e) {

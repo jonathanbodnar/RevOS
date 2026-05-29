@@ -184,6 +184,7 @@ export default async function CustomerDetailPage({
                           <RefundButton
                             chargeId={c.id}
                             maxCents={c.amountCents - c.refundedCents}
+                            originalCents={c.amountCents}
                           />
                         )}
                     </td>
