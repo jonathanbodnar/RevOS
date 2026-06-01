@@ -145,9 +145,13 @@ export async function POST(
   // failure happened (LunarPay call N out of M).
   let stage = "start";
   try {
-    // Always create a fresh Customer + LunarPay customer for this submit.
-    // Reusable links must not collapse repeat submissions (even with the
-    // same email) into a single customer record.
+    // Create-or-reuse the customer. LunarPay upserts by email (returns the
+    // same customer id with created:false for a repeat email), and our
+    // Customer.lunarpayCustomerId is unique — so a returning customer (e.g.
+    // someone whose first attempt was declined but whose account was already
+    // created) maps back to the SAME LunarPay id. We must reuse the existing
+    // local row instead of trying to create a duplicate, which would otherwise
+    // fail the unique constraint and lock them out of ever paying.
     stage = "createCustomer";
     const lpCustomer = await lunarpay.createCustomer({
       firstName,
@@ -156,24 +160,44 @@ export async function POST(
       phone,
     });
 
-    const customer = await prisma.customer.create({
-      data: {
-        clinicId: resolvedClinicId,
-        lunarpayCustomerId: lpCustomer.data.id,
-        email,
-        firstName,
-        lastName,
-        phone: phone ?? null,
-      },
+    const existingCustomer = await prisma.customer.findUnique({
+      where: { lunarpayCustomerId: lpCustomer.data.id },
     });
+
+    const customer = existingCustomer
+      ? await prisma.customer.update({
+          where: { id: existingCustomer.id },
+          data: {
+            email,
+            firstName,
+            lastName,
+            phone: phone ?? existingCustomer.phone,
+            // Attribute to this clinic only if not already attributed, so a
+            // returning customer is never silently moved between clinics.
+            ...(existingCustomer.clinicId ? {} : { clinicId: resolvedClinicId }),
+          },
+        })
+      : await prisma.customer.create({
+          data: {
+            clinicId: resolvedClinicId,
+            lunarpayCustomerId: lpCustomer.data.id,
+            email,
+            firstName,
+            lastName,
+            phone: phone ?? null,
+          },
+        });
+
     await logAudit({
       actorId: null,
       actorRole: "CUSTOMER",
       clinicId: resolvedClinicId,
-      action: "customer.create.payment_link",
+      action: existingCustomer
+        ? "customer.reuse.payment_link"
+        : "customer.create.payment_link",
       targetType: "Customer",
       targetId: customer.id,
-      metadata: { email, paymentLinkId: sess.id },
+      metadata: { email, paymentLinkId: sess.id, returning: !!existingCustomer },
     });
 
     const lpCustomerId = customer.lunarpayCustomerId;
