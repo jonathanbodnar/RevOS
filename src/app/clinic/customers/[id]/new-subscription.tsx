@@ -1,6 +1,7 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState, useTransition } from "react";
+import { useRouter } from "next/navigation";
 import { CopyButton } from "@/components/copy-button";
 
 const FEE_PERCENT = 0.039;
@@ -23,15 +24,26 @@ function parseAmount(raw: string): number | null {
 
 export function NewSubscriptionForm({
   customerId,
+  methods = [],
 }: {
   customerId: string;
   methods?: { id: string; label: string }[];
 }) {
+  const router = useRouter();
+  const [, startTransition] = useTransition();
   const [amount, setAmount] = useState("");
   const [frequency, setFrequency] = useState("monthly");
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [link, setLink] = useState<string | null>(null);
+
+  const hasCards = methods.length > 0;
+  // "" = generate a payment link; otherwise the chosen saved card.
+  const [paymentMethodId, setPaymentMethodId] = useState(methods[0]?.id ?? "");
+
+  useEffect(() => {
+    if (!paymentMethodId && methods[0]?.id) setPaymentMethodId(methods[0].id);
+  }, [methods, paymentMethodId]);
 
   const feePreview = useMemo(() => {
     const base = parseAmount(amount);
@@ -43,6 +55,8 @@ export function NewSubscriptionForm({
     weekly: "week", monthly: "month", quarterly: "quarter", yearly: "year",
   };
 
+  const chargingCard = hasCards && paymentMethodId !== "";
+
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
@@ -51,12 +65,23 @@ export function NewSubscriptionForm({
     const res = await fetch(`/api/clinic/customers/${customerId}/subscriptions`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ amount, frequency }),
+      body: JSON.stringify({
+        amount,
+        frequency,
+        ...(chargingCard ? { paymentMethodId } : {}),
+      }),
     });
     setLoading(false);
     if (!res.ok) {
       const d = (await res.json().catch(() => ({}))) as { error?: string };
-      setError(d.error || "Failed to create subscription.");
+      setError(d.error || "Failed to start subscription.");
+      return;
+    }
+    if (chargingCard) {
+      // Subscription started on the saved card — reset and refresh the page so
+      // it shows up in the Subscriptions table.
+      setAmount("");
+      startTransition(() => router.refresh());
       return;
     }
     const d = (await res.json()) as { url: string };
@@ -67,8 +92,10 @@ export function NewSubscriptionForm({
     <div className="card-pad">
       <h3 className="text-sm font-semibold text-slate-900 mb-3">Start subscription</h3>
       <p className="text-xs text-slate-500 mb-3">
-        Customer will pay the first charge immediately and then be billed automatically on the chosen schedule.
-        A 3.9% + $0.39 processing fee is added to each billing cycle.
+        {chargingCard
+          ? "The first cycle is charged to the selected card now; future cycles bill automatically."
+          : "Generates a link the customer pays to start the subscription."}
+        {" "}A 3.9% + $0.39 processing fee is added to each billing cycle.
       </p>
       <form onSubmit={onSubmit} className="space-y-3">
         <div className="grid grid-cols-2 gap-3">
@@ -98,6 +125,24 @@ export function NewSubscriptionForm({
           </div>
         </div>
 
+        {hasCards && (
+          <div>
+            <label className="label">Charge to</label>
+            <select
+              className="input"
+              value={paymentMethodId}
+              onChange={(e) => setPaymentMethodId(e.target.value)}
+            >
+              {methods.map((m) => (
+                <option key={m.id} value={m.id}>
+                  {m.label}
+                </option>
+              ))}
+              <option value="">Send a payment link instead</option>
+            </select>
+          </div>
+        )}
+
         {feePreview && (
           <div className="text-xs text-slate-500 bg-slate-50 border border-slate-100 rounded-md px-3 py-2 space-y-1">
             <div className="flex justify-between">
@@ -121,7 +166,15 @@ export function NewSubscriptionForm({
           </div>
         )}
         <button className="btn-primary w-full" disabled={loading}>
-          {loading ? "Creating…" : "Generate subscription link"}
+          {loading
+            ? chargingCard
+              ? "Starting…"
+              : "Creating…"
+            : chargingCard
+              ? feePreview
+                ? `Start subscription · ${formatMoney(feePreview.totalCents)} now`
+                : "Start subscription"
+              : "Generate subscription link"}
         </button>
       </form>
       {link && (

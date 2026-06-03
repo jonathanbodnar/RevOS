@@ -14,6 +14,7 @@ export function NewClinicForm() {
     adminName: "",
     adminEmail: "",
     adminPassword: "",
+    revosDownPaymentSharePct: "50",
   });
 
   function update<K extends keyof typeof form>(key: K, value: string) {
@@ -61,14 +62,28 @@ export function NewClinicForm() {
           />
         </div>
       </div>
-      <div>
-        <label className="label">Contact email (optional)</label>
-        <input
-          className="input"
-          type="email"
-          value={form.contactEmail}
-          onChange={(e) => update("contactEmail", e.target.value)}
-        />
+      <div className="grid grid-cols-2 gap-4">
+        <div>
+          <label className="label">Contact email (optional)</label>
+          <input
+            className="input"
+            type="email"
+            value={form.contactEmail}
+            onChange={(e) => update("contactEmail", e.target.value)}
+          />
+        </div>
+        <div>
+          <label className="label">RevOS down-payment share (%)</label>
+          <input
+            className="input"
+            inputMode="numeric"
+            value={form.revosDownPaymentSharePct}
+            onChange={(e) => update("revosDownPaymentSharePct", e.target.value)}
+          />
+          <p className="text-xs text-slate-400 mt-1">
+            Editable later. Implementor &amp; recurring shares default to $140 / $75.
+          </p>
+        </div>
       </div>
 
       <div className="border-t border-slate-100 pt-5">

@@ -46,6 +46,14 @@ model Clinic {
   createdAt  DateTime   @default(now())
   updatedAt  DateTime   @updatedAt
 
+  // ── Revenue-share / reporting config (per clinic, editable by super admin) ──
+  // Percentage of every down payment that RevOS retains (0–100).
+  revosDownPaymentSharePct Int @default(50)
+  // Implementor commission paid per down payment, in cents ($140 default).
+  implementorFeeCents      Int @default(14000)
+  // RevOS revenue share per recurring subscription payment, in cents ($75).
+  revosRecurringShareCents Int @default(7500)
+
   users      User[]
   customers  Customer[]
   charges    Charge[]
@@ -53,6 +61,21 @@ model Clinic {
   schedules  PaymentSchedule[]
   checkoutSessions CheckoutSession[]
   auditLogs  AuditLog[]
+  advancedCosts AdvancedCost[]
+}
+
+// Sales implementors. Customers are attributed to an implementor either via
+// the ?implementor=<name> tag on a payment link, or manually in the customer
+// profile. Each closed down payment pays the implementor a commission.
+model Implementor {
+  id              String     @id @default(cuid())
+  name            String
+  commissionCents Int        @default(14000)
+  isActive        Boolean    @default(true)
+  createdAt       DateTime   @default(now())
+  updatedAt       DateTime   @updatedAt
+
+  customers       Customer[]
 }
 
 // A customer belongs to a single clinic.
@@ -77,14 +100,53 @@ model Customer {
   createdAt           DateTime @default(now())
   updatedAt           DateTime @updatedAt
 
+  // Sales attribution + free-form payment notes (e.g. "down payment via Care Credit").
+  implementorId       String?
+  implementor         Implementor? @relation(fields: [implementorId], references: [id], onDelete: SetNull)
+  paymentNotes        String?
+
   paymentMethods      PaymentMethod[]
   charges             Charge[]
   subscriptions       Subscription[]
   schedules           PaymentSchedule[]
   checkoutSessions    CheckoutSession[]
+  advancedCosts       AdvancedCost[]
 
   @@index([clinicId])
   @@index([email])
+  @@index([implementorId])
+}
+
+// Supplement / program-related costs advanced by RevOS on behalf of a clinic
+// (e.g. 90 days of supplements per patient, printing patient booklets). These
+// reduce RevOS profit in the reporting center. clinicId is required in
+// practice; customerId is optional for clinic-wide costs (e.g. booklet runs).
+model AdvancedCost {
+  id          String    @id @default(cuid())
+  clinicId    String?
+  clinic      Clinic?   @relation(fields: [clinicId], references: [id], onDelete: SetNull)
+  customerId  String?
+  customer    Customer? @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  category    String    // supplements | booklets | other
+  description String
+  amountCents Int
+  incurredOn  DateTime  @default(now())
+  createdById String?
+  createdAt   DateTime  @default(now())
+
+  @@index([clinicId])
+  @@index([customerId])
+}
+
+// Saved report definitions (filter config + an optional computed snapshot).
+model SavedReport {
+  id           String   @id @default(cuid())
+  name         String
+  filtersJson  String
+  snapshotJson String?
+  createdById  String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
 }
 
 // Cached LunarPay payment method (no raw card data ever stored)

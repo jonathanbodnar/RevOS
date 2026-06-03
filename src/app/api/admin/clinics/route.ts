@@ -18,6 +18,7 @@ const Body = z.object({
   adminName: z.string().min(1).max(120),
   adminEmail: z.string().email(),
   adminPassword: z.string().min(8).max(128),
+  revosDownPaymentSharePct: z.coerce.number().int().min(0).max(100).optional(),
 });
 
 export async function POST(req: Request) {
@@ -45,6 +46,9 @@ export async function POST(req: Request) {
           name: data.name,
           slug,
           email: data.contactEmail,
+          ...(data.revosDownPaymentSharePct !== undefined
+            ? { revosDownPaymentSharePct: data.revosDownPaymentSharePct }
+            : {}),
         },
       });
       const existing = await tx.user.findUnique({

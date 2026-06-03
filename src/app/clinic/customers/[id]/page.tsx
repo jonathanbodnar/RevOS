@@ -8,9 +8,11 @@ import { NewChargeForm } from "./new-charge";
 import { NewSubscriptionForm } from "./new-subscription";
 import { RefundButton } from "./refund-button";
 import { CancelSubscriptionButton } from "./cancel-subscription";
+import { SwapCardButton } from "./swap-card-button";
 import { CancelScheduleButton } from "./cancel-schedule";
 import { DeleteCustomerButton } from "./delete-customer-button";
 import { HoldsSection } from "./holds-section";
+import { CustomerAttribution } from "./customer-attribution";
 
 export default async function CustomerDetailPage({
   params,
@@ -35,6 +37,15 @@ export default async function CustomerDetailPage({
     },
   });
   if (!customer) notFound();
+
+  // Implementor options (super-admin attribution UI only).
+  const implementors = canPerformSensitiveActions
+    ? await prisma.implementor.findMany({
+        where: { isActive: true },
+        orderBy: { name: "asc" },
+        select: { id: true, name: true },
+      })
+    : [];
 
   // Customer-specific update-card link, if one already exists. The
   // PaymentMethods component lazy-mints one on demand if not.
@@ -203,6 +214,7 @@ export default async function CustomerDetailPage({
                 <tr>
                   <th>Amount</th>
                   <th>Frequency</th>
+                  <th>Card</th>
                   <th>Status</th>
                   <th>Next</th>
                   <th className="text-right pr-3">Actions</th>
@@ -211,7 +223,7 @@ export default async function CustomerDetailPage({
               <tbody>
                 {customer.subscriptions.length === 0 && (
                   <tr>
-                    <td colSpan={5} className="text-center text-slate-500 py-6">
+                    <td colSpan={6} className="text-center text-slate-500 py-6">
                       No subscriptions.
                     </td>
                   </tr>
@@ -220,6 +232,9 @@ export default async function CustomerDetailPage({
                   <tr key={s.id}>
                     <td>{formatMoneyCents(s.amountCents)}</td>
                     <td className="capitalize">{s.frequency}</td>
+                    <td className="text-slate-600 text-xs">
+                      {methodCardLabel(s.paymentMethodId, customer.paymentMethods)}
+                    </td>
                     <td>
                       <span
                         className={
@@ -234,7 +249,17 @@ export default async function CustomerDetailPage({
                     </td>
                     <td className="text-right pr-3">
                       {s.status === "active" && canPerformSensitiveActions && (
-                        <CancelSubscriptionButton subscriptionId={s.id} />
+                        <div className="flex items-center justify-end gap-1">
+                          <SwapCardButton
+                            subscriptionId={s.id}
+                            currentPaymentMethodId={s.paymentMethodId}
+                            methods={customer.paymentMethods.map((m) => ({
+                              id: m.id,
+                              label: formatMethodLabel(m),
+                            }))}
+                          />
+                          <CancelSubscriptionButton subscriptionId={s.id} />
+                        </div>
                       )}
                     </td>
                   </tr>
@@ -316,6 +341,14 @@ export default async function CustomerDetailPage({
         </div>
 
         <div className="space-y-6">
+          {canPerformSensitiveActions && (
+            <CustomerAttribution
+              customerId={customer.id}
+              implementors={implementors}
+              currentImplementorId={customer.implementorId}
+              currentNotes={customer.paymentNotes}
+            />
+          )}
           <NewChargeForm
             customerId={customer.id}
             methods={customer.paymentMethods.map((m) => ({
@@ -323,7 +356,13 @@ export default async function CustomerDetailPage({
               label: formatMethodLabel(m),
             }))}
           />
-          <NewSubscriptionForm customerId={customer.id} />
+          <NewSubscriptionForm
+            customerId={customer.id}
+            methods={customer.paymentMethods.map((m) => ({
+              id: m.id,
+              label: formatMethodLabel(m),
+            }))}
+          />
         </div>
       </div>
     </div>
@@ -337,4 +376,15 @@ function formatMethodLabel(m: {
 }) {
   const type = m.sourceType === "ach" ? "Bank" : "Card";
   return `${type} •••• ${m.lastDigits ?? "????"} ${m.nameHolder ? `(${m.nameHolder})` : ""}`.trim();
+}
+
+function methodCardLabel(
+  paymentMethodId: string | null,
+  methods: { id: string; sourceType: string; lastDigits: string | null }[],
+) {
+  if (!paymentMethodId) return "—";
+  const m = methods.find((x) => x.id === paymentMethodId);
+  if (!m) return "—";
+  const type = m.sourceType === "ach" ? "Bank" : "Card";
+  return `${type} •••• ${m.lastDigits ?? "????"}`;
 }

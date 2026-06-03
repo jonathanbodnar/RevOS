@@ -10,7 +10,15 @@ export default async function EditClinicPage({
   const { id } = await params;
   const clinic = await prisma.clinic.findUnique({
     where: { id },
-    select: { id: true, name: true, slug: true, logoUrl: true },
+    select: {
+      id: true,
+      name: true,
+      slug: true,
+      logoUrl: true,
+      revosDownPaymentSharePct: true,
+      implementorFeeCents: true,
+      revosRecurringShareCents: true,
+    },
   });
 
   if (!clinic) notFound();

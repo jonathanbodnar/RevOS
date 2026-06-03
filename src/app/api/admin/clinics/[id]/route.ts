@@ -7,6 +7,9 @@ import { logAudit } from "@/lib/audit";
 const PatchBody = z.object({
   name: z.string().min(1).max(100).optional(),
   logoUrl: z.string().nullable().optional(),
+  revosDownPaymentSharePct: z.number().int().min(0).max(100).optional(),
+  implementorFeeCents: z.number().int().min(0).optional(),
+  revosRecurringShareCents: z.number().int().min(0).optional(),
 });
 
 export async function PATCH(

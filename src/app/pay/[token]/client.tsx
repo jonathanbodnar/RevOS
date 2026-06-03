@@ -70,10 +70,12 @@ export function PayClient({
   token,
   mode,
   clinicId,
+  implementor,
 }: {
   token: string;
   mode: "payment" | "subscription" | "combined" | "installments";
   clinicId?: string;
+  implementor?: string;
 }) {
   const [status, setStatus] = useState<Status>("loading");
   const [error, setError] = useState<string | null>(null);
@@ -173,6 +175,7 @@ export function PayClient({
                 lastName,
                 phone: phone || undefined,
                 clinicId: clinicId || undefined,
+                implementor: implementor || undefined,
               }),
             });
             // Require explicit { ok: true } in the response body — a 200 with

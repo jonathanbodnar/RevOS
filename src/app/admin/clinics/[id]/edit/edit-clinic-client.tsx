@@ -6,7 +6,15 @@ import Link from "next/link";
 export function EditClinicClient({
   clinic,
 }: {
-  clinic: { id: string; name: string; slug: string; logoUrl: string | null };
+  clinic: {
+    id: string;
+    name: string;
+    slug: string;
+    logoUrl: string | null;
+    revosDownPaymentSharePct: number;
+    implementorFeeCents: number;
+    revosRecurringShareCents: number;
+  };
 }) {
   const [name, setName] = useState(clinic.name);
   const [logoUrl, setLogoUrl] = useState(clinic.logoUrl);
@@ -16,6 +24,43 @@ export function EditClinicClient({
     null,
   );
   const fileRef = useRef<HTMLInputElement>(null);
+
+  // Revenue-share config
+  const [downPct, setDownPct] = useState(String(clinic.revosDownPaymentSharePct));
+  const [implFee, setImplFee] = useState((clinic.implementorFeeCents / 100).toFixed(2));
+  const [recurShare, setRecurShare] = useState((clinic.revosRecurringShareCents / 100).toFixed(2));
+  const [savingShare, setSavingShare] = useState(false);
+
+  async function saveShareConfig() {
+    setMsg(null);
+    const pct = parseInt(downPct, 10);
+    const fee = Math.round(parseFloat(implFee) * 100);
+    const recur = Math.round(parseFloat(recurShare) * 100);
+    if (Number.isNaN(pct) || pct < 0 || pct > 100) {
+      setMsg({ type: "err", text: "Down payment share must be 0–100%." });
+      return;
+    }
+    if (Number.isNaN(fee) || fee < 0 || Number.isNaN(recur) || recur < 0) {
+      setMsg({ type: "err", text: "Enter valid dollar amounts." });
+      return;
+    }
+    setSavingShare(true);
+    const res = await fetch(`/api/admin/clinics/${clinic.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        revosDownPaymentSharePct: pct,
+        implementorFeeCents: fee,
+        revosRecurringShareCents: recur,
+      }),
+    });
+    setSavingShare(false);
+    setMsg(
+      res.ok
+        ? { type: "ok", text: "Revenue-share settings saved." }
+        : { type: "err", text: "Failed to save revenue-share settings." },
+    );
+  }
 
   async function saveName() {
     setMsg(null);
@@ -110,6 +155,54 @@ export function EditClinicClient({
           {msg.text}
         </div>
       )}
+
+      {/* Revenue share */}
+      <div className="card-pad space-y-4">
+        <div>
+          <label className="label">Revenue share &amp; fees</label>
+          <p className="text-xs text-slate-500 mt-0.5">
+            Controls how the reporting center splits revenue between RevOS and
+            this clinic.
+          </p>
+        </div>
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+          <div>
+            <label className="label">RevOS down-payment share (%)</label>
+            <input
+              className="input"
+              inputMode="numeric"
+              value={downPct}
+              onChange={(e) => setDownPct(e.target.value)}
+            />
+            <p className="text-xs text-slate-400 mt-1">% of each down payment RevOS keeps.</p>
+          </div>
+          <div>
+            <label className="label">Implementor commission ($)</label>
+            <input
+              className="input"
+              inputMode="decimal"
+              value={implFee}
+              onChange={(e) => setImplFee(e.target.value)}
+            />
+            <p className="text-xs text-slate-400 mt-1">Paid per down payment.</p>
+          </div>
+          <div>
+            <label className="label">RevOS recurring share ($)</label>
+            <input
+              className="input"
+              inputMode="decimal"
+              value={recurShare}
+              onChange={(e) => setRecurShare(e.target.value)}
+            />
+            <p className="text-xs text-slate-400 mt-1">Per subscription cycle.</p>
+          </div>
+        </div>
+        <div className="flex justify-end">
+          <button className="btn-primary" onClick={saveShareConfig} disabled={savingShare}>
+            {savingShare ? "Saving…" : "Save revenue share"}
+          </button>
+        </div>
+      </div>
 
       {/* Clinic name */}
       <div className="card-pad space-y-3">

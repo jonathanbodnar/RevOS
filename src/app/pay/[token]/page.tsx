@@ -77,10 +77,10 @@ export default async function PayPage({
   searchParams,
 }: {
   params: Promise<{ token: string }>;
-  searchParams: Promise<{ c?: string }>;
+  searchParams: Promise<{ c?: string; implementor?: string }>;
 }) {
   const { token } = await params;
-  const { c: clinicParam } = await searchParams;
+  const { c: clinicParam, implementor: implementorParam } = await searchParams;
 
   const session = await prisma.checkoutSession.findUnique({
     where: { token },
@@ -245,6 +245,7 @@ export default async function PayPage({
                 token={token}
                 mode={session.mode as "payment" | "subscription" | "combined" | "installments"}
                 clinicId={displayClinic?.id}
+                implementor={implementorParam}
               />
             </>
           )}

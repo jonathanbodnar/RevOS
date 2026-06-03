@@ -5,6 +5,7 @@ import { lunarpay, LunarPayError } from "@/lib/lunarpay";
 import { logAudit } from "@/lib/audit";
 import { requireStringParams } from "@/lib/route-params";
 import { calcFee } from "@/lib/fees";
+import { resolveOrCreateImplementorByName } from "@/lib/implementor";
 
 /**
  * Public submit endpoint for a reusable hosted payment link.
@@ -47,6 +48,8 @@ const Body = z.object({
   // For global links (clinicId = null on the session), the pay page passes the
   // clinic that shared the link so transactions are attributed correctly.
   clinicId: z.string().optional(),
+  // Sales attribution from the ?implementor=<name> tag on the link URL.
+  implementor: z.string().optional(),
 }).refine(
   (d) => !!d.tokenizeId || !!d.ticketId || !!d.transactionId,
   { message: "tokenizeId, ticketId, or transactionId required" },
@@ -95,6 +98,7 @@ export async function POST(
     lastName,
     phone,
     clinicId: bodyClinicId,
+    implementor: implementorName,
   } = parsed.data;
   // For global links (sess.clinicId = null) use the clinic passed by the pay
   // page so transactions are attributed to the clinic that shared the link.
@@ -164,6 +168,9 @@ export async function POST(
       where: { lunarpayCustomerId: lpCustomer.data.id },
     });
 
+    // Resolve the ?implementor= tag to an implementor id (creating it if new).
+    const implementorId = await resolveOrCreateImplementorByName(implementorName);
+
     const customer = existingCustomer
       ? await prisma.customer.update({
           where: { id: existingCustomer.id },
@@ -175,6 +182,11 @@ export async function POST(
             // Attribute to this clinic only if not already attributed, so a
             // returning customer is never silently moved between clinics.
             ...(existingCustomer.clinicId ? {} : { clinicId: resolvedClinicId }),
+            // Set the implementor only if the tag is present and the customer
+            // isn't already attributed to one.
+            ...(implementorId && !existingCustomer.implementorId
+              ? { implementorId }
+              : {}),
           },
         })
       : await prisma.customer.create({
@@ -185,6 +197,7 @@ export async function POST(
             firstName,
             lastName,
             phone: phone ?? null,
+            ...(implementorId ? { implementorId } : {}),
           },
         });
 
