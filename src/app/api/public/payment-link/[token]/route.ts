@@ -6,6 +6,11 @@ import { logAudit } from "@/lib/audit";
 import { requireStringParams } from "@/lib/route-params";
 import { calcFee } from "@/lib/fees";
 import { resolveOrCreateImplementorByName } from "@/lib/implementor";
+import {
+  MASTER_SUBSCRIPTION_CENTS,
+  MASTER_SUBSCRIPTION_FREQUENCY,
+  MASTER_SUBSCRIPTION_DEFAULT_DAYS,
+} from "@/lib/master-link";
 
 /**
  * Public submit endpoint for a reusable hosted payment link.
@@ -50,6 +55,18 @@ const Body = z.object({
   clinicId: z.string().optional(),
   // Sales attribution from the ?implementor=<name> tag on the link URL.
   implementor: z.string().optional(),
+  // Master (configurable) link: amounts/schedule chosen by the payer at
+  // checkout. Only used when sess.mode === "master".
+  master: z
+    .object({
+      downPaymentCents: z.number().int().min(50),
+      split: z.boolean(),
+      firstPaymentCents: z.number().int().min(50).optional(), // amount due today when split
+      secondPaymentDate: z.string().optional(), // "YYYY-MM-DD", required if split
+      subscription: z.boolean(),
+      subscriptionDate: z.string().optional(), // "YYYY-MM-DD"; defaults to +30 days
+    })
+    .optional(),
 }).refine(
   (d) => !!d.tokenizeId || !!d.ticketId || !!d.transactionId,
   { message: "tokenizeId, ticketId, or transactionId required" },
@@ -76,7 +93,7 @@ export async function POST(
   });
   if (
     !sess ||
-    !["payment", "subscription", "combined", "installments"].includes(sess.mode) ||
+    !["payment", "subscription", "combined", "installments", "master"].includes(sess.mode) ||
     sess.status !== "open"
   ) {
     return NextResponse.json(
@@ -99,6 +116,7 @@ export async function POST(
     phone,
     clinicId: bodyClinicId,
     implementor: implementorName,
+    master: masterCfg,
   } = parsed.data;
   // For global links (sess.clinicId = null) use the clinic passed by the pay
   // page so transactions are attributed to the clinic that shared the link.
@@ -301,6 +319,151 @@ export async function POST(
     const description = sess.description
       ? `[${clinicLabel}] ${sess.description}`
       : `[${clinicLabel}]`;
+
+    // ─── MASTER (configurable) FLOW ───────────────────────────────────────
+    // The payer chose the amounts at checkout. Charge the down payment now
+    // (full, or first half when split), schedule the second half if split,
+    // and start the fixed $250/mo subscription if enabled. Processing fee is
+    // applied to every payment.
+    if (sess.mode === "master") {
+      if (!masterCfg) {
+        return NextResponse.json(
+          { error: "Missing payment configuration. Please try again." },
+          { status: 400 },
+        );
+      }
+
+      const downCents = masterCfg.downPaymentCents;
+      // Amount due today: payer-specified when split (defaults to half), else
+      // the full down payment.
+      const firstBase = masterCfg.split
+        ? masterCfg.firstPaymentCents ?? Math.floor(downCents / 2)
+        : downCents;
+      const secondBase = masterCfg.split ? downCents - firstBase : 0;
+
+      if (masterCfg.split && (firstBase < 50 || secondBase < 50 || firstBase > downCents)) {
+        return NextResponse.json(
+          {
+            error:
+              "Each split payment must be at least $0.50 and the first payment can't exceed the total.",
+          },
+          { status: 400 },
+        );
+      }
+      if (masterCfg.split && !masterCfg.secondPaymentDate) {
+        return NextResponse.json(
+          { error: "A date for the second payment is required." },
+          { status: 400 },
+        );
+      }
+
+      // 1) Charge the (first) down payment today.
+      const { totalCents: firstTotal } = calcFee(firstBase);
+      stage = "createCharge.master.downPayment";
+      const lpCharge = await lunarpay.createCharge({
+        customerId: lpCustomerId,
+        paymentMethodId: lpPm.data.id,
+        amount: firstTotal,
+        description,
+      });
+      await prisma.charge.create({
+        data: {
+          clinicId: resolvedClinicId,
+          customerId: customer.id,
+          paymentMethodId: pm.id,
+          paymentLinkId: sess.id,
+          lunarpayChargeId: String(lpCharge.data.id),
+          fortisTransactionId: lpCharge.data.fortisTransactionId ?? null,
+          amountCents: lpCharge.data.amount,
+          status: lpCharge.data.status,
+          paymentMethodType: lpCharge.data.paymentMethod,
+          description: sess.description ?? null,
+        },
+      });
+
+      // 2) Schedule the second half on the chosen date when split.
+      if (masterCfg.split && secondBase >= 50 && masterCfg.secondPaymentDate) {
+        stage = "createSchedule.master.split";
+        const lpSchedule = await lunarpay.createSchedule({
+          customerId: lpCustomerId,
+          paymentMethodId: lpPm.data.id,
+          description,
+          payments: [
+            {
+              amount: calcFee(secondBase).totalCents,
+              date: masterCfg.secondPaymentDate,
+            },
+          ],
+        });
+        await prisma.paymentSchedule.create({
+          data: {
+            clinicId: resolvedClinicId,
+            customerId: customer.id,
+            paymentMethodId: pm.id,
+            lunarpayScheduleId: lpSchedule.data.id,
+            totalAmountCents: downCents,
+            paidAmountCents: firstBase,
+            status: lpSchedule.data.status,
+            description: sess.description ?? null,
+          },
+        });
+      }
+
+      // 3) Fixed $250/mo subscription starting on the chosen date (default +30d).
+      if (masterCfg.subscription) {
+        const subDate =
+          masterCfg.subscriptionDate ||
+          addDaysIso(todayIso(), MASTER_SUBSCRIPTION_DEFAULT_DAYS);
+        const lpStartOn = subtractOneFrequency(subDate, MASTER_SUBSCRIPTION_FREQUENCY);
+        const { totalCents: subTotal } = calcFee(MASTER_SUBSCRIPTION_CENTS);
+
+        stage = "createSubscription.master";
+        const lpSub = await lunarpay.createSubscription({
+          customerId: lpCustomerId,
+          paymentMethodId: lpPm.data.id,
+          amount: subTotal,
+          frequency: MASTER_SUBSCRIPTION_FREQUENCY,
+          startOn: lpStartOn,
+        });
+
+        const nextPaymentOn = lpSub.data.nextPaymentOn
+          ? new Date(lpSub.data.nextPaymentOn)
+          : addOneFrequency(new Date(lpStartOn), MASTER_SUBSCRIPTION_FREQUENCY);
+
+        await prisma.subscription.create({
+          data: {
+            clinicId: resolvedClinicId,
+            customerId: customer.id,
+            paymentMethodId: pm.id,
+            paymentLinkId: sess.id,
+            lunarpaySubscriptionId: lpSub.data.id,
+            amountCents: subTotal,
+            frequency: MASTER_SUBSCRIPTION_FREQUENCY,
+            status: lpSub.data.status,
+            startOn: lpSub.data.startOn ? new Date(lpSub.data.startOn) : new Date(lpStartOn),
+            nextPaymentOn,
+            description: sess.description ?? null,
+          },
+        });
+      }
+
+      await logAudit({
+        actorId: null,
+        actorRole: "CUSTOMER",
+        clinicId: resolvedClinicId,
+        action: "master.complete.payment_link",
+        targetType: "CheckoutSession",
+        targetId: sess.id,
+        metadata: {
+          downPaymentCents: downCents,
+          split: masterCfg.split,
+          subscription: masterCfg.subscription,
+          customerId: customer.id,
+        },
+      });
+
+      return NextResponse.json({ ok: true });
+    }
 
     // 4) Day-of charge — skipped entirely for trial subscriptions.
     //    Combined mode's `amountCents` already bundles setup fee + (sub if

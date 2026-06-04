@@ -25,6 +25,7 @@ const MODE_LABELS: Record<string, string> = {
   subscription: "Subscription",
   combined: "Setup + sub",
   installments: "Installments",
+  master: "Master (configurable)",
 };
 
 const MODE_COLORS: Record<string, string> = {
@@ -32,6 +33,7 @@ const MODE_COLORS: Record<string, string> = {
   subscription: "badge-green",
   combined: "badge-purple",
   installments: "badge-yellow",
+  master: "badge-green",
 };
 
 function formatMoney(cents: number) {
@@ -56,7 +58,27 @@ function formatDate(d: Date) {
 export function AdminPaymentLinksClient({ links }: { links: LinkRow[] }) {
   const router = useRouter();
   const [creating, setCreating] = useState(false);
+  const [creatingMaster, setCreatingMaster] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+
+  async function createMasterLink() {
+    setCreatingMaster(true);
+    const res = await fetch("/api/admin/payment-links", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        mode: "master",
+        description: "Master link — payer configures amounts",
+      }),
+    });
+    setCreatingMaster(false);
+    if (!res.ok) {
+      const d = (await res.json().catch(() => ({}))) as { error?: string };
+      alert(d.error || "Failed to create master link.");
+      return;
+    }
+    router.refresh();
+  }
 
   async function deleteLink(id: string) {
     if (
@@ -91,9 +113,18 @@ export function AdminPaymentLinksClient({ links }: { links: LinkRow[] }) {
             clinics. When customers pay, charges are tracked per clinic context.
           </p>
         </div>
-        <button className="btn-primary" onClick={() => setCreating(true)}>
-          + Create global link
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            className="btn-secondary"
+            onClick={createMasterLink}
+            disabled={creatingMaster}
+          >
+            {creatingMaster ? "Creating…" : "+ Master link"}
+          </button>
+          <button className="btn-primary" onClick={() => setCreating(true)}>
+            + Create global link
+          </button>
+        </div>
       </div>
 
       <div className="card overflow-hidden">
@@ -138,7 +169,11 @@ export function AdminPaymentLinksClient({ links }: { links: LinkRow[] }) {
                     </span>
                   </td>
                   <td className="font-medium tabular-nums">
-                    {formatMoney(l.amountCents)}
+                    {l.mode === "master" ? (
+                      <span className="text-slate-500">Configurable</span>
+                    ) : (
+                      formatMoney(l.amountCents)
+                    )}
                   </td>
                   <td>
                     {totalUses === 0 ? (

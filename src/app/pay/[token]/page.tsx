@@ -89,7 +89,7 @@ export default async function PayPage({
 
   if (
     !session ||
-    !["payment", "subscription", "combined", "installments"].includes(session.mode)
+    !["payment", "subscription", "combined", "installments", "master"].includes(session.mode)
   ) {
     notFound();
   }
@@ -139,6 +139,19 @@ export default async function PayPage({
             <>
               {/* Charge breakdown */}
               <div className="mb-5">
+                {session.mode === "master" && (
+                  <>
+                    <p className="text-xs font-medium text-slate-500 uppercase tracking-wide mb-1">
+                      Set up your payment
+                    </p>
+                    <p className="text-sm text-slate-600">
+                      Enter your down payment below and choose any options. A
+                      {" "}
+                      {FEE_LABEL} processing fee applies to each payment.
+                    </p>
+                  </>
+                )}
+
                 {session.mode === "payment" && (() => {
                   const { feeCents, totalCents } = calcFee(session.amountCents);
                   return (
@@ -234,7 +247,7 @@ export default async function PayPage({
                   <InstallmentsSummary meta={meta} />
                 )}
 
-                {session.description && !["combined", "installments"].includes(session.mode) && (
+                {session.description && !["combined", "installments", "master"].includes(session.mode) && (
                   <p className="text-sm text-slate-600 mt-1.5">
                     {session.description}
                   </p>
@@ -243,7 +256,7 @@ export default async function PayPage({
 
               <PayClient
                 token={token}
-                mode={session.mode as "payment" | "subscription" | "combined" | "installments"}
+                mode={session.mode as "payment" | "subscription" | "combined" | "installments" | "master"}
                 clinicId={displayClinic?.id}
                 implementor={implementorParam}
               />

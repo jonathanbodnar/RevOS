@@ -7,7 +7,7 @@ import { logAudit } from "@/lib/audit";
 import { parseMoneyInputToCents } from "@/lib/format";
 
 const Body = z.object({
-  mode: z.enum(["payment", "subscription", "combined", "installments"]),
+  mode: z.enum(["payment", "subscription", "combined", "installments", "master"]),
   amount: z.string().optional(),
   frequency: z.enum(["weekly", "monthly", "quarterly", "yearly"]).optional(),
   description: z.string().optional(),
@@ -41,7 +41,7 @@ export async function GET() {
   const links = await prisma.checkoutSession.findMany({
     where: {
       isGlobal: true,
-      mode: { in: ["payment", "subscription", "combined", "installments"] },
+      mode: { in: ["payment", "subscription", "combined", "installments", "master"] },
       customerId: null,
     },
     orderBy: { createdAt: "desc" },
@@ -67,7 +67,12 @@ export async function POST(req: Request) {
   let amountCents = 0;
   let metadata: Record<string, unknown> = { isGlobal: true };
 
-  if (parsed.data.mode === "payment") {
+  if (parsed.data.mode === "master") {
+    // Configurable link — the payer chooses amounts at checkout. Nothing is
+    // fixed at creation; the day-of charge is computed server-side on submit.
+    amountCents = 0;
+    metadata = { ...metadata, master: true };
+  } else if (parsed.data.mode === "payment") {
     const cents = parseMoneyInputToCents(parsed.data.amount ?? "");
     if (cents === null || cents < 50) {
       return NextResponse.json({ error: "Amount must be at least $0.50" }, { status: 400 });

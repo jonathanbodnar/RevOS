@@ -27,7 +27,7 @@ export default async function InvoicesPage() {
     prisma.checkoutSession.findMany({
       where: {
         isGlobal: true,
-        mode: { in: ["payment", "subscription", "combined", "installments"] },
+        mode: { in: ["payment", "subscription", "combined", "installments", "master"] },
         customerId: null,
         status: "open",
       },

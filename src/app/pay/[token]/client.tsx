@@ -1,6 +1,11 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { calcFee, FEE_LABEL } from "@/lib/fees";
+import {
+  MASTER_SUBSCRIPTION_CENTS,
+  MASTER_SUBSCRIPTION_DEFAULT_DAYS,
+} from "@/lib/master-link";
 
 /**
  * Public payment-link page client.
@@ -66,6 +71,27 @@ type WindowWithCommerce = Window & {
   };
 };
 
+function toCents(input: string): number | null {
+  const cleaned = input.replace(/[^0-9.]/g, "");
+  if (!cleaned) return null;
+  const dollars = parseFloat(cleaned);
+  if (Number.isNaN(dollars)) return null;
+  return Math.round(dollars * 100);
+}
+
+function defaultSubDateStr(): string {
+  const d = new Date();
+  d.setDate(d.getDate() + MASTER_SUBSCRIPTION_DEFAULT_DAYS);
+  return d.toISOString().slice(0, 10);
+}
+
+function fmtMoney(cents: number): string {
+  return new Intl.NumberFormat("en-US", {
+    style: "currency",
+    currency: "USD",
+  }).format(cents / 100);
+}
+
 export function PayClient({
   token,
   mode,
@@ -73,7 +99,7 @@ export function PayClient({
   implementor,
 }: {
   token: string;
-  mode: "payment" | "subscription" | "combined" | "installments";
+  mode: "payment" | "subscription" | "combined" | "installments" | "master";
   clinicId?: string;
   implementor?: string;
 }) {
@@ -85,8 +111,20 @@ export function PayClient({
   const [lastName, setLastName] = useState("");
   const [phone, setPhone] = useState("");
 
+  // Master (configurable) link state.
+  const isMaster = mode === "master";
+  const [downPayment, setDownPayment] = useState("");
+  const [splitDown, setSplitDown] = useState(false);
+  const [firstAmount, setFirstAmount] = useState(""); // amount due today when split
+  const [secondDate, setSecondDate] = useState("");
+  const [enableSub, setEnableSub] = useState(false);
+  const [subDate, setSubDate] = useState(defaultSubDateStr());
+
   const formRef = useRef({ email, firstName, lastName, phone });
   formRef.current = { email, firstName, lastName, phone };
+
+  const masterRef = useRef({ downPayment, splitDown, firstAmount, secondDate, enableSub, subDate });
+  masterRef.current = { downPayment, splitDown, firstAmount, secondDate, enableSub, subDate };
 
   const mountRef = useRef<HTMLDivElement | null>(null);
   const elementsRef = useRef<FortisElementsInstance | null>(null);
@@ -158,6 +196,65 @@ export function PayClient({
             p.submitted = false;
             return;
           }
+
+          // Master link: validate the payer's configuration before submitting.
+          let masterPayload:
+            | {
+                downPaymentCents: number;
+                split: boolean;
+                firstPaymentCents?: number;
+                secondPaymentDate?: string;
+                subscription: boolean;
+                subscriptionDate?: string;
+              }
+            | undefined;
+          if (isMaster) {
+            const m = masterRef.current;
+            const downCents = toCents(m.downPayment);
+            if (downCents === null || downCents < 50) {
+              setStatus("error");
+              setError("Please enter a down payment of at least $0.50.");
+              p.submitted = false;
+              return;
+            }
+            let firstCents: number | undefined;
+            if (m.splitDown) {
+              if (downCents < 100) {
+                setStatus("error");
+                setError("A split down payment must be at least $1.00 total.");
+                p.submitted = false;
+                return;
+              }
+              // Amount due today: defaults to half if left blank.
+              firstCents =
+                m.firstAmount.trim() === ""
+                  ? Math.floor(downCents / 2)
+                  : toCents(m.firstAmount) ?? -1;
+              if (firstCents < 50 || downCents - firstCents < 50) {
+                setStatus("error");
+                setError(
+                  "Each payment must be at least $0.50, and the first payment must be less than the total.",
+                );
+                p.submitted = false;
+                return;
+              }
+              if (!m.secondDate) {
+                setStatus("error");
+                setError("Please choose a date for the second payment.");
+                p.submitted = false;
+                return;
+              }
+            }
+            masterPayload = {
+              downPaymentCents: downCents,
+              split: m.splitDown,
+              firstPaymentCents: m.splitDown ? firstCents : undefined,
+              secondPaymentDate: m.splitDown ? m.secondDate : undefined,
+              subscription: m.enableSub,
+              subscriptionDate: m.enableSub ? m.subDate : undefined,
+            };
+          }
+
           setStatus("submitting");
           try {
             const submit = await fetch(`/api/public/payment-link/${token}`, {
@@ -176,6 +273,7 @@ export function PayClient({
                 phone: phone || undefined,
                 clinicId: clinicId || undefined,
                 implementor: implementor || undefined,
+                master: masterPayload,
               }),
             });
             // Require explicit { ok: true } in the response body — a 200 with
@@ -301,7 +399,7 @@ export function PayClient({
           </svg>
         </div>
         <h2 className="text-lg font-semibold text-slate-900 mb-1">
-          {mode === "payment"
+          {mode === "payment" || mode === "master"
             ? "Payment received"
             : mode === "installments"
             ? "Plan started"
@@ -329,8 +427,137 @@ export function PayClient({
   // submitIfReady handler will surface "fill in name/email" before sending.
   const missingCustomerInfo = !email || !firstName || !lastName;
 
+  // Live master-link summary.
+  const downCents = isMaster ? toCents(downPayment) ?? 0 : 0;
+  const firstBaseCents = splitDown
+    ? firstAmount.trim() === ""
+      ? Math.floor(downCents / 2)
+      : toCents(firstAmount) ?? 0
+    : downCents;
+  const secondBaseCents = splitDown ? Math.max(0, downCents - firstBaseCents) : 0;
+  const dueTodayCents = firstBaseCents >= 50 ? calcFee(firstBaseCents).totalCents : 0;
+  const secondTotalCents = secondBaseCents >= 50 ? calcFee(secondBaseCents).totalCents : 0;
+  const subTotalCents = calcFee(MASTER_SUBSCRIPTION_CENTS).totalCents;
+
   return (
     <div className="space-y-4">
+      {isMaster && (
+        <div className="space-y-3 rounded-xl border border-slate-200 bg-slate-50/60 p-4">
+          <div>
+            <label className="label">Down payment</label>
+            <div className="relative">
+              <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400">$</span>
+              <input
+                className="input pl-7"
+                inputMode="decimal"
+                placeholder="0.00"
+                value={downPayment}
+                onChange={(e) => setDownPayment(e.target.value)}
+                disabled={fieldsDisabled}
+              />
+            </div>
+          </div>
+
+          {/* Split toggle */}
+          <button
+            type="button"
+            onClick={() => !fieldsDisabled && setSplitDown((v) => !v)}
+            className="flex w-full items-center justify-between gap-3 text-left"
+          >
+            <span className="text-sm text-slate-700">
+              Split the down payment into two payments
+            </span>
+            <Switch on={splitDown} />
+          </button>
+          {splitDown && (
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="label">Amount due today</label>
+                <div className="relative">
+                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400">$</span>
+                  <input
+                    className="input pl-7"
+                    inputMode="decimal"
+                    placeholder={
+                      downCents >= 100 ? (downCents / 200).toFixed(2) : "0.00"
+                    }
+                    value={firstAmount}
+                    onChange={(e) => setFirstAmount(e.target.value)}
+                    disabled={fieldsDisabled}
+                  />
+                </div>
+                <p className="text-xs text-slate-500 mt-1">
+                  Remainder: {fmtMoney(Math.max(0, secondBaseCents))}
+                </p>
+              </div>
+              <div>
+                <label className="label">Second payment date</label>
+                <input
+                  type="date"
+                  className="input"
+                  value={secondDate}
+                  min={new Date(Date.now() + 86400000).toISOString().slice(0, 10)}
+                  onChange={(e) => setSecondDate(e.target.value)}
+                  disabled={fieldsDisabled}
+                />
+              </div>
+            </div>
+          )}
+
+          {/* Subscription toggle */}
+          <button
+            type="button"
+            onClick={() => !fieldsDisabled && setEnableSub((v) => !v)}
+            className="flex w-full items-center justify-between gap-3 text-left border-t border-slate-200 pt-3"
+          >
+            <span className="text-sm text-slate-700">
+              Add {fmtMoney(MASTER_SUBSCRIPTION_CENTS)}/month subscription
+            </span>
+            <Switch on={enableSub} />
+          </button>
+          {enableSub && (
+            <div>
+              <label className="label">First subscription charge</label>
+              <input
+                type="date"
+                className="input"
+                value={subDate}
+                min={new Date().toISOString().slice(0, 10)}
+                onChange={(e) => setSubDate(e.target.value)}
+                disabled={fieldsDisabled}
+              />
+            </div>
+          )}
+
+          {/* Live summary */}
+          {downCents >= 50 && (
+            <ul className="text-sm text-slate-600 space-y-1 border-t border-slate-200 pt-3">
+              <li className="flex justify-between">
+                <span>Due today{splitDown ? " (1st payment)" : ""}</span>
+                <span className="tabular-nums font-medium text-slate-900">
+                  {fmtMoney(dueTodayCents)}
+                </span>
+              </li>
+              {splitDown && secondTotalCents > 0 && (
+                <li className="flex justify-between text-slate-500 text-xs">
+                  <span>2nd payment{secondDate ? ` · ${secondDate}` : ""}</span>
+                  <span className="tabular-nums">{fmtMoney(secondTotalCents)}</span>
+                </li>
+              )}
+              {enableSub && (
+                <li className="flex justify-between text-slate-500 text-xs">
+                  <span>Subscription{subDate ? ` · from ${subDate}` : ""}</span>
+                  <span className="tabular-nums">{fmtMoney(subTotalCents)}/mo</span>
+                </li>
+              )}
+              <li className="text-[11px] text-slate-400 pt-1">
+                Includes {FEE_LABEL} processing fee on each payment.
+              </li>
+            </ul>
+          )}
+        </div>
+      )}
+
       <div className="grid grid-cols-2 gap-3">
         <div>
           <label className="label">First name</label>
@@ -426,6 +653,22 @@ export function PayClient({
         )}
       </div>
     </div>
+  );
+}
+
+function Switch({ on }: { on: boolean }) {
+  return (
+    <span
+      className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors ${
+        on ? "bg-brand-600" : "bg-slate-300"
+      }`}
+    >
+      <span
+        className={`inline-block h-5 w-5 transform rounded-full bg-white shadow transition-transform ${
+          on ? "translate-x-5" : "translate-x-0.5"
+        }`}
+      />
+    </span>
   );
 }
 

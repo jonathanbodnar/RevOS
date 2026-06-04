@@ -27,6 +27,7 @@ const MODE_LABELS: Record<string, string> = {
   subscription: "Subscription",
   combined: "Setup + sub",
   installments: "Installments",
+  master: "Master (configurable)",
 };
 
 const MODE_COLORS: Record<string, string> = {
@@ -34,6 +35,7 @@ const MODE_COLORS: Record<string, string> = {
   subscription: "badge-green",
   combined: "badge-purple",
   installments: "badge-yellow",
+  master: "badge-green",
 };
 
 function formatMoney(cents: number) {
@@ -195,7 +197,11 @@ export function PaymentLinksClient({
                     </span>
                   </td>
                   <td className="font-medium tabular-nums">
-                    {formatMoney(l.amountCents)}
+                    {l.mode === "master" ? (
+                      <span className="text-slate-500">Configurable</span>
+                    ) : (
+                      formatMoney(l.amountCents)
+                    )}
                   </td>
                   <td>
                     {totalUses === 0 ? (
