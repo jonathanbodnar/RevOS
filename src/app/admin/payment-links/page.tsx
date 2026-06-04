@@ -10,7 +10,7 @@ export default async function AdminPaymentLinksPage() {
   const sessions = await prisma.checkoutSession.findMany({
     where: {
       isGlobal: true,
-      mode: { in: ["payment", "subscription", "combined", "installments"] },
+      mode: { in: ["payment", "subscription", "combined", "installments", "master"] },
       customerId: null,
     },
     orderBy: { createdAt: "desc" },
