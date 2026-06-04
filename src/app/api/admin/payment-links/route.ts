@@ -72,6 +72,39 @@ export async function POST(req: Request) {
     // fixed at creation; the day-of charge is computed server-side on submit.
     amountCents = 0;
     metadata = { ...metadata, master: true };
+
+    const token = randomBytes(24).toString("hex");
+    const appUrl = process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
+    const url = `${appUrl}/pay/${token}`;
+    const negId = -Math.floor(Math.random() * 1_000_000_000);
+
+    const checkoutSession = await prisma.checkoutSession.create({
+      data: {
+        clinicId: null,
+        customerId: null,
+        lunarpaySessionId: negId,
+        token,
+        url,
+        amountCents,
+        description: parsed.data.description ?? null,
+        mode: "master",
+        status: "open",
+        metadataJson: JSON.stringify(metadata),
+        isGlobal: true,
+      },
+    });
+
+    await logAudit({
+      actorId: session.user.id,
+      actorRole: session.user.originalRole,
+      clinicId: null,
+      action: "payment_link.global.create",
+      targetType: "CheckoutSession",
+      targetId: checkoutSession.id,
+      metadata: { mode: "master" },
+    });
+
+    return NextResponse.json({ url, id: checkoutSession.id }, { status: 201 });
   } else if (parsed.data.mode === "payment") {
     const cents = parseMoneyInputToCents(parsed.data.amount ?? "");
     if (cents === null || cents < 50) {
