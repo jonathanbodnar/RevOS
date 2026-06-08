@@ -59,7 +59,7 @@ const Body = z.object({
   // checkout. Only used when sess.mode === "master".
   master: z
     .object({
-      downPaymentCents: z.number().int().min(50),
+      downPaymentCents: z.number().int().min(0), // 0 allowed (subscription-only)
       split: z.boolean(),
       firstPaymentCents: z.number().int().min(50).optional(), // amount due today when split
       secondPaymentDate: z.string().optional(), // "YYYY-MM-DD", required if split
@@ -334,14 +334,25 @@ export async function POST(
       }
 
       const downCents = masterCfg.downPaymentCents;
+      // Down payment of $0 is allowed only when a subscription is enabled
+      // (start a subscription with no money down). Split is meaningless at $0.
+      const isSplit = masterCfg.split && downCents > 0;
+
+      if (downCents === 0 && !masterCfg.subscription) {
+        return NextResponse.json(
+          { error: "Enter a down payment or enable the subscription." },
+          { status: 400 },
+        );
+      }
+
       // Amount due today: payer-specified when split (defaults to half), else
       // the full down payment.
-      const firstBase = masterCfg.split
+      const firstBase = isSplit
         ? masterCfg.firstPaymentCents ?? Math.floor(downCents / 2)
         : downCents;
-      const secondBase = masterCfg.split ? downCents - firstBase : 0;
+      const secondBase = isSplit ? downCents - firstBase : 0;
 
-      if (masterCfg.split && (firstBase < 50 || secondBase < 50 || firstBase > downCents)) {
+      if (isSplit && (firstBase < 50 || secondBase < 50 || firstBase > downCents)) {
         return NextResponse.json(
           {
             error:
@@ -350,39 +361,41 @@ export async function POST(
           { status: 400 },
         );
       }
-      if (masterCfg.split && !masterCfg.secondPaymentDate) {
+      if (isSplit && !masterCfg.secondPaymentDate) {
         return NextResponse.json(
           { error: "A date for the second payment is required." },
           { status: 400 },
         );
       }
 
-      // 1) Charge the (first) down payment today.
-      const { totalCents: firstTotal } = calcFee(firstBase);
-      stage = "createCharge.master.downPayment";
-      const lpCharge = await lunarpay.createCharge({
-        customerId: lpCustomerId,
-        paymentMethodId: lpPm.data.id,
-        amount: firstTotal,
-        description,
-      });
-      await prisma.charge.create({
-        data: {
-          clinicId: resolvedClinicId,
-          customerId: customer.id,
-          paymentMethodId: pm.id,
-          paymentLinkId: sess.id,
-          lunarpayChargeId: String(lpCharge.data.id),
-          fortisTransactionId: lpCharge.data.fortisTransactionId ?? null,
-          amountCents: lpCharge.data.amount,
-          status: lpCharge.data.status,
-          paymentMethodType: lpCharge.data.paymentMethod,
-          description: sess.description ?? null,
-        },
-      });
+      // 1) Charge the (first) down payment today — skipped when $0 down.
+      if (firstBase >= 50) {
+        const { totalCents: firstTotal } = calcFee(firstBase);
+        stage = "createCharge.master.downPayment";
+        const lpCharge = await lunarpay.createCharge({
+          customerId: lpCustomerId,
+          paymentMethodId: lpPm.data.id,
+          amount: firstTotal,
+          description,
+        });
+        await prisma.charge.create({
+          data: {
+            clinicId: resolvedClinicId,
+            customerId: customer.id,
+            paymentMethodId: pm.id,
+            paymentLinkId: sess.id,
+            lunarpayChargeId: String(lpCharge.data.id),
+            fortisTransactionId: lpCharge.data.fortisTransactionId ?? null,
+            amountCents: lpCharge.data.amount,
+            status: lpCharge.data.status,
+            paymentMethodType: lpCharge.data.paymentMethod,
+            description: sess.description ?? null,
+          },
+        });
+      }
 
       // 2) Schedule the second half on the chosen date when split.
-      if (masterCfg.split && secondBase >= 50 && masterCfg.secondPaymentDate) {
+      if (isSplit && secondBase >= 50 && masterCfg.secondPaymentDate) {
         stage = "createSchedule.master.split";
         const lpSchedule = await lunarpay.createSchedule({
           customerId: lpCustomerId,

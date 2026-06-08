@@ -210,15 +210,25 @@ export function PayClient({
             | undefined;
           if (isMaster) {
             const m = masterRef.current;
-            const downCents = toCents(m.downPayment);
-            if (downCents === null || downCents < 50) {
+            // Down payment may be $0 (blank counts as 0) as long as a
+            // subscription is enabled — e.g. start a subscription with no
+            // money down. Any positive amount must still clear the $0.50 floor.
+            const downCents =
+              m.downPayment.trim() === "" ? 0 : toCents(m.downPayment) ?? -1;
+            if (downCents < 0 || (downCents > 0 && downCents < 50)) {
               setStatus("error");
-              setError("Please enter a down payment of at least $0.50.");
+              setError("Down payment must be $0 or at least $0.50.");
+              p.submitted = false;
+              return;
+            }
+            if (downCents === 0 && !m.enableSub) {
+              setStatus("error");
+              setError("Enter a down payment or turn on the subscription.");
               p.submitted = false;
               return;
             }
             let firstCents: number | undefined;
-            if (m.splitDown) {
+            if (m.splitDown && downCents > 0) {
               if (downCents < 100) {
                 setStatus("error");
                 setError("A split down payment must be at least $1.00 total.");
@@ -245,11 +255,12 @@ export function PayClient({
                 return;
               }
             }
+            const useSplit = m.splitDown && downCents > 0;
             masterPayload = {
               downPaymentCents: downCents,
-              split: m.splitDown,
-              firstPaymentCents: m.splitDown ? firstCents : undefined,
-              secondPaymentDate: m.splitDown ? m.secondDate : undefined,
+              split: useSplit,
+              firstPaymentCents: useSplit ? firstCents : undefined,
+              secondPaymentDate: useSplit ? m.secondDate : undefined,
               subscription: m.enableSub,
               subscriptionDate: m.enableSub ? m.subDate : undefined,
             };
@@ -444,7 +455,7 @@ export function PayClient({
       {isMaster && (
         <div className="space-y-3 rounded-xl border border-slate-200 bg-slate-50/60 p-4">
           <div>
-            <label className="label">Down payment</label>
+            <label className="label">Down payment (optional)</label>
             <div className="relative">
               <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400">$</span>
               <input
@@ -456,9 +467,13 @@ export function PayClient({
                 disabled={fieldsDisabled}
               />
             </div>
+            <p className="text-xs text-slate-500 mt-1">
+              Leave at $0 to start a subscription with no money down.
+            </p>
           </div>
 
-          {/* Split toggle */}
+          {/* Split toggle — only relevant with a down payment */}
+          {downCents > 0 && (
           <button
             type="button"
             onClick={() => !fieldsDisabled && setSplitDown((v) => !v)}
@@ -469,7 +484,8 @@ export function PayClient({
             </span>
             <Switch on={splitDown} />
           </button>
-          {splitDown && (
+          )}
+          {splitDown && downCents > 0 && (
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <label className="label">Amount due today</label>
@@ -530,15 +546,15 @@ export function PayClient({
           )}
 
           {/* Live summary */}
-          {downCents >= 50 && (
+          {(downCents >= 50 || enableSub) && (
             <ul className="text-sm text-slate-600 space-y-1 border-t border-slate-200 pt-3">
               <li className="flex justify-between">
-                <span>Due today{splitDown ? " (1st payment)" : ""}</span>
+                <span>Due today{splitDown && downCents > 0 ? " (1st payment)" : ""}</span>
                 <span className="tabular-nums font-medium text-slate-900">
                   {fmtMoney(dueTodayCents)}
                 </span>
               </li>
-              {splitDown && secondTotalCents > 0 && (
+              {splitDown && downCents > 0 && secondTotalCents > 0 && (
                 <li className="flex justify-between text-slate-500 text-xs">
                   <span>2nd payment{secondDate ? ` · ${secondDate}` : ""}</span>
                   <span className="tabular-nums">{fmtMoney(secondTotalCents)}</span>
