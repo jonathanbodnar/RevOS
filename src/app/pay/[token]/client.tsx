@@ -97,11 +97,13 @@ export function PayClient({
   mode,
   clinicId,
   implementor,
+  implementorOptions = [],
 }: {
   token: string;
   mode: "payment" | "subscription" | "combined" | "installments" | "master";
   clinicId?: string;
   implementor?: string;
+  implementorOptions?: string[];
 }) {
   const [status, setStatus] = useState<Status>("loading");
   const [error, setError] = useState<string | null>(null);
@@ -119,9 +121,14 @@ export function PayClient({
   const [secondDate, setSecondDate] = useState("");
   const [enableSub, setEnableSub] = useState(false);
   const [subDate, setSubDate] = useState(defaultSubDateStr());
+  // Selected implementor (master link dropdown). Defaults to the ?implementor= tag.
+  const [selectedImplementor, setSelectedImplementor] = useState(implementor ?? "");
 
   const formRef = useRef({ email, firstName, lastName, phone });
   formRef.current = { email, firstName, lastName, phone };
+
+  const implementorRef = useRef(selectedImplementor);
+  implementorRef.current = selectedImplementor;
 
   const masterRef = useRef({ downPayment, splitDown, firstAmount, secondDate, enableSub, subDate });
   masterRef.current = { downPayment, splitDown, firstAmount, secondDate, enableSub, subDate };
@@ -283,7 +290,7 @@ export function PayClient({
                 lastName,
                 phone: phone || undefined,
                 clinicId: clinicId || undefined,
-                implementor: implementor || undefined,
+                implementor: implementorRef.current || implementor || undefined,
                 master: masterPayload,
               }),
             });
@@ -454,6 +461,29 @@ export function PayClient({
     <div className="space-y-4">
       {isMaster && (
         <div className="space-y-3 rounded-xl border border-slate-200 bg-slate-50/60 p-4">
+          {(implementorOptions.length > 0 || implementor) && (
+            <div>
+              <label className="label">Implementor</label>
+              <select
+                className="input"
+                value={selectedImplementor}
+                onChange={(e) => setSelectedImplementor(e.target.value)}
+                disabled={fieldsDisabled}
+              >
+                <option value="">— Select —</option>
+                {/* Preserve a ?implementor= tag value even if not in the list */}
+                {implementor && !implementorOptions.includes(implementor) && (
+                  <option value={implementor}>{implementor}</option>
+                )}
+                {implementorOptions.map((name) => (
+                  <option key={name} value={name}>
+                    {name}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+
           <div>
             <label className="label">Down payment (optional)</label>
             <div className="relative">

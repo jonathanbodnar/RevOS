@@ -182,9 +182,10 @@ export default async function ReportsPage({
       subs.push({ amount: s.amountCents, freq: s.frequency, next: s.nextPaymentOn });
     }
 
+    // Advanced costs roll into the aggregate RevOS NET, not the per-patient
+    // 50/50 share columns.
     for (const ac of cust.advancedCosts) {
       t.advancedCosts += ac.amountCents;
-      custRevos -= ac.amountCents;
     }
 
     rows.push({
@@ -227,16 +228,17 @@ export default async function ReportsPage({
   });
   for (const ac of clinicLevelCosts) t.advancedCosts += ac.amountCents;
 
-  const revosProfit =
-    t.revosDownShare +
+  // Headline split: clean 50/50 of the post-fee base (down + recurring).
+  const revosShareTotal = t.revosDownShare + t.revosRecurringShare;
+  const clinicProfit = t.clinicDownShare + t.clinicRecurringShare;
+  // RevOS NET = its share + processing-fee residual − commissions − advanced costs.
+  const feeResidual =
     t.processingFeeRevenue +
-    t.revosRecurringShare +
     t.recurringProcessingFee -
     t.lunarpayCost -
-    t.recurringLunarpayCost -
-    t.implementorCommission -
-    t.advancedCosts;
-  const clinicProfit = t.clinicDownShare + t.clinicRecurringShare;
+    t.recurringLunarpayCost;
+  const revosNet =
+    revosShareTotal + feeResidual - t.implementorCommission - t.advancedCosts;
 
   const filtersJson = JSON.stringify({
     preset,
@@ -246,9 +248,76 @@ export default async function ReportsPage({
     implementorId,
   });
 
+  // ── CSV export (per-patient rows + a summary block) ──────────────────────
+  const csvEsc = (v: string | number) => {
+    const s = String(v);
+    return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+  };
+  const money = (cents: number) => (cents / 100).toFixed(2);
+  const csvLines: string[] = [];
+  csvLines.push(`RevOS Report,${csvEsc(period.label)}`);
+  csvLines.push(
+    `Scope,${csvEsc(clinicId ? clinics.find((c) => c.id === clinicId)?.name ?? "" : "All clinics")}`,
+  );
+  csvLines.push("");
+  csvLines.push(
+    [
+      "Patient",
+      "Clinic",
+      "Implementor",
+      "Down payments",
+      "Down payment dates",
+      "Monthly sub",
+      "Refunds",
+      "Notes",
+      "RevOS share",
+      "Clinic share",
+    ].join(","),
+  );
+  for (const r of rows) {
+    const downTotal = r.downPayments.reduce((s, d) => s + d.amount, 0);
+    const downDates = r.downPayments
+      .map((d) => formatDate(d.date))
+      .join("; ");
+    const subStr = r.subs
+      .map((s) => `${money(s.amount)}${freqLabel(s.freq)}`)
+      .join("; ");
+    csvLines.push(
+      [
+        csvEsc(r.name),
+        csvEsc(r.clinic),
+        csvEsc(r.implementor ?? ""),
+        money(downTotal),
+        csvEsc(downDates),
+        csvEsc(subStr),
+        money(r.refunds),
+        csvEsc(r.notes ?? ""),
+        money(r.revosProfit),
+        money(r.clinicProfit),
+      ].join(","),
+    );
+  }
+  csvLines.push("");
+  csvLines.push("Summary,Amount");
+  csvLines.push(`RevOS share (50%),${money(revosShareTotal)}`);
+  csvLines.push(`Clinic share (50%),${money(clinicProfit)}`);
+  csvLines.push(`RevOS net (after fees & costs),${money(revosNet)}`);
+  csvLines.push(`Down payments gross,${money(t.downGross)}`);
+  csvLines.push(`Recurring monthly gross,${money(t.recurringMonthlyGross)}`);
+  csvLines.push(`Refunds,${money(t.refunds)}`);
+  csvLines.push(`Implementor commissions,${money(t.implementorCommission)}`);
+  csvLines.push(`Advanced costs,${money(t.advancedCosts)}`);
+  const csv = csvLines.join("\n");
+  const csvFilename = `revos-report-${preset}-${new Date().toISOString().slice(0, 10)}.csv`;
+
   const summary: { label: string; value: string; sub?: string; accent?: boolean }[] = [
-    { label: "RevOS profit", value: formatMoneyCents(revosProfit), accent: true },
-    { label: "Clinic profit", value: formatMoneyCents(clinicProfit) },
+    { label: "RevOS share (50%)", value: formatMoneyCents(revosShareTotal), accent: true },
+    { label: "Clinic share (50%)", value: formatMoneyCents(clinicProfit) },
+    {
+      label: "RevOS net",
+      value: formatMoneyCents(revosNet),
+      sub: "after fees, commissions & costs",
+    },
     {
       label: "Down payments",
       value: formatMoneyCents(t.downGross),
@@ -274,6 +343,8 @@ export default async function ReportsPage({
         </div>
         <ReportActions
           filtersJson={filtersJson}
+          csv={csv}
+          csvFilename={csvFilename}
           savedReports={savedReports.map((r) => ({
             id: r.id,
             name: r.name,
@@ -332,8 +403,8 @@ export default async function ReportsPage({
             </h3>
             <BreakdownRow label="Gross collected" value={t.downGross} />
             <BreakdownRow label="Base (fee removed)" value={t.downBase} muted />
-            <BreakdownRow label="RevOS share" value={t.revosDownShare} />
-            <BreakdownRow label="Clinic share" value={t.clinicDownShare} />
+            <BreakdownRow label="RevOS share (50%)" value={t.revosDownShare} />
+            <BreakdownRow label="Clinic share (50%)" value={t.clinicDownShare} />
             <BreakdownRow label="Processing fees (RevOS revenue)" value={t.processingFeeRevenue} />
             <BreakdownRow label="LunarPay fees (cost)" value={-t.lunarpayCost} negative />
             <BreakdownRow label="Implementor commissions (cost)" value={-t.implementorCommission} negative />
@@ -345,8 +416,8 @@ export default async function ReportsPage({
             </h3>
             <BreakdownRow label="Monthly recurring gross" value={t.recurringMonthlyGross} />
             <BreakdownRow label="Base (fee removed)" value={t.recurringMonthlyBase} muted />
-            <BreakdownRow label="RevOS share ($/cycle)" value={t.revosRecurringShare} />
-            <BreakdownRow label="Clinic share" value={t.clinicRecurringShare} />
+            <BreakdownRow label="RevOS share (50%)" value={t.revosRecurringShare} />
+            <BreakdownRow label="Clinic share (50%)" value={t.clinicRecurringShare} />
             <BreakdownRow label="Processing fees (RevOS revenue)" value={t.recurringProcessingFee} />
             <BreakdownRow label="LunarPay fees (cost)" value={-t.recurringLunarpayCost} negative />
           </div>

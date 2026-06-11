@@ -108,6 +108,16 @@ export default async function PayPage({
   const frequency = meta.frequency ?? null;
   const subTitle = frequencyLabel(frequency);
 
+  // Master links show an implementor dropdown so the right rep is attributed.
+  const implementorOptions =
+    session.mode === "master"
+      ? await prisma.implementor.findMany({
+          where: { isActive: true },
+          orderBy: { name: "asc" },
+          select: { name: true },
+        })
+      : [];
+
   return (
     <div className="min-h-screen flex items-center justify-center p-6 bg-slate-50">
       <div className="w-full max-w-md">
@@ -259,6 +269,7 @@ export default async function PayPage({
                 mode={session.mode as "payment" | "subscription" | "combined" | "installments" | "master"}
                 clinicId={displayClinic?.id}
                 implementor={implementorParam}
+                implementorOptions={implementorOptions.map((i) => i.name)}
               />
             </>
           )}

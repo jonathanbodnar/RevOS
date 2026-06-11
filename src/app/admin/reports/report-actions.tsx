@@ -5,14 +5,30 @@ import { useState, useTransition } from "react";
 
 export function ReportActions({
   filtersJson,
+  csv,
+  csvFilename,
   savedReports,
 }: {
   filtersJson: string;
+  csv: string;
+  csvFilename: string;
   savedReports: { id: string; name: string; filtersJson: string }[];
 }) {
   const router = useRouter();
   const [, startTransition] = useTransition();
   const [saving, setSaving] = useState(false);
+
+  function downloadCsv() {
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = csvFilename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }
 
   async function save() {
     const name = prompt("Name this report");
@@ -67,6 +83,9 @@ export function ReportActions({
       )}
       <button className="btn-secondary text-sm" onClick={save} disabled={saving}>
         {saving ? "Saving…" : "Save report"}
+      </button>
+      <button className="btn-secondary text-sm" onClick={downloadCsv}>
+        Download CSV
       </button>
       <button className="btn-primary text-sm" onClick={() => window.print()}>
         Download PDF

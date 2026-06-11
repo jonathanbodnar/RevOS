@@ -6,11 +6,14 @@
  *    baked into its stored amount. `reverseFee` recovers the base price and the
  *    fee portion RevOS collected.
  *  - LunarPay charges RevOS a SECOND 3.9% + $0.39 on the gross — that's a cost.
- *  - Down payments (one-time / setup / installment / manual charges) are split
- *    between RevOS and the clinic per the clinic's configured share %.
- *  - Each down payment with an assigned implementor pays a flat commission.
- *  - Recurring subscription payments give RevOS a flat per-cycle share ($75).
- *  - Advanced costs (supplements, booklets) are subtracted from RevOS profit.
+ *  - The base (amount AFTER processing fees are removed) is split 50/50 between
+ *    RevOS and the clinic — for BOTH down payments and recurring payments —
+ *    per the clinic's configured share % (default 50). This is the headline
+ *    "RevOS share / clinic share" shown on the report.
+ *  - Each down payment with an assigned implementor pays a flat commission,
+ *    which (along with the processing-fee residual and advanced costs) reduces
+ *    RevOS's NET take — but does NOT change the 50/50 share split itself.
+ *  - Advanced costs (supplements, booklets) are subtracted from RevOS net.
  *
  * NOTE: recurring subscription cron charges are not stored as individual Charge
  * rows, so recurring revenue is projected from active subscriptions, not actual
@@ -131,7 +134,9 @@ export function downPaymentEconomics(
     revosShareCents: revosShare,
     clinicShareCents: clinicShare,
     implementorCommissionCents: commission,
-    revosProfitCents: revosShare + feeCents - lpCost - commission,
+    // Headline split is a clean 50/50 of the post-fee base. Commissions,
+    // fee residual and advanced costs are accounted for in RevOS NET only.
+    revosProfitCents: revosShare,
     clinicProfitCents: clinicShare,
   };
 }
@@ -153,7 +158,10 @@ export function recurringEconomics(
 ): RecurringEconomics {
   const { baseCents, feeCents } = reverseFee(grossCents);
   const lpCost = lunarpayCostCents(grossCents);
-  const revosShare = Math.min(baseCents, cfg.revosRecurringShareCents);
+  // Recurring uses the SAME post-fee 50/50 split as down payments (e.g. a
+  // $250 subscription nets $125 each, not a flat $75).
+  const pct = Math.min(100, Math.max(0, cfg.revosDownPaymentSharePct));
+  const revosShare = Math.round((baseCents * pct) / 100);
   const clinicShare = baseCents - revosShare;
   return {
     grossCents,
@@ -162,7 +170,7 @@ export function recurringEconomics(
     lunarpayCostCents: lpCost,
     revosShareCents: revosShare,
     clinicShareCents: clinicShare,
-    revosProfitCents: revosShare + feeCents - lpCost,
+    revosProfitCents: revosShare,
     clinicProfitCents: clinicShare,
   };
 }
