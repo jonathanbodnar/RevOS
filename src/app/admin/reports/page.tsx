@@ -41,6 +41,7 @@ export default async function ReportsPage({
   }>;
 }) {
   const sp = await searchParams;
+  const now = new Date();
   const preset = (VALID_PRESETS.includes(sp.preset ?? "") ? sp.preset : "mtd") as PeriodPreset;
   const clinicId = sp.clinicId || "";
   const implementorId = sp.implementorId || "";
@@ -127,7 +128,7 @@ export default async function ReportsPage({
     clinic: string;
     implementor: string | null;
     downPayments: { amount: number; date: Date }[];
-    subs: { amount: number; freq: string; next: Date | null }[];
+    subs: { amount: number; freq: string; next: Date | null; pending: boolean }[];
     refunds: number;
     notes: string | null;
     revosProfit: number;
@@ -166,8 +167,23 @@ export default async function ReportsPage({
       downPayments.push({ amount: ch.amountCents, date: ch.createdAt });
     }
 
-    const subs: { amount: number; freq: string; next: Date | null }[] = [];
+    const subs: { amount: number; freq: string; next: Date | null; pending: boolean }[] = [];
     for (const s of cust.subscriptions) {
+      // Only count a subscription toward collected revenue once its first
+      // charge has actually happened. The first charge date is the originally
+      // scheduled nextPaymentOn (falling back to startOn for legacy rows). A
+      // subscription whose first charge is still in the future (e.g. a master
+      // $0-down sub starting in 30 days) has collected nothing yet.
+      const firstCharge = s.nextPaymentOn ?? s.startOn ?? null;
+      const hasCollected = firstCharge != null && firstCharge.getTime() <= now.getTime();
+      subs.push({
+        amount: s.amountCents,
+        freq: s.frequency,
+        next: s.nextPaymentOn,
+        pending: !hasCollected,
+      });
+      if (!hasCollected) continue;
+
       const eco = recurringEconomics(s.amountCents, cfg);
       const factor = monthlyFactor(s.frequency);
       t.recurringCount += 1;
@@ -179,7 +195,6 @@ export default async function ReportsPage({
       t.clinicRecurringShare += Math.round(eco.clinicShareCents * factor);
       custRevos += Math.round(eco.revosProfitCents * factor);
       custClinic += Math.round(eco.clinicProfitCents * factor);
-      subs.push({ amount: s.amountCents, freq: s.frequency, next: s.nextPaymentOn });
     }
 
     // Advanced costs roll into the aggregate RevOS NET, not the per-patient
@@ -280,7 +295,7 @@ export default async function ReportsPage({
       .map((d) => formatDate(d.date))
       .join("; ");
     const subStr = r.subs
-      .map((s) => `${money(s.amount)}${freqLabel(s.freq)}`)
+      .map((s) => `${money(s.amount)}${freqLabel(s.freq)}${s.pending ? " (pending)" : ""}`)
       .join("; ");
     csvLines.push(
       [
@@ -326,7 +341,7 @@ export default async function ReportsPage({
     {
       label: "Recurring (monthly)",
       value: formatMoneyCents(t.recurringMonthlyGross),
-      sub: `${t.recurringCount} active sub${t.recurringCount === 1 ? "" : "s"} · projected`,
+      sub: `${t.recurringCount} billing sub${t.recurringCount === 1 ? "" : "s"} · excludes not-yet-charged`,
     },
     { label: "Refunds", value: formatMoneyCents(t.refunds) },
     { label: "Advanced costs", value: formatMoneyCents(t.advancedCosts) },
@@ -481,8 +496,14 @@ export default async function ReportsPage({
                             <div key={i} className="text-xs">
                               {formatMoneyCents(s.amount)}
                               <span className="text-slate-400">{freqLabel(s.freq)}</span>
-                              {s.next && (
-                                <span className="text-slate-400"> · next {formatDate(s.next)}</span>
+                              {s.pending ? (
+                                <span className="badge-yellow ml-1 text-[10px]">
+                                  pending{s.next ? ` · ${formatDate(s.next)}` : ""}
+                                </span>
+                              ) : (
+                                s.next && (
+                                  <span className="text-slate-400"> · next {formatDate(s.next)}</span>
+                                )
                               )}
                             </div>
                           ))}
