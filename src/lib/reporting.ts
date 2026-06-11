@@ -6,13 +6,13 @@
  *    baked into its stored amount. `reverseFee` recovers the base price and the
  *    fee portion RevOS collected.
  *  - LunarPay charges RevOS a SECOND 3.9% + $0.39 on the gross — that's a cost.
- *  - The base (amount AFTER processing fees are removed) is split 50/50 between
- *    RevOS and the clinic — for BOTH down payments and recurring payments —
- *    per the clinic's configured share % (default 50). This is the headline
- *    "RevOS share / clinic share" shown on the report.
+ *  - Down payments: the post-fee base is split between RevOS and the clinic per
+ *    the clinic's down-payment share % (default 50/50).
+ *  - Recurring: RevOS takes the clinic's flat per-cycle recurring share field
+ *    (e.g. $75 of a $250 subscription); the clinic keeps the remainder.
  *  - Each down payment with an assigned implementor pays a flat commission,
  *    which (along with the processing-fee residual and advanced costs) reduces
- *    RevOS's NET take — but does NOT change the 50/50 share split itself.
+ *    RevOS's NET take — but does NOT change the share split columns.
  *  - Advanced costs (supplements, booklets) are subtracted from RevOS net.
  *
  * NOTE: recurring subscription cron charges are not stored as individual Charge
@@ -158,10 +158,9 @@ export function recurringEconomics(
 ): RecurringEconomics {
   const { baseCents, feeCents } = reverseFee(grossCents);
   const lpCost = lunarpayCostCents(grossCents);
-  // Recurring uses the SAME post-fee 50/50 split as down payments (e.g. a
-  // $250 subscription nets $125 each, not a flat $75).
-  const pct = Math.min(100, Math.max(0, cfg.revosDownPaymentSharePct));
-  const revosShare = Math.round((baseCents * pct) / 100);
+  // Recurring uses the clinic's flat per-cycle recurring share field (e.g.
+  // $75 of a $250 subscription) — NOT the down-payment % split.
+  const revosShare = Math.min(baseCents, cfg.revosRecurringShareCents);
   const clinicShare = baseCents - revosShare;
   return {
     grossCents,

@@ -299,8 +299,8 @@ export default async function ReportsPage({
   }
   csvLines.push("");
   csvLines.push("Summary,Amount");
-  csvLines.push(`RevOS share (50%),${money(revosShareTotal)}`);
-  csvLines.push(`Clinic share (50%),${money(clinicProfit)}`);
+  csvLines.push(`RevOS share,${money(revosShareTotal)}`);
+  csvLines.push(`Clinic share,${money(clinicProfit)}`);
   csvLines.push(`RevOS net (after fees & costs),${money(revosNet)}`);
   csvLines.push(`Down payments gross,${money(t.downGross)}`);
   csvLines.push(`Recurring monthly gross,${money(t.recurringMonthlyGross)}`);
@@ -311,8 +311,8 @@ export default async function ReportsPage({
   const csvFilename = `revos-report-${preset}-${new Date().toISOString().slice(0, 10)}.csv`;
 
   const summary: { label: string; value: string; sub?: string; accent?: boolean }[] = [
-    { label: "RevOS share (50%)", value: formatMoneyCents(revosShareTotal), accent: true },
-    { label: "Clinic share (50%)", value: formatMoneyCents(clinicProfit) },
+    { label: "RevOS share", value: formatMoneyCents(revosShareTotal), accent: true },
+    { label: "Clinic share", value: formatMoneyCents(clinicProfit) },
     {
       label: "RevOS net",
       value: formatMoneyCents(revosNet),
@@ -416,8 +416,8 @@ export default async function ReportsPage({
             </h3>
             <BreakdownRow label="Monthly recurring gross" value={t.recurringMonthlyGross} />
             <BreakdownRow label="Base (fee removed)" value={t.recurringMonthlyBase} muted />
-            <BreakdownRow label="RevOS share (50%)" value={t.revosRecurringShare} />
-            <BreakdownRow label="Clinic share (50%)" value={t.clinicRecurringShare} />
+            <BreakdownRow label="RevOS share ($/cycle)" value={t.revosRecurringShare} />
+            <BreakdownRow label="Clinic share" value={t.clinicRecurringShare} />
             <BreakdownRow label="Processing fees (RevOS revenue)" value={t.recurringProcessingFee} />
             <BreakdownRow label="LunarPay fees (cost)" value={-t.recurringLunarpayCost} negative />
           </div>
