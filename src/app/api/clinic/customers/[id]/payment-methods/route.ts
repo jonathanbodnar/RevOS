@@ -74,6 +74,7 @@ export async function POST(
       data: {
         customerId: customer.id,
         lunarpayPaymentMethodId: lp.data.id,
+        lunarpayCustomerId: customer.lunarpayCustomerId,
         sourceType: lp.data.sourceType,
         lastDigits: lp.data.lastDigits ?? null,
         nameHolder: lp.data.nameHolder ?? null,

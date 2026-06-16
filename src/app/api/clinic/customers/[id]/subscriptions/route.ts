@@ -124,9 +124,10 @@ export async function POST(
       // First cycle charged immediately (skipped for trials), then the
       // recurring subscription starts today so LunarPay handles every cycle
       // after this one.
+      const chargeCustomerId = pm.lunarpayCustomerId ?? customer.lunarpayCustomerId;
       if (!isTrial) {
         const lpCharge = await lunarpay.createCharge({
-          customerId: customer.lunarpayCustomerId,
+          customerId: chargeCustomerId,
           paymentMethodId: pm.lunarpayPaymentMethodId,
           amount: totalCents,
           description,
@@ -147,7 +148,7 @@ export async function POST(
       }
 
       const lpSub = await lunarpay.createSubscription({
-        customerId: customer.lunarpayCustomerId,
+        customerId: chargeCustomerId,
         paymentMethodId: pm.lunarpayPaymentMethodId,
         amount: totalCents,
         frequency,

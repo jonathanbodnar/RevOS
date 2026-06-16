@@ -218,6 +218,7 @@ async function handleSessionCompleted(p: CheckoutSessionCompletedPayload) {
       data: {
         customerId: customer.id,
         lunarpayPaymentMethodId: payment_method.id,
+        lunarpayCustomerId: customer.lunarpayCustomerId,
         sourceType: payment_method.type,
         lastDigits: payment_method.last4 ?? null,
         isDefault: isFirst,

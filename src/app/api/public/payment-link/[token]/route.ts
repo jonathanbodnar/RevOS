@@ -62,6 +62,9 @@ const Body = z.object({
       downPaymentCents: z.number().int().min(0), // 0 allowed (subscription-only)
       split: z.boolean(),
       firstPaymentCents: z.number().int().min(50).optional(), // amount due today when split
+      // Optional "YYYY-MM-DD": when set, the (first) down payment is scheduled
+      // for that date instead of charged immediately at checkout.
+      firstPaymentDate: z.string().optional(),
       secondPaymentDate: z.string().optional(), // "YYYY-MM-DD", required if split
       subscription: z.boolean(),
       subscriptionDate: z.string().optional(), // "YYYY-MM-DD"; defaults to +30 days
@@ -305,6 +308,7 @@ export async function POST(
       data: {
         customerId: customer.id,
         lunarpayPaymentMethodId: lpPm.data.id,
+        lunarpayCustomerId: lpCustomerId,
         sourceType: lpPm.data.sourceType,
         lastDigits: lpPm.data.lastDigits ?? null,
         nameHolder: lpPm.data.nameHolder ?? null,
@@ -368,45 +372,73 @@ export async function POST(
         );
       }
 
-      // 1) Charge the (first) down payment today — skipped when $0 down.
+      // When the payer chose to schedule the first/down payment for later, we
+      // defer it instead of charging at checkout.
+      const todayStr = todayIso().slice(0, 10);
+      const deferFirst =
+        !!masterCfg.firstPaymentDate && masterCfg.firstPaymentDate >= todayStr;
+      if (masterCfg.firstPaymentDate && masterCfg.firstPaymentDate < todayStr) {
+        return NextResponse.json(
+          { error: "The first payment date can't be in the past." },
+          { status: 400 },
+        );
+      }
+
+      // Collect every payment that should be scheduled (vs charged today) so we
+      // can register them in a single LunarPay payment-schedule.
+      const scheduledPayments: { amount: number; date: string }[] = [];
+      let chargedTodayBase = 0;
+
+      // 1) First/down payment: charge today, or schedule it for the chosen date.
       if (firstBase >= 50) {
-        const { totalCents: firstTotal } = calcFee(firstBase);
-        stage = "createCharge.master.downPayment";
-        const lpCharge = await lunarpay.createCharge({
-          customerId: lpCustomerId,
-          paymentMethodId: lpPm.data.id,
-          amount: firstTotal,
-          description,
-        });
-        await prisma.charge.create({
-          data: {
-            clinicId: resolvedClinicId,
-            customerId: customer.id,
-            paymentMethodId: pm.id,
-            paymentLinkId: sess.id,
-            lunarpayChargeId: String(lpCharge.data.id),
-            fortisTransactionId: lpCharge.data.fortisTransactionId ?? null,
-            amountCents: lpCharge.data.amount,
-            status: lpCharge.data.status,
-            paymentMethodType: lpCharge.data.paymentMethod,
-            description: sess.description ?? null,
-          },
+        if (deferFirst && masterCfg.firstPaymentDate) {
+          scheduledPayments.push({
+            amount: calcFee(firstBase).totalCents,
+            date: masterCfg.firstPaymentDate,
+          });
+        } else {
+          const { totalCents: firstTotal } = calcFee(firstBase);
+          stage = "createCharge.master.downPayment";
+          const lpCharge = await lunarpay.createCharge({
+            customerId: lpCustomerId,
+            paymentMethodId: lpPm.data.id,
+            amount: firstTotal,
+            description,
+          });
+          chargedTodayBase = firstBase;
+          await prisma.charge.create({
+            data: {
+              clinicId: resolvedClinicId,
+              customerId: customer.id,
+              paymentMethodId: pm.id,
+              paymentLinkId: sess.id,
+              lunarpayChargeId: String(lpCharge.data.id),
+              fortisTransactionId: lpCharge.data.fortisTransactionId ?? null,
+              amountCents: lpCharge.data.amount,
+              status: lpCharge.data.status,
+              paymentMethodType: lpCharge.data.paymentMethod,
+              description: sess.description ?? null,
+            },
+          });
+        }
+      }
+
+      // 2) Second half on the chosen date when split.
+      if (isSplit && secondBase >= 50 && masterCfg.secondPaymentDate) {
+        scheduledPayments.push({
+          amount: calcFee(secondBase).totalCents,
+          date: masterCfg.secondPaymentDate,
         });
       }
 
-      // 2) Schedule the second half on the chosen date when split.
-      if (isSplit && secondBase >= 50 && masterCfg.secondPaymentDate) {
-        stage = "createSchedule.master.split";
+      // Register any deferred payments as one LunarPay schedule.
+      if (scheduledPayments.length > 0) {
+        stage = "createSchedule.master";
         const lpSchedule = await lunarpay.createSchedule({
           customerId: lpCustomerId,
           paymentMethodId: lpPm.data.id,
           description,
-          payments: [
-            {
-              amount: calcFee(secondBase).totalCents,
-              date: masterCfg.secondPaymentDate,
-            },
-          ],
+          payments: scheduledPayments,
         });
         await prisma.paymentSchedule.create({
           data: {
@@ -415,7 +447,7 @@ export async function POST(
             paymentMethodId: pm.id,
             lunarpayScheduleId: lpSchedule.data.id,
             totalAmountCents: downCents,
-            paidAmountCents: firstBase,
+            paidAmountCents: chargedTodayBase,
             status: lpSchedule.data.status,
             description: sess.description ?? null,
           },

@@ -91,7 +91,7 @@ export async function POST(
     // 2) Recreate it on the new card, preserving the schedule (no immediate
     //    charge — first cron charge is startOn + 1 cycle).
     const lpSub = await lunarpay.createSubscription({
-      customerId: sub.customer.lunarpayCustomerId,
+      customerId: pm.lunarpayCustomerId ?? sub.customer.lunarpayCustomerId,
       paymentMethodId: pm.lunarpayPaymentMethodId,
       amount: sub.amountCents,
       frequency,

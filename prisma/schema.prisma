@@ -155,6 +155,11 @@ model PaymentMethod {
   customerId            String
   customer              Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
   lunarpayPaymentMethodId Int    @unique
+  // LunarPay customer that actually owns this vaulted card. Normally equals the
+  // owning Customer's lunarpayCustomerId, but if the card is reassigned to a
+  // different RevOS profile this preserves the real vault owner so charges
+  // still route to the correct LunarPay customer.
+  lunarpayCustomerId    Int?
   sourceType            String   // "cc" | "ach"
   lastDigits            String?
   nameHolder            String?

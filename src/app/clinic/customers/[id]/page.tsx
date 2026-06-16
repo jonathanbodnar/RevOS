@@ -9,10 +9,12 @@ import { NewSubscriptionForm } from "./new-subscription";
 import { RefundButton } from "./refund-button";
 import { CancelSubscriptionButton } from "./cancel-subscription";
 import { SwapCardButton } from "./swap-card-button";
+import { RescheduleSubscriptionButton } from "./reschedule-subscription";
 import { CancelScheduleButton } from "./cancel-schedule";
 import { DeleteCustomerButton } from "./delete-customer-button";
 import { HoldsSection } from "./holds-section";
 import { CustomerAttribution } from "./customer-attribution";
+import { EditCustomerButton } from "./edit-customer";
 
 export default async function CustomerDetailPage({
   params,
@@ -37,6 +39,25 @@ export default async function CustomerDetailPage({
     },
   });
   if (!customer) notFound();
+
+  // Other patients in this clinic — used as reassign targets for saved cards
+  // (super-admin only). Kept lightweight (id + label).
+  const otherCustomers = canPerformSensitiveActions
+    ? (
+        await prisma.customer.findMany({
+          where: { clinicId, id: { not: customer.id } },
+          orderBy: [{ lastName: "asc" }, { firstName: "asc" }],
+          select: { id: true, firstName: true, lastName: true, email: true },
+          take: 1000,
+        })
+      ).map((c) => ({
+        id: c.id,
+        label:
+          [c.firstName, c.lastName].filter(Boolean).join(" ").trim() ||
+          c.email ||
+          c.id,
+      }))
+    : [];
 
   // Implementor options (super-admin attribution UI only).
   const implementors = canPerformSensitiveActions
@@ -92,7 +113,18 @@ export default async function CustomerDetailPage({
           )}
         </div>
         {canPerformSensitiveActions && (
-          <DeleteCustomerButton customerId={customer.id} customerName={fullName} />
+          <div className="flex items-center gap-2">
+            <EditCustomerButton
+              customerId={customer.id}
+              initial={{
+                firstName: customer.firstName,
+                lastName: customer.lastName,
+                email: customer.email,
+                phone: customer.phone,
+              }}
+            />
+            <DeleteCustomerButton customerId={customer.id} customerName={fullName} />
+          </div>
         )}
       </div>
 
@@ -102,6 +134,8 @@ export default async function CustomerDetailPage({
             customerId={customer.id}
             existingUpdateCardUrl={existingUpdateCardLink?.url ?? null}
             canRemoveCard={canPerformSensitiveActions}
+            canReassign={canPerformSensitiveActions}
+            otherCustomers={otherCustomers}
             methods={customer.paymentMethods.map((m) => ({
               id: m.id,
               lunarpayPaymentMethodId: m.lunarpayPaymentMethodId,
@@ -250,6 +284,14 @@ export default async function CustomerDetailPage({
                     <td className="text-right pr-3">
                       {s.status === "active" && canPerformSensitiveActions && (
                         <div className="flex items-center justify-end gap-1">
+                          <RescheduleSubscriptionButton
+                            subscriptionId={s.id}
+                            currentNextPaymentOn={
+                              s.nextPaymentOn
+                                ? s.nextPaymentOn.toISOString()
+                                : null
+                            }
+                          />
                           <SwapCardButton
                             subscriptionId={s.id}
                             currentPaymentMethodId={s.paymentMethodId}

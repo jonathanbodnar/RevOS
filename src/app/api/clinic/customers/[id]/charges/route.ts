@@ -61,7 +61,7 @@ export async function POST(
   try {
     const { totalCents } = calcFee(cents);
     const lp = await lunarpay.createCharge({
-      customerId: customer.lunarpayCustomerId,
+      customerId: pm.lunarpayCustomerId ?? customer.lunarpayCustomerId,
       paymentMethodId: pm.lunarpayPaymentMethodId,
       amount: totalCents,
       description,

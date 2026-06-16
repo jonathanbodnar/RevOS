@@ -21,16 +21,21 @@ export function PaymentMethods({
   methods,
   existingUpdateCardUrl,
   canRemoveCard = false,
+  canReassign = false,
+  otherCustomers = [],
 }: {
   customerId: string;
   methods: MethodView[];
   existingUpdateCardUrl: string | null;
   canRemoveCard?: boolean;
+  canReassign?: boolean;
+  otherCustomers?: { id: string; label: string }[];
 }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
   const [adding, setAdding] = useState(false);
   const [settingDefaultId, setSettingDefaultId] = useState<string | null>(null);
+  const [reassignId, setReassignId] = useState<string | null>(null);
 
   // Update-card link state
   const [updateCardUrl, setUpdateCardUrl] = useState<string | null>(
@@ -162,6 +167,15 @@ export function PaymentMethods({
                     {settingDefaultId === m.id ? "Saving…" : "Set default"}
                   </button>
                 )}
+                {canReassign && otherCustomers.length > 0 && (
+                  <button
+                    className="btn-ghost text-xs px-2 py-1"
+                    disabled={pending}
+                    onClick={() => setReassignId(m.id)}
+                  >
+                    Reassign
+                  </button>
+                )}
                 {canRemoveCard && (
                   <button
                     className="btn-ghost text-red-600 hover:bg-red-50 text-xs"
@@ -236,6 +250,156 @@ export function PaymentMethods({
           }}
         />
       )}
+
+      {reassignId && (
+        <ReassignModal
+          customerId={customerId}
+          pmId={reassignId}
+          method={methods.find((m) => m.id === reassignId) ?? null}
+          otherCustomers={otherCustomers}
+          onClose={() => setReassignId(null)}
+          onDone={(targetId) => {
+            setReassignId(null);
+            // The card now lives on another profile — send the admin there.
+            startTransition(() => router.push(`/clinic/customers/${targetId}`));
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+function ReassignModal({
+  customerId,
+  pmId,
+  method,
+  otherCustomers,
+  onClose,
+  onDone,
+}: {
+  customerId: string;
+  pmId: string;
+  method: MethodView | null;
+  otherCustomers: { id: string; label: string }[];
+  onClose: () => void;
+  onDone: (targetCustomerId: string) => void;
+}) {
+  const [query, setQuery] = useState("");
+  const [target, setTarget] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const filtered = query.trim()
+    ? otherCustomers.filter((c) =>
+        c.label.toLowerCase().includes(query.trim().toLowerCase()),
+      )
+    : otherCustomers;
+
+  async function submit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!target) return;
+    setError(null);
+    setBusy(true);
+    const res = await fetch(
+      `/api/clinic/customers/${customerId}/payment-methods/${pmId}/reassign`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ targetCustomerId: target }),
+      },
+    );
+    setBusy(false);
+    if (!res.ok) {
+      const d = (await res.json().catch(() => ({}))) as { error?: string };
+      setError(d.error || "Failed to reassign.");
+      return;
+    }
+    onDone(target);
+  }
+
+  const label = method
+    ? `${method.sourceType === "ach" ? "Bank" : "Card"} •••• ${method.lastDigits ?? "????"}`
+    : "this card";
+
+  return (
+    <div
+      className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4"
+      onClick={(e) => {
+        if (e.target === e.currentTarget && !busy) onClose();
+      }}
+    >
+      <div className="card-pad max-w-md w-full text-left">
+        <div className="flex items-center justify-between mb-3">
+          <h2 className="text-base font-semibold text-slate-900">
+            Reassign saved card
+          </h2>
+          <button
+            className="btn-ghost p-1 text-slate-400 hover:text-slate-600"
+            onClick={() => !busy && onClose()}
+            aria-label="Close"
+          >
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
+
+        <p className="text-xs text-slate-500 mb-4">
+          Move <span className="font-medium text-slate-700">{label}</span> to
+          another patient in this clinic. The card keeps charging the same
+          underlying account — future charges are just attributed to the new
+          patient.
+        </p>
+
+        <form onSubmit={submit} className="space-y-4">
+          <div>
+            <label className="label">Search patients</label>
+            <input
+              className="input mb-2"
+              placeholder="Name or email…"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+            />
+            <select
+              className="input"
+              value={target}
+              onChange={(e) => setTarget(e.target.value)}
+              size={6}
+            >
+              {filtered.length === 0 && <option disabled>No matches</option>}
+              {filtered.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.label}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          {error && (
+            <div className="text-sm text-red-600 bg-red-50 border border-red-100 rounded-md px-3 py-2">
+              {error}
+            </div>
+          )}
+
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              className="btn-secondary flex-1"
+              onClick={() => !busy && onClose()}
+              disabled={busy}
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              className="btn-primary flex-1"
+              disabled={busy || !target}
+            >
+              {busy ? "Moving…" : "Reassign card"}
+            </button>
+          </div>
+        </form>
+      </div>
     </div>
   );
 }

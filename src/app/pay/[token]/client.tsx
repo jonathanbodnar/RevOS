@@ -119,6 +119,10 @@ export function PayClient({
   const [splitDown, setSplitDown] = useState(false);
   const [firstAmount, setFirstAmount] = useState(""); // amount due today when split
   const [secondDate, setSecondDate] = useState("");
+  // When on, the (first) down payment is scheduled for `firstDate` instead of
+  // being charged today.
+  const [scheduleFirst, setScheduleFirst] = useState(false);
+  const [firstDate, setFirstDate] = useState("");
   const [enableSub, setEnableSub] = useState(false);
   const [subDate, setSubDate] = useState(defaultSubDateStr());
   // Selected implementor (master link dropdown). Defaults to the ?implementor= tag.
@@ -130,8 +134,8 @@ export function PayClient({
   const implementorRef = useRef(selectedImplementor);
   implementorRef.current = selectedImplementor;
 
-  const masterRef = useRef({ downPayment, splitDown, firstAmount, secondDate, enableSub, subDate });
-  masterRef.current = { downPayment, splitDown, firstAmount, secondDate, enableSub, subDate };
+  const masterRef = useRef({ downPayment, splitDown, firstAmount, secondDate, scheduleFirst, firstDate, enableSub, subDate });
+  masterRef.current = { downPayment, splitDown, firstAmount, secondDate, scheduleFirst, firstDate, enableSub, subDate };
 
   const mountRef = useRef<HTMLDivElement | null>(null);
   const elementsRef = useRef<FortisElementsInstance | null>(null);
@@ -210,6 +214,7 @@ export function PayClient({
                 downPaymentCents: number;
                 split: boolean;
                 firstPaymentCents?: number;
+                firstPaymentDate?: string;
                 secondPaymentDate?: string;
                 subscription: boolean;
                 subscriptionDate?: string;
@@ -263,10 +268,19 @@ export function PayClient({
               }
             }
             const useSplit = m.splitDown && downCents > 0;
+            // Optionally defer the first/down payment to a chosen date.
+            const deferFirst = m.scheduleFirst && downCents > 0;
+            if (deferFirst && !m.firstDate) {
+              setStatus("error");
+              setError("Please choose a date for the first payment.");
+              p.submitted = false;
+              return;
+            }
             masterPayload = {
               downPaymentCents: downCents,
               split: useSplit,
               firstPaymentCents: useSplit ? firstCents : undefined,
+              firstPaymentDate: deferFirst ? m.firstDate : undefined,
               secondPaymentDate: useSplit ? m.secondDate : undefined,
               subscription: m.enableSub,
               subscriptionDate: m.enableSub ? m.subDate : undefined,
@@ -453,7 +467,9 @@ export function PayClient({
       : toCents(firstAmount) ?? 0
     : downCents;
   const secondBaseCents = splitDown ? Math.max(0, downCents - firstBaseCents) : 0;
-  const dueTodayCents = firstBaseCents >= 50 ? calcFee(firstBaseCents).totalCents : 0;
+  const firstScheduled = scheduleFirst && downCents > 0;
+  const firstTotalCents = firstBaseCents >= 50 ? calcFee(firstBaseCents).totalCents : 0;
+  const dueTodayCents = firstScheduled ? 0 : firstTotalCents;
   const secondTotalCents = secondBaseCents >= 50 ? calcFee(secondBaseCents).totalCents : 0;
   const subTotalCents = calcFee(MASTER_SUBSCRIPTION_CENTS).totalCents;
 
@@ -550,6 +566,41 @@ export function PayClient({
             </div>
           )}
 
+          {/* Schedule the first/down payment for later instead of charging now */}
+          {downCents > 0 && (
+            <>
+              <button
+                type="button"
+                onClick={() => !fieldsDisabled && setScheduleFirst((v) => !v)}
+                className="flex w-full items-center justify-between gap-3 text-left"
+              >
+                <span className="text-sm text-slate-700">
+                  Schedule the {splitDown ? "first " : "down "}payment for later
+                </span>
+                <Switch on={scheduleFirst} />
+              </button>
+              {scheduleFirst && (
+                <div>
+                  <label className="label">
+                    {splitDown ? "First payment date" : "Down payment date"}
+                  </label>
+                  <input
+                    type="date"
+                    className="input"
+                    value={firstDate}
+                    min={new Date().toISOString().slice(0, 10)}
+                    onChange={(e) => setFirstDate(e.target.value)}
+                    disabled={fieldsDisabled}
+                  />
+                  <p className="text-xs text-slate-500 mt-1">
+                    Nothing is charged today — this payment runs on the date you
+                    choose.
+                  </p>
+                </div>
+              )}
+            </>
+          )}
+
           {/* Subscription toggle */}
           <button
             type="button"
@@ -579,11 +630,20 @@ export function PayClient({
           {(downCents >= 50 || enableSub) && (
             <ul className="text-sm text-slate-600 space-y-1 border-t border-slate-200 pt-3">
               <li className="flex justify-between">
-                <span>Due today{splitDown && downCents > 0 ? " (1st payment)" : ""}</span>
+                <span>Due today{splitDown && downCents > 0 && !firstScheduled ? " (1st payment)" : ""}</span>
                 <span className="tabular-nums font-medium text-slate-900">
                   {fmtMoney(dueTodayCents)}
                 </span>
               </li>
+              {firstScheduled && firstTotalCents > 0 && (
+                <li className="flex justify-between text-slate-500 text-xs">
+                  <span>
+                    {splitDown ? "1st payment" : "Down payment"}
+                    {firstDate ? ` · ${firstDate}` : ""}
+                  </span>
+                  <span className="tabular-nums">{fmtMoney(firstTotalCents)}</span>
+                </li>
+              )}
               {splitDown && downCents > 0 && secondTotalCents > 0 && (
                 <li className="flex justify-between text-slate-500 text-xs">
                   <span>2nd payment{secondDate ? ` · ${secondDate}` : ""}</span>

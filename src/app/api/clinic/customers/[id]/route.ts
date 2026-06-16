@@ -4,10 +4,15 @@ import { prisma } from "@/lib/prisma";
 import { requireSuperAdminClinicApi } from "@/lib/api-guard";
 import { requireStringParams } from "@/lib/route-params";
 import { logAudit } from "@/lib/audit";
+import { lunarpay } from "@/lib/lunarpay";
 
 const PatchBody = z.object({
   implementorId: z.string().nullable().optional(),
   paymentNotes: z.string().max(2000).nullable().optional(),
+  firstName: z.string().max(120).nullable().optional(),
+  lastName: z.string().max(120).nullable().optional(),
+  email: z.string().email().max(255).nullable().optional(),
+  phone: z.string().max(40).nullable().optional(),
 });
 
 export async function PATCH(
@@ -42,15 +47,38 @@ export async function PATCH(
     }
   }
 
+  const d = parsed.data;
+  const profileChanged =
+    d.firstName !== undefined ||
+    d.lastName !== undefined ||
+    d.email !== undefined ||
+    d.phone !== undefined;
+
+  // Keep LunarPay's customer record in sync so receipts / dashboards match.
+  // Non-fatal — a LunarPay hiccup shouldn't block updating our own record.
+  if (profileChanged && customer.lunarpayCustomerId) {
+    try {
+      await lunarpay.updateCustomer(customer.lunarpayCustomerId, {
+        ...(d.firstName !== undefined ? { firstName: d.firstName ?? "" } : {}),
+        ...(d.lastName !== undefined ? { lastName: d.lastName ?? "" } : {}),
+        ...(d.email !== undefined ? { email: d.email ?? "" } : {}),
+        ...(d.phone !== undefined ? { phone: d.phone ?? "" } : {}),
+      });
+    } catch (e) {
+      // eslint-disable-next-line no-console
+      console.error("[customer.update] LunarPay sync failed", e);
+    }
+  }
+
   const updated = await prisma.customer.update({
     where: { id },
     data: {
-      ...(parsed.data.implementorId !== undefined
-        ? { implementorId: parsed.data.implementorId }
-        : {}),
-      ...(parsed.data.paymentNotes !== undefined
-        ? { paymentNotes: parsed.data.paymentNotes }
-        : {}),
+      ...(d.implementorId !== undefined ? { implementorId: d.implementorId } : {}),
+      ...(d.paymentNotes !== undefined ? { paymentNotes: d.paymentNotes } : {}),
+      ...(d.firstName !== undefined ? { firstName: d.firstName } : {}),
+      ...(d.lastName !== undefined ? { lastName: d.lastName } : {}),
+      ...(d.email !== undefined ? { email: d.email } : {}),
+      ...(d.phone !== undefined ? { phone: d.phone } : {}),
     },
   });
 
@@ -58,12 +86,13 @@ export async function PATCH(
     actorId: session.user.id,
     actorRole: session.user.originalRole,
     clinicId,
-    action: "customer.update.reporting",
+    action: profileChanged ? "customer.update.profile" : "customer.update.reporting",
     targetType: "Customer",
     targetId: id,
     metadata: {
-      implementorId: parsed.data.implementorId,
-      hasNotes: parsed.data.paymentNotes != null,
+      implementorId: d.implementorId,
+      hasNotes: d.paymentNotes != null,
+      profileChanged,
     },
   });
 
