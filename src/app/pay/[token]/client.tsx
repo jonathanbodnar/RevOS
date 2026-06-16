@@ -123,6 +123,9 @@ export function PayClient({
   // being charged today.
   const [scheduleFirst, setScheduleFirst] = useState(false);
   const [firstDate, setFirstDate] = useState("");
+  // Care credit = clinic-financed, logged but NOT charged here.
+  const [firstCareCredit, setFirstCareCredit] = useState(false);
+  const [secondCareCredit, setSecondCareCredit] = useState(false);
   const [enableSub, setEnableSub] = useState(false);
   const [subDate, setSubDate] = useState(defaultSubDateStr());
   // Selected implementor (master link dropdown). Defaults to the ?implementor= tag.
@@ -134,8 +137,8 @@ export function PayClient({
   const implementorRef = useRef(selectedImplementor);
   implementorRef.current = selectedImplementor;
 
-  const masterRef = useRef({ downPayment, splitDown, firstAmount, secondDate, scheduleFirst, firstDate, enableSub, subDate });
-  masterRef.current = { downPayment, splitDown, firstAmount, secondDate, scheduleFirst, firstDate, enableSub, subDate };
+  const masterRef = useRef({ downPayment, splitDown, firstAmount, secondDate, scheduleFirst, firstDate, firstCareCredit, secondCareCredit, enableSub, subDate });
+  masterRef.current = { downPayment, splitDown, firstAmount, secondDate, scheduleFirst, firstDate, firstCareCredit, secondCareCredit, enableSub, subDate };
 
   const mountRef = useRef<HTMLDivElement | null>(null);
   const elementsRef = useRef<FortisElementsInstance | null>(null);
@@ -216,6 +219,8 @@ export function PayClient({
                 firstPaymentCents?: number;
                 firstPaymentDate?: string;
                 secondPaymentDate?: string;
+                firstIsCareCredit?: boolean;
+                secondIsCareCredit?: boolean;
                 subscription: boolean;
                 subscriptionDate?: string;
               }
@@ -239,8 +244,11 @@ export function PayClient({
               p.submitted = false;
               return;
             }
+            const useSplit = m.splitDown && downCents > 0;
+            const firstCC = downCents > 0 && m.firstCareCredit;
+            const secondCC = useSplit && m.secondCareCredit;
             let firstCents: number | undefined;
-            if (m.splitDown && downCents > 0) {
+            if (useSplit) {
               if (downCents < 100) {
                 setStatus("error");
                 setError("A split down payment must be at least $1.00 total.");
@@ -260,16 +268,18 @@ export function PayClient({
                 p.submitted = false;
                 return;
               }
-              if (!m.secondDate) {
+              // A second-payment date is only needed if it's actually charged
+              // (not care credit).
+              if (!secondCC && !m.secondDate) {
                 setStatus("error");
                 setError("Please choose a date for the second payment.");
                 p.submitted = false;
                 return;
               }
             }
-            const useSplit = m.splitDown && downCents > 0;
-            // Optionally defer the first/down payment to a chosen date.
-            const deferFirst = m.scheduleFirst && downCents > 0;
+            // Optionally defer the first/down payment to a chosen date — not
+            // applicable when the first payment is care credit (never charged).
+            const deferFirst = m.scheduleFirst && downCents > 0 && !firstCC;
             if (deferFirst && !m.firstDate) {
               setStatus("error");
               setError("Please choose a date for the first payment.");
@@ -281,7 +291,9 @@ export function PayClient({
               split: useSplit,
               firstPaymentCents: useSplit ? firstCents : undefined,
               firstPaymentDate: deferFirst ? m.firstDate : undefined,
-              secondPaymentDate: useSplit ? m.secondDate : undefined,
+              secondPaymentDate: useSplit && !secondCC ? m.secondDate : undefined,
+              firstIsCareCredit: firstCC,
+              secondIsCareCredit: secondCC,
               subscription: m.enableSub,
               subscriptionDate: m.enableSub ? m.subDate : undefined,
             };
@@ -467,10 +479,15 @@ export function PayClient({
       : toCents(firstAmount) ?? 0
     : downCents;
   const secondBaseCents = splitDown ? Math.max(0, downCents - firstBaseCents) : 0;
-  const firstScheduled = scheduleFirst && downCents > 0;
+  const firstCC = downCents > 0 && firstCareCredit;
+  const secondCC = splitDown && downCents > 0 && secondCareCredit;
+  const firstScheduled = scheduleFirst && downCents > 0 && !firstCC;
   const firstTotalCents = firstBaseCents >= 50 ? calcFee(firstBaseCents).totalCents : 0;
-  const dueTodayCents = firstScheduled ? 0 : firstTotalCents;
-  const secondTotalCents = secondBaseCents >= 50 ? calcFee(secondBaseCents).totalCents : 0;
+  const dueTodayCents = firstScheduled || firstCC ? 0 : firstTotalCents;
+  const secondTotalCents =
+    !secondCC && secondBaseCents >= 50 ? calcFee(secondBaseCents).totalCents : 0;
+  // Care-credit amounts are logged at their base value (no processing fee).
+  const careCreditCents = (firstCC ? firstBaseCents : 0) + (secondCC ? secondBaseCents : 0);
   const subTotalCents = calcFee(MASTER_SUBSCRIPTION_CENTS).totalCents;
 
   return (
@@ -518,6 +535,20 @@ export function PayClient({
             </p>
           </div>
 
+          {/* Care-credit toggle for a non-split down payment */}
+          {downCents > 0 && !splitDown && (
+            <button
+              type="button"
+              onClick={() => !fieldsDisabled && setFirstCareCredit((v) => !v)}
+              className="flex w-full items-center justify-between gap-3 text-left"
+            >
+              <span className="text-sm text-slate-700">
+                Down payment is care credit (financed — not charged here)
+              </span>
+              <Switch on={firstCareCredit} />
+            </button>
+          )}
+
           {/* Split toggle — only relevant with a down payment */}
           {downCents > 0 && (
           <button
@@ -532,42 +563,63 @@ export function PayClient({
           </button>
           )}
           {splitDown && downCents > 0 && (
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label className="label">Amount due today</label>
-                <div className="relative">
-                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400">$</span>
-                  <input
-                    className="input pl-7"
-                    inputMode="decimal"
-                    placeholder={
-                      downCents >= 100 ? (downCents / 200).toFixed(2) : "0.00"
-                    }
-                    value={firstAmount}
-                    onChange={(e) => setFirstAmount(e.target.value)}
-                    disabled={fieldsDisabled}
-                  />
+            <div className="space-y-3">
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="label">First payment{firstCC ? " (care credit)" : ""}</label>
+                  <div className="relative">
+                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400">$</span>
+                    <input
+                      className="input pl-7"
+                      inputMode="decimal"
+                      placeholder={
+                        downCents >= 100 ? (downCents / 200).toFixed(2) : "0.00"
+                      }
+                      value={firstAmount}
+                      onChange={(e) => setFirstAmount(e.target.value)}
+                      disabled={fieldsDisabled}
+                    />
+                  </div>
+                  <p className="text-xs text-slate-500 mt-1">
+                    Remainder: {fmtMoney(Math.max(0, secondBaseCents))}
+                  </p>
                 </div>
-                <p className="text-xs text-slate-500 mt-1">
-                  Remainder: {fmtMoney(Math.max(0, secondBaseCents))}
-                </p>
+                <div>
+                  <label className="label">Second payment date</label>
+                  <input
+                    type="date"
+                    className="input disabled:opacity-50"
+                    value={secondDate}
+                    min={new Date(Date.now() + 86400000).toISOString().slice(0, 10)}
+                    onChange={(e) => setSecondDate(e.target.value)}
+                    disabled={fieldsDisabled || secondCC}
+                  />
+                  {secondCC && (
+                    <p className="text-xs text-slate-500 mt-1">Care credit — no charge.</p>
+                  )}
+                </div>
               </div>
-              <div>
-                <label className="label">Second payment date</label>
-                <input
-                  type="date"
-                  className="input"
-                  value={secondDate}
-                  min={new Date(Date.now() + 86400000).toISOString().slice(0, 10)}
-                  onChange={(e) => setSecondDate(e.target.value)}
-                  disabled={fieldsDisabled}
-                />
-              </div>
+              <button
+                type="button"
+                onClick={() => !fieldsDisabled && setFirstCareCredit((v) => !v)}
+                className="flex w-full items-center justify-between gap-3 text-left"
+              >
+                <span className="text-sm text-slate-700">First payment is care credit</span>
+                <Switch on={firstCareCredit} />
+              </button>
+              <button
+                type="button"
+                onClick={() => !fieldsDisabled && setSecondCareCredit((v) => !v)}
+                className="flex w-full items-center justify-between gap-3 text-left"
+              >
+                <span className="text-sm text-slate-700">Second payment is care credit</span>
+                <Switch on={secondCareCredit} />
+              </button>
             </div>
           )}
 
           {/* Schedule the first/down payment for later instead of charging now */}
-          {downCents > 0 && (
+          {downCents > 0 && !firstCC && (
             <>
               <button
                 type="button"
@@ -627,7 +679,7 @@ export function PayClient({
           )}
 
           {/* Live summary */}
-          {(downCents >= 50 || enableSub) && (
+          {(downCents >= 50 || enableSub || careCreditCents > 0) && (
             <ul className="text-sm text-slate-600 space-y-1 border-t border-slate-200 pt-3">
               <li className="flex justify-between">
                 <span>Due today{splitDown && downCents > 0 && !firstScheduled ? " (1st payment)" : ""}</span>
@@ -648,6 +700,12 @@ export function PayClient({
                 <li className="flex justify-between text-slate-500 text-xs">
                   <span>2nd payment{secondDate ? ` · ${secondDate}` : ""}</span>
                   <span className="tabular-nums">{fmtMoney(secondTotalCents)}</span>
+                </li>
+              )}
+              {careCreditCents > 0 && (
+                <li className="flex justify-between text-slate-500 text-xs">
+                  <span>Care credit (financed · not charged)</span>
+                  <span className="tabular-nums">{fmtMoney(careCreditCents)}</span>
                 </li>
               )}
               {enableSub && (

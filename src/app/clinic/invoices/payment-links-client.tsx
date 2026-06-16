@@ -2,7 +2,6 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import Link from "next/link";
 import { CopyButton } from "@/components/copy-button";
 import { CreateLinkModal } from "./create-link-modal";
 
@@ -167,11 +166,7 @@ export function PaymentLinksClient({
             {filtered.map((l) => {
               const totalUses = l.chargeCount + l.subscriptionCount;
               return (
-                <tr
-                  key={l.id}
-                  className="cursor-pointer"
-                  onClick={() => router.push(`/clinic/invoices/${l.id}`)}
-                >
+                <tr key={l.id}>
                   <td>
                     <span className={MODE_COLORS[l.mode] ?? "badge-slate"}>
                       {MODE_LABELS[l.mode] ?? l.mode}
@@ -225,12 +220,6 @@ export function PaymentLinksClient({
                           l.isGlobal ? `${l.url}?c=${clinicId}` : l.url
                         }
                       />
-                      <Link
-                        href={`/clinic/invoices/${l.id}`}
-                        className="btn-ghost text-xs px-2 py-1"
-                      >
-                        View →
-                      </Link>
                       {isSuperAdmin && !l.isGlobal && (
                         <button
                           type="button"

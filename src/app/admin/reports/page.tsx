@@ -4,6 +4,7 @@ import {
   resolvePeriod,
   downPaymentEconomics,
   recurringEconomics,
+  careCreditEconomics,
   monthlyFactor,
   type PeriodPreset,
 } from "@/lib/reporting";
@@ -11,6 +12,8 @@ import { ReportsFilters } from "./reports-filters";
 import { ReportActions } from "./report-actions";
 import { AdvancedCostForm } from "./advanced-cost-form";
 import { DeleteCostButton } from "./delete-cost-button";
+import { ClinicPayoutForm } from "./clinic-payout-form";
+import { DeletePayoutButton } from "./delete-payout-button";
 
 export const dynamic = "force-dynamic";
 
@@ -58,6 +61,8 @@ export default async function ReportsPage({
     ...(dateRange ? { createdAt: dateRange } : {}),
   };
   const costWhere = dateRange ? { incurredOn: dateRange } : {};
+  const careCreditWhere = dateRange ? { collectedOn: dateRange } : {};
+  const payoutWhere = dateRange ? { paidOn: dateRange } : {};
 
   // Filter options + lookups.
   const [clinics, implementors, savedReports] = await Promise.all([
@@ -89,6 +94,7 @@ export default async function ReportsPage({
         { charges: { some: chargeWhere } },
         { subscriptions: { some: { status: "active" } } },
         { advancedCosts: { some: costWhere } },
+        { careCredits: { some: careCreditWhere } },
       ],
     },
     include: {
@@ -97,6 +103,7 @@ export default async function ReportsPage({
       charges: { where: chargeWhere, orderBy: { createdAt: "asc" } },
       subscriptions: { where: { status: "active" } },
       advancedCosts: { where: costWhere, orderBy: { incurredOn: "desc" } },
+      careCredits: { where: careCreditWhere, orderBy: { collectedOn: "desc" } },
     },
     orderBy: [{ lastName: "asc" }, { firstName: "asc" }],
   });
@@ -120,6 +127,33 @@ export default async function ReportsPage({
     revosRecurringShare: 0,
     clinicRecurringShare: 0,
     advancedCosts: 0,
+    careCreditTotal: 0,
+    careCreditCount: 0,
+    careCreditRevosShare: 0,
+    careCreditClinicShare: 0,
+  };
+
+  // Per-clinic ledger for the balance RevOS owes each clinic:
+  //   balance = clinic share of RevOS-collected money
+  //           − RevOS's share of care credits (clinic already holds that cash)
+  //           − payouts already remitted.
+  const clinicLedger = new Map<
+    string,
+    {
+      name: string;
+      clinicCollectedShare: number;
+      careCreditRevosTake: number;
+      payouts: number;
+    }
+  >();
+  const ledgerFor = (cid: string | null, name: string) => {
+    if (!cid) return null;
+    let row = clinicLedger.get(cid);
+    if (!row) {
+      row = { name, clinicCollectedShare: 0, careCreditRevosTake: 0, payouts: 0 };
+      clinicLedger.set(cid, row);
+    }
+    return row;
   };
 
   type Row = {
@@ -129,6 +163,7 @@ export default async function ReportsPage({
     implementor: string | null;
     downPayments: { amount: number; date: Date }[];
     subs: { amount: number; freq: string; next: Date | null; pending: boolean }[];
+    careCredits: { amount: number; date: Date; note: string | null }[];
     refunds: number;
     notes: string | null;
     revosProfit: number;
@@ -144,6 +179,8 @@ export default async function ReportsPage({
         revosRecurringShareCents: 7500,
       };
     const commissionCents = cust.implementor ? cust.implementor.commissionCents : null;
+
+    const ledger = ledgerFor(cust.clinicId, cust.clinic?.name ?? "—");
 
     let custRevos = 0;
     let custClinic = 0;
@@ -164,6 +201,7 @@ export default async function ReportsPage({
       custRefunds += ch.refundedCents;
       custRevos += eco.revosProfitCents;
       custClinic += eco.clinicProfitCents;
+      if (ledger) ledger.clinicCollectedShare += eco.clinicShareCents;
       downPayments.push({ amount: ch.amountCents, date: ch.createdAt });
     }
 
@@ -195,6 +233,23 @@ export default async function ReportsPage({
       t.clinicRecurringShare += Math.round(eco.clinicShareCents * factor);
       custRevos += Math.round(eco.revosProfitCents * factor);
       custClinic += Math.round(eco.clinicProfitCents * factor);
+      if (ledger) ledger.clinicCollectedShare += Math.round(eco.clinicShareCents * factor);
+    }
+
+    // Care credits: split like a down payment (no fee). Counts in the share
+    // columns, but RevOS's share is OWED by the clinic, so it reduces the
+    // clinic balance rather than adding to it.
+    const careCredits: { amount: number; date: Date; note: string | null }[] = [];
+    for (const cc of cust.careCredits) {
+      const eco = careCreditEconomics(cc.amountCents, cfg);
+      t.careCreditTotal += cc.amountCents;
+      t.careCreditCount += 1;
+      t.careCreditRevosShare += eco.revosShareCents;
+      t.careCreditClinicShare += eco.clinicShareCents;
+      custRevos += eco.revosShareCents;
+      custClinic += eco.clinicShareCents;
+      if (ledger) ledger.careCreditRevosTake += eco.revosShareCents;
+      careCredits.push({ amount: cc.amountCents, date: cc.collectedOn, note: cc.note });
     }
 
     // Advanced costs roll into the aggregate RevOS NET, not the per-patient
@@ -213,6 +268,7 @@ export default async function ReportsPage({
       implementor: cust.implementor?.name ?? null,
       downPayments,
       subs,
+      careCredits,
       refunds: custRefunds,
       notes: cust.paymentNotes,
       revosProfit: custRevos,
@@ -243,10 +299,42 @@ export default async function ReportsPage({
   });
   for (const ac of clinicLevelCosts) t.advancedCosts += ac.amountCents;
 
-  // Headline split: clean 50/50 of the post-fee base (down + recurring).
-  const revosShareTotal = t.revosDownShare + t.revosRecurringShare;
-  const clinicProfit = t.clinicDownShare + t.clinicRecurringShare;
+  // Clinic payouts in scope — fold into the ledger and keep a list for display.
+  const payouts = await prisma.clinicPayout.findMany({
+    where: {
+      ...(clinicId ? { clinicId } : {}),
+      ...payoutWhere,
+    },
+    include: { clinic: { select: { id: true, name: true } } },
+    orderBy: { paidOn: "desc" },
+  });
+  let payoutsTotal = 0;
+  for (const p of payouts) {
+    payoutsTotal += p.amountCents;
+    const row = ledgerFor(p.clinicId, p.clinic?.name ?? "—");
+    if (row) row.payouts += p.amountCents;
+  }
+
+  // Clinic balances (what RevOS still owes each clinic) within scope.
+  const clinicBalances = Array.from(clinicLedger.entries())
+    .map(([id, v]) => ({
+      id,
+      name: v.name,
+      clinicCollectedShare: v.clinicCollectedShare,
+      careCreditRevosTake: v.careCreditRevosTake,
+      payouts: v.payouts,
+      balanceDue: v.clinicCollectedShare - v.careCreditRevosTake - v.payouts,
+    }))
+    .sort((a, b) => b.balanceDue - a.balanceDue);
+  const totalBalanceDue = clinicBalances.reduce((s, c) => s + c.balanceDue, 0);
+
+  // Headline split: post-fee base split (down + recurring) plus care credit.
+  const revosShareTotal =
+    t.revosDownShare + t.revosRecurringShare + t.careCreditRevosShare;
+  const clinicProfit =
+    t.clinicDownShare + t.clinicRecurringShare + t.careCreditClinicShare;
   // RevOS NET = its share + processing-fee residual − commissions − advanced costs.
+  // (Care-credit RevOS share is already in revosShareTotal; it carries no fees.)
   const feeResidual =
     t.processingFeeRevenue +
     t.recurringProcessingFee -
@@ -283,6 +371,7 @@ export default async function ReportsPage({
       "Down payments",
       "Down payment dates",
       "Monthly sub",
+      "Care credit",
       "Refunds",
       "Notes",
       "RevOS share",
@@ -297,6 +386,7 @@ export default async function ReportsPage({
     const subStr = r.subs
       .map((s) => `${money(s.amount)}${freqLabel(s.freq)}${s.pending ? " (pending)" : ""}`)
       .join("; ");
+    const ccTotal = r.careCredits.reduce((s, c) => s + c.amount, 0);
     csvLines.push(
       [
         csvEsc(r.name),
@@ -305,6 +395,7 @@ export default async function ReportsPage({
         money(downTotal),
         csvEsc(downDates),
         csvEsc(subStr),
+        ccTotal > 0 ? money(ccTotal) : "",
         money(r.refunds),
         csvEsc(r.notes ?? ""),
         money(r.revosProfit),
@@ -319,9 +410,26 @@ export default async function ReportsPage({
   csvLines.push(`RevOS net (after fees & costs),${money(revosNet)}`);
   csvLines.push(`Down payments gross,${money(t.downGross)}`);
   csvLines.push(`Recurring monthly gross,${money(t.recurringMonthlyGross)}`);
+  csvLines.push(`Care credit collected,${money(t.careCreditTotal)}`);
+  csvLines.push(`Care credit RevOS take (owed by clinic),${money(t.careCreditRevosShare)}`);
   csvLines.push(`Refunds,${money(t.refunds)}`);
   csvLines.push(`Implementor commissions,${money(t.implementorCommission)}`);
   csvLines.push(`Advanced costs,${money(t.advancedCosts)}`);
+  csvLines.push(`Payouts to clinics,${money(payoutsTotal)}`);
+  csvLines.push(`Balance still owed to clinics,${money(totalBalanceDue)}`);
+  csvLines.push("");
+  csvLines.push("Clinic,Clinic share collected,Care credit RevOS take,Payouts,Balance due");
+  for (const c of clinicBalances) {
+    csvLines.push(
+      [
+        csvEsc(c.name),
+        money(c.clinicCollectedShare),
+        money(c.careCreditRevosTake),
+        money(c.payouts),
+        money(c.balanceDue),
+      ].join(","),
+    );
+  }
   const csv = csvLines.join("\n");
   const csvFilename = `revos-report-${preset}-${new Date().toISOString().slice(0, 10)}.csv`;
 
@@ -342,6 +450,16 @@ export default async function ReportsPage({
       label: "Recurring (monthly)",
       value: formatMoneyCents(t.recurringMonthlyGross),
       sub: `${t.recurringCount} billing sub${t.recurringCount === 1 ? "" : "s"} · excludes not-yet-charged`,
+    },
+    {
+      label: "Care credit",
+      value: formatMoneyCents(t.careCreditTotal),
+      sub: `${t.careCreditCount} logged · RevOS take ${formatMoneyCents(t.careCreditRevosShare)}`,
+    },
+    {
+      label: "Balance owed to clinics",
+      value: formatMoneyCents(totalBalanceDue),
+      sub: `after ${formatMoneyCents(payoutsTotal)} paid out`,
     },
     { label: "Refunds", value: formatMoneyCents(t.refunds) },
     { label: "Advanced costs", value: formatMoneyCents(t.advancedCosts) },
@@ -454,6 +572,7 @@ export default async function ReportsPage({
                   <th>Implementor</th>
                   <th>Down payment(s)</th>
                   <th>Monthly sub</th>
+                  <th>Care credit</th>
                   <th>Refunds</th>
                   <th>Notes</th>
                   <th className="text-right">RevOS</th>
@@ -463,7 +582,7 @@ export default async function ReportsPage({
               <tbody>
                 {rows.length === 0 && (
                   <tr>
-                    <td colSpan={9} className="text-center text-slate-500 py-8">
+                    <td colSpan={10} className="text-center text-slate-500 py-8">
                       No activity in this period.
                     </td>
                   </tr>
@@ -510,6 +629,20 @@ export default async function ReportsPage({
                         </div>
                       )}
                     </td>
+                    <td>
+                      {r.careCredits.length === 0 ? (
+                        <span className="text-slate-400">—</span>
+                      ) : (
+                        <div className="space-y-0.5">
+                          {r.careCredits.map((c, i) => (
+                            <div key={i} className="text-xs">
+                              {formatMoneyCents(c.amount)}
+                              <span className="text-slate-400"> · {formatDate(c.date)}</span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </td>
                     <td className="text-slate-600">
                       {r.refunds > 0 ? formatMoneyCents(r.refunds) : "—"}
                     </td>
@@ -527,6 +660,102 @@ export default async function ReportsPage({
               </tbody>
             </table>
           </div>
+        </div>
+
+        {/* Clinic balances & payouts */}
+        <div className="card overflow-hidden">
+          <div className="px-5 py-3 border-b border-line flex items-center justify-between gap-3 flex-wrap">
+            <div>
+              <h3 className="text-sm font-semibold text-slate-900">
+                Clinic balances &amp; payouts
+              </h3>
+              <p className="text-xs text-slate-500">
+                Balance due = clinic share of collected revenue − RevOS&apos;s
+                care-credit share − payouts already made. Total still owed:{" "}
+                <span className="font-medium text-slate-700">
+                  {formatMoneyCents(totalBalanceDue)}
+                </span>
+              </p>
+            </div>
+            <ClinicPayoutForm
+              clinics={clinics.map((c) => ({ id: c.id, name: c.name }))}
+              defaultClinicId={clinicId || undefined}
+            />
+          </div>
+          <div className="overflow-x-auto">
+            <table className="table">
+              <thead>
+                <tr>
+                  <th>Clinic</th>
+                  <th className="text-right">Clinic share collected</th>
+                  <th className="text-right">Care credit (RevOS take)</th>
+                  <th className="text-right">Payouts</th>
+                  <th className="text-right">Balance due</th>
+                </tr>
+              </thead>
+              <tbody>
+                {clinicBalances.length === 0 && (
+                  <tr>
+                    <td colSpan={5} className="text-center text-slate-500 py-6">
+                      No clinic activity in this period.
+                    </td>
+                  </tr>
+                )}
+                {clinicBalances.map((c) => (
+                  <tr key={c.id}>
+                    <td className="font-medium text-slate-900">{c.name}</td>
+                    <td className="text-right text-slate-600">
+                      {formatMoneyCents(c.clinicCollectedShare)}
+                    </td>
+                    <td className="text-right text-slate-600">
+                      {c.careCreditRevosTake > 0
+                        ? `−${formatMoneyCents(c.careCreditRevosTake)}`
+                        : "—"}
+                    </td>
+                    <td className="text-right text-slate-600">
+                      {c.payouts > 0 ? `−${formatMoneyCents(c.payouts)}` : "—"}
+                    </td>
+                    <td className="text-right font-semibold text-slate-900">
+                      {formatMoneyCents(c.balanceDue)}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          {payouts.length > 0 && (
+            <div className="border-t border-line">
+              <div className="px-5 py-2 text-xs font-medium text-slate-500">
+                Payouts in this period
+              </div>
+              <table className="table">
+                <thead>
+                  <tr>
+                    <th>Date</th>
+                    <th>Clinic</th>
+                    <th>Note</th>
+                    <th className="text-right">Amount</th>
+                    <th className="text-right print-hidden">·</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {payouts.map((p) => (
+                    <tr key={p.id}>
+                      <td className="text-slate-600">{formatDate(p.paidOn)}</td>
+                      <td className="text-slate-600">{p.clinic?.name ?? "—"}</td>
+                      <td className="text-slate-600">{p.note || "—"}</td>
+                      <td className="text-right font-medium">
+                        {formatMoneyCents(p.amountCents)}
+                      </td>
+                      <td className="text-right print-hidden">
+                        <DeletePayoutButton id={p.id} />
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
         </div>
 
         {/* Advanced costs */}

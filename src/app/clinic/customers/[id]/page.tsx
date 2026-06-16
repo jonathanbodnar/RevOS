@@ -11,10 +11,13 @@ import { CancelSubscriptionButton } from "./cancel-subscription";
 import { SwapCardButton } from "./swap-card-button";
 import { RescheduleSubscriptionButton } from "./reschedule-subscription";
 import { CancelScheduleButton } from "./cancel-schedule";
+import { RescheduleInstallmentButton } from "./reschedule-installment";
 import { DeleteCustomerButton } from "./delete-customer-button";
 import { HoldsSection } from "./holds-section";
 import { CustomerAttribution } from "./customer-attribution";
+import { CareCredits } from "./care-credits";
 import { EditCustomerButton } from "./edit-customer";
+import { MergeCustomerButton } from "./merge-customer";
 
 export default async function CustomerDetailPage({
   params,
@@ -36,6 +39,7 @@ export default async function CustomerDetailPage({
       charges: { orderBy: { createdAt: "desc" }, take: 50 },
       subscriptions: { orderBy: { createdAt: "desc" } },
       schedules: { orderBy: { createdAt: "desc" } },
+      careCredits: { orderBy: { collectedOn: "desc" } },
     },
   });
   if (!customer) notFound();
@@ -122,6 +126,10 @@ export default async function CustomerDetailPage({
                 email: customer.email,
                 phone: customer.phone,
               }}
+            />
+            <MergeCustomerButton
+              customerId={customer.id}
+              otherCustomers={otherCustomers}
             />
             <DeleteCustomerButton customerId={customer.id} customerName={fullName} />
           </div>
@@ -372,7 +380,10 @@ export default async function CustomerDetailPage({
                     </td>
                     <td className="text-right pr-3">
                       {s.status === "active" && canPerformSensitiveActions && (
-                        <CancelScheduleButton scheduleId={s.id} />
+                        <div className="flex items-center justify-end gap-1">
+                          <RescheduleInstallmentButton scheduleId={s.id} />
+                          <CancelScheduleButton scheduleId={s.id} />
+                        </div>
                       )}
                     </td>
                   </tr>
@@ -389,6 +400,18 @@ export default async function CustomerDetailPage({
               implementors={implementors}
               currentImplementorId={customer.implementorId}
               currentNotes={customer.paymentNotes}
+            />
+          )}
+          {canPerformSensitiveActions && (
+            <CareCredits
+              customerId={customer.id}
+              entries={customer.careCredits.map((cc) => ({
+                id: cc.id,
+                amountCents: cc.amountCents,
+                collectedOn: cc.collectedOn.toISOString(),
+                note: cc.note,
+                source: cc.source,
+              }))}
             />
           )}
           <NewChargeForm

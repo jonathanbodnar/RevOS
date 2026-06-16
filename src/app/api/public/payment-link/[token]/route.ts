@@ -66,6 +66,9 @@ const Body = z.object({
       // for that date instead of charged immediately at checkout.
       firstPaymentDate: z.string().optional(),
       secondPaymentDate: z.string().optional(), // "YYYY-MM-DD", required if split
+      // Care credit = financed by the clinic externally: logged, NOT charged.
+      firstIsCareCredit: z.boolean().optional(),
+      secondIsCareCredit: z.boolean().optional(),
       subscription: z.boolean(),
       subscriptionDate: z.string().optional(), // "YYYY-MM-DD"; defaults to +30 days
     })
@@ -384,13 +387,22 @@ export async function POST(
         );
       }
 
+      // Care-credit flags: such payments are financed by the clinic externally
+      // and are LOGGED, never charged through Fortis.
+      const firstIsCareCredit = !!masterCfg.firstIsCareCredit && firstBase >= 1;
+      const secondIsCareCredit =
+        isSplit && !!masterCfg.secondIsCareCredit && secondBase >= 1;
+
       // Collect every payment that should be scheduled (vs charged today) so we
       // can register them in a single LunarPay payment-schedule.
       const scheduledPayments: { amount: number; date: string }[] = [];
       let chargedTodayBase = 0;
+      const careCreditLogs: { amountCents: number }[] = [];
 
-      // 1) First/down payment: charge today, or schedule it for the chosen date.
-      if (firstBase >= 50) {
+      // 1) First/down payment: care credit (log only), charge today, or schedule.
+      if (firstIsCareCredit) {
+        careCreditLogs.push({ amountCents: firstBase });
+      } else if (firstBase >= 50) {
         if (deferFirst && masterCfg.firstPaymentDate) {
           scheduledPayments.push({
             amount: calcFee(firstBase).totalCents,
@@ -423,11 +435,27 @@ export async function POST(
         }
       }
 
-      // 2) Second half on the chosen date when split.
-      if (isSplit && secondBase >= 50 && masterCfg.secondPaymentDate) {
+      // 2) Second half: care credit (log only) or scheduled on the chosen date.
+      if (secondIsCareCredit) {
+        careCreditLogs.push({ amountCents: secondBase });
+      } else if (isSplit && secondBase >= 50 && masterCfg.secondPaymentDate) {
         scheduledPayments.push({
           amount: calcFee(secondBase).totalCents,
           date: masterCfg.secondPaymentDate,
+        });
+      }
+
+      // Log any care-credit payments (no Fortis charge — clinic financed it).
+      for (const log of careCreditLogs) {
+        await prisma.careCredit.create({
+          data: {
+            clinicId: resolvedClinicId,
+            customerId: customer.id,
+            amountCents: log.amountCents,
+            collectedOn: new Date(),
+            source: "master_link",
+            note: "Care credit (master link)",
+          },
         });
       }
 
@@ -450,6 +478,7 @@ export async function POST(
             paidAmountCents: chargedTodayBase,
             status: lpSchedule.data.status,
             description: sess.description ?? null,
+            paymentsJson: JSON.stringify(scheduledPayments),
           },
         });
       }
@@ -503,6 +532,7 @@ export async function POST(
           downPaymentCents: downCents,
           split: masterCfg.split,
           subscription: masterCfg.subscription,
+          careCreditCents: careCreditLogs.reduce((s, l) => s + l.amountCents, 0),
           customerId: customer.id,
         },
       });

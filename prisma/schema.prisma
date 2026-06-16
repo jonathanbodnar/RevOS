@@ -62,6 +62,8 @@ model Clinic {
   checkoutSessions CheckoutSession[]
   auditLogs  AuditLog[]
   advancedCosts AdvancedCost[]
+  careCredits CareCredit[]
+  payouts    ClinicPayout[]
 }
 
 // Sales implementors. Customers are attributed to an implementor either via
@@ -111,10 +113,54 @@ model Customer {
   schedules           PaymentSchedule[]
   checkoutSessions    CheckoutSession[]
   advancedCosts       AdvancedCost[]
+  careCredits         CareCredit[]
 
   @@index([clinicId])
   @@index([email])
   @@index([implementorId])
+}
+
+// A Care Credit payment is money the patient paid the CLINIC directly through
+// external financing (e.g. CareCredit). RevOS never touches the cash and the
+// customer/Fortis is NOT charged — it is a manual log only.
+//
+// In reporting it is split exactly like a down payment (clinic's
+// revosDownPaymentSharePct, default 50/50), with NO processing fee since no
+// card was run. Because the clinic already holds the full amount, RevOS is OWED
+// its share — so RevOS's care-credit share is SUBTRACTED from the balance RevOS
+// owes the clinic.
+model CareCredit {
+  id          String    @id @default(cuid())
+  clinicId    String?
+  clinic      Clinic?   @relation(fields: [clinicId], references: [id], onDelete: SetNull)
+  customerId  String
+  customer    Customer  @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  amountCents Int
+  collectedOn DateTime  @default(now())
+  note        String?
+  // "manual" (logged in the customer profile) | "master_link" (marked on a
+  // master payment link at checkout).
+  source      String    @default("manual")
+  createdById String?
+  createdAt   DateTime  @default(now())
+
+  @@index([clinicId])
+  @@index([customerId])
+}
+
+// A payout RevOS has remitted to a clinic. Reduces the running balance RevOS
+// owes the clinic in the reporting center.
+model ClinicPayout {
+  id          String    @id @default(cuid())
+  clinicId    String
+  clinic      Clinic    @relation(fields: [clinicId], references: [id], onDelete: Cascade)
+  amountCents Int
+  paidOn      DateTime  @default(now())
+  note        String?
+  createdById String?
+  createdAt   DateTime  @default(now())
+
+  @@index([clinicId])
 }
 
 // Supplement / program-related costs advanced by RevOS on behalf of a clinic

@@ -174,6 +174,31 @@ export function recurringEconomics(
   };
 }
 
+export type CareCreditEconomics = {
+  amountCents: number;
+  revosShareCents: number;
+  clinicShareCents: number;
+};
+
+/**
+ * Care Credit is collected by the clinic via external financing — no card is
+ * run, so there is NO processing fee. It's split on the raw amount using the
+ * clinic's down-payment share %. Because the clinic already holds the cash,
+ * RevOS's share is something the clinic OWES RevOS (handled in the balance).
+ */
+export function careCreditEconomics(
+  amountCents: number,
+  cfg: ClinicShareConfig,
+): CareCreditEconomics {
+  const pct = Math.min(100, Math.max(0, cfg.revosDownPaymentSharePct));
+  const revosShare = Math.round((amountCents * pct) / 100);
+  return {
+    amountCents,
+    revosShareCents: revosShare,
+    clinicShareCents: amountCents - revosShare,
+  };
+}
+
 /** Monthly-equivalent multiplier for normalizing recurring revenue. */
 export function monthlyFactor(frequency: string): number {
   switch (frequency) {
