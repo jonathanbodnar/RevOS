@@ -210,6 +210,12 @@ export function PayClient({
             p.submitted = false;
             return;
           }
+          if (isMaster && !phone.trim()) {
+            setStatus("error");
+            setError("Please fill in your phone number above.");
+            p.submitted = false;
+            return;
+          }
 
           // Master link: validate the payer's configuration before submitting.
           let masterPayload:
@@ -469,7 +475,8 @@ export function PayClient({
   // Soft validation hint shown above the card form when name/email aren't
   // filled — the Fortis button will trigger the flow regardless, but our
   // submitIfReady handler will surface "fill in name/email" before sending.
-  const missingCustomerInfo = !email || !firstName || !lastName;
+  const missingCustomerInfo =
+    !email || !firstName || !lastName || (isMaster && !phone.trim());
 
   // Live master-link summary.
   const downCents = isMaster ? toCents(downPayment) ?? 0 : 0;
@@ -764,7 +771,7 @@ export function PayClient({
       </div>
 
       <div>
-        <label className="label">Phone (optional)</label>
+        <label className="label">Phone{isMaster ? "" : " (optional)"}</label>
         <input
           type="tel"
           className="input"
@@ -773,6 +780,7 @@ export function PayClient({
           value={phone}
           onChange={(e) => setPhone(e.target.value)}
           disabled={fieldsDisabled}
+          required={isMaster}
         />
       </div>
 
@@ -787,7 +795,8 @@ export function PayClient({
 
         {missingCustomerInfo && (status === "ready" || status === "submitting") && (
           <div className="text-xs text-amber-700 bg-amber-50 border border-amber-100 rounded-md px-3 py-2 mb-2">
-            Fill in your name and email above before submitting your card.
+            Fill in your name, email{isMaster ? ", phone" : ""} and the fields above
+            before submitting your card.
           </div>
         )}
 
