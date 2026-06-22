@@ -6,10 +6,11 @@ import { formatMoneyCents, formatDate } from "@/lib/format";
 export default async function ClinicOverviewPage() {
   const { clinicId } = await requireClinicContext();
 
-  const [customers, charges, activeSubs, recentCharges] = await Promise.all([
+  const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+  const [customers, charges, activeSubs, recentCharges, failed] = await Promise.all([
     prisma.customer.count({ where: { clinicId } }),
     prisma.charge.aggregate({
-      where: { clinicId },
+      where: { clinicId, status: { in: ["paid", "pending", "refunded"] } },
       _sum: { amountCents: true, refundedCents: true },
       _count: true,
     }),
@@ -22,6 +23,9 @@ export default async function ClinicOverviewPage() {
       take: 5,
       include: { customer: true },
     }),
+    prisma.charge.count({
+      where: { clinicId, status: "failed", createdAt: { gte: thirtyDaysAgo } },
+    }),
   ]);
 
   const gross = charges._sum.amountCents ?? 0;
@@ -29,7 +33,7 @@ export default async function ClinicOverviewPage() {
 
   return (
     <div className="space-y-6">
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
         <Stat label="Customers" value={customers.toLocaleString()} />
         <Stat label="Transactions" value={(charges._count ?? 0).toLocaleString()} />
         <Stat
@@ -37,6 +41,11 @@ export default async function ClinicOverviewPage() {
           value={formatMoneyCents(gross - refunded)}
         />
         <Stat label="Active subscriptions" value={activeSubs.toLocaleString()} />
+        <Stat
+          label="Failed (30d)"
+          value={failed.toLocaleString()}
+          alert={failed > 0}
+        />
       </div>
 
       <div className="card-pad">
@@ -103,11 +112,23 @@ export default async function ClinicOverviewPage() {
   );
 }
 
-function Stat({ label, value }: { label: string; value: string }) {
+function Stat({
+  label,
+  value,
+  alert,
+}: {
+  label: string;
+  value: string;
+  alert?: boolean;
+}) {
   return (
     <div className="card-pad">
       <div className="text-xs text-slate-500">{label}</div>
-      <div className="mt-1 text-2xl font-semibold text-slate-900">{value}</div>
+      <div
+        className={`mt-1 text-2xl font-semibold ${alert ? "text-red-600" : "text-slate-900"}`}
+      >
+        {value}
+      </div>
     </div>
   );
 }

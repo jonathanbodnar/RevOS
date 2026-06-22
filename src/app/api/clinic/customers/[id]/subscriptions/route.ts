@@ -6,6 +6,7 @@ import { lunarpay, LunarPayError } from "@/lib/lunarpay";
 import { logAudit } from "@/lib/audit";
 import { parseMoneyInputToCents } from "@/lib/format";
 import { calcFee } from "@/lib/fees";
+import { recordFailedCharge } from "@/lib/failed-charge";
 
 /**
  * Start a subscription for a customer.
@@ -126,12 +127,27 @@ export async function POST(
       // after this one.
       const chargeCustomerId = pm.lunarpayCustomerId ?? customer.lunarpayCustomerId;
       if (!isTrial) {
-        const lpCharge = await lunarpay.createCharge({
-          customerId: chargeCustomerId,
-          paymentMethodId: pm.lunarpayPaymentMethodId,
-          amount: totalCents,
-          description,
-        });
+        let lpCharge: Awaited<ReturnType<typeof lunarpay.createCharge>>;
+        try {
+          lpCharge = await lunarpay.createCharge({
+            customerId: chargeCustomerId,
+            paymentMethodId: pm.lunarpayPaymentMethodId,
+            amount: totalCents,
+            description,
+          });
+        } catch (e) {
+          const msg = e instanceof Error ? e.message : "Charge failed.";
+          await recordFailedCharge({
+            clinicId,
+            customerId: customer.id,
+            paymentMethodId: pm.id,
+            amountCents: totalCents,
+            reason: msg,
+            paymentMethodType: pm.sourceType,
+            description: parsed.data.description || `Subscription — ${frequency}`,
+          });
+          throw e;
+        }
         await prisma.charge.create({
           data: {
             clinicId,

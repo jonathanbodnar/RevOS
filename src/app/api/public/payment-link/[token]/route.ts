@@ -6,6 +6,7 @@ import { logAudit } from "@/lib/audit";
 import { requireStringParams } from "@/lib/route-params";
 import { calcFee } from "@/lib/fees";
 import { resolveOrCreateImplementorByName } from "@/lib/implementor";
+import { recordFailedCharge } from "@/lib/failed-charge";
 import {
   MASTER_SUBSCRIPTION_CENTS,
   MASTER_SUBSCRIPTION_FREQUENCY,
@@ -411,12 +412,27 @@ export async function POST(
         } else {
           const { totalCents: firstTotal } = calcFee(firstBase);
           stage = "createCharge.master.downPayment";
-          const lpCharge = await lunarpay.createCharge({
-            customerId: lpCustomerId,
-            paymentMethodId: lpPm.data.id,
-            amount: firstTotal,
-            description,
-          });
+          let lpCharge: Awaited<ReturnType<typeof lunarpay.createCharge>>;
+          try {
+            lpCharge = await lunarpay.createCharge({
+              customerId: lpCustomerId,
+              paymentMethodId: lpPm.data.id,
+              amount: firstTotal,
+              description,
+            });
+          } catch (e) {
+            await recordFailedCharge({
+              clinicId: resolvedClinicId,
+              customerId: customer.id,
+              paymentMethodId: pm.id,
+              amountCents: firstTotal,
+              reason: e instanceof Error ? e.message : "Charge declined.",
+              paymentLinkId: sess.id,
+              paymentMethodType: "cc",
+              description: sess.description ?? "Down payment",
+            });
+            throw e;
+          }
           chargedTodayBase = firstBase;
           await prisma.charge.create({
             data: {
@@ -549,12 +565,27 @@ export async function POST(
     if (!meta.trial && sess.amountCents > 0) {
       const { totalCents: chargeTotal } = calcFee(sess.amountCents);
       stage = "createCharge.dayOf";
-      const lpCharge = await lunarpay.createCharge({
-        customerId: lpCustomerId,
-        paymentMethodId: lpPm.data.id,
-        amount: chargeTotal,
-        description,
-      });
+      let lpCharge: Awaited<ReturnType<typeof lunarpay.createCharge>>;
+      try {
+        lpCharge = await lunarpay.createCharge({
+          customerId: lpCustomerId,
+          paymentMethodId: lpPm.data.id,
+          amount: chargeTotal,
+          description,
+        });
+      } catch (e) {
+        await recordFailedCharge({
+          clinicId: resolvedClinicId,
+          customerId: customer.id,
+          paymentMethodId: pm.id,
+          amountCents: chargeTotal,
+          reason: e instanceof Error ? e.message : "Charge declined.",
+          paymentLinkId: sess.id,
+          paymentMethodType: "cc",
+          description: sess.description ?? null,
+        });
+        throw e;
+      }
       await prisma.charge.create({
         data: {
           clinicId: resolvedClinicId,

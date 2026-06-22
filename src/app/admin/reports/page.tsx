@@ -85,6 +85,21 @@ export default async function ReportsPage({
 
   const clinicCfg = new Map(clinics.map((c) => [c.id, c]));
 
+  // Failed payments in scope (declines on manual charges, links, renewals,
+  // installments). Never counted toward revenue — surfaced as a risk metric.
+  const failedAgg = await prisma.charge.aggregate({
+    where: {
+      clinicId: clinicId ? clinicId : { not: null },
+      status: "failed",
+      ...(dateRange ? { createdAt: dateRange } : {}),
+      ...(implementorId ? { customer: { implementorId } } : {}),
+    },
+    _sum: { amountCents: true },
+    _count: true,
+  });
+  const failedCount = failedAgg._count ?? 0;
+  const failedAmountCents = failedAgg._sum.amountCents ?? 0;
+
   // Customers in scope, with their period-bounded charges, active subs, costs.
   const customers = await prisma.customer.findMany({
     where: {
@@ -413,6 +428,8 @@ export default async function ReportsPage({
   csvLines.push(`Care credit collected,${money(t.careCreditTotal)}`);
   csvLines.push(`Care credit RevOS take (owed by clinic),${money(t.careCreditRevosShare)}`);
   csvLines.push(`Refunds,${money(t.refunds)}`);
+  csvLines.push(`Failed payments (count),${failedCount}`);
+  csvLines.push(`Failed payments (amount attempted),${money(failedAmountCents)}`);
   csvLines.push(`Implementor commissions,${money(t.implementorCommission)}`);
   csvLines.push(`Advanced costs,${money(t.advancedCosts)}`);
   csvLines.push(`Payouts to clinics,${money(payoutsTotal)}`);
@@ -433,7 +450,13 @@ export default async function ReportsPage({
   const csv = csvLines.join("\n");
   const csvFilename = `revos-report-${preset}-${new Date().toISOString().slice(0, 10)}.csv`;
 
-  const summary: { label: string; value: string; sub?: string; accent?: boolean }[] = [
+  const summary: {
+    label: string;
+    value: string;
+    sub?: string;
+    accent?: boolean;
+    alert?: boolean;
+  }[] = [
     { label: "RevOS share", value: formatMoneyCents(revosShareTotal), accent: true },
     { label: "Clinic share", value: formatMoneyCents(clinicProfit) },
     {
@@ -463,6 +486,12 @@ export default async function ReportsPage({
     },
     { label: "Refunds", value: formatMoneyCents(t.refunds) },
     { label: "Advanced costs", value: formatMoneyCents(t.advancedCosts) },
+    {
+      label: "Failed payments",
+      value: failedCount.toLocaleString(),
+      sub: `${formatMoneyCents(failedAmountCents)} attempted · not in revenue`,
+      alert: failedCount > 0,
+    },
   ];
 
   return (
@@ -522,7 +551,11 @@ export default async function ReportsPage({
               className={`card-pad ${s.accent ? "ring-2 ring-brand-900/10" : ""}`}
             >
               <div className="text-xs text-slate-500">{s.label}</div>
-              <div className="mt-1 text-2xl font-semibold text-slate-900">{s.value}</div>
+              <div
+                className={`mt-1 text-2xl font-semibold ${s.alert ? "text-red-600" : "text-slate-900"}`}
+              >
+                {s.value}
+              </div>
               {s.sub && <div className="text-xs text-slate-400 mt-0.5">{s.sub}</div>}
             </div>
           ))}

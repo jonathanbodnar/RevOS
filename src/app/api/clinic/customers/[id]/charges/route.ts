@@ -6,6 +6,7 @@ import { lunarpay, LunarPayError } from "@/lib/lunarpay";
 import { logAudit } from "@/lib/audit";
 import { parseMoneyInputToCents } from "@/lib/format";
 import { calcFee } from "@/lib/fees";
+import { recordFailedCharge } from "@/lib/failed-charge";
 
 const Body = z.object({
   paymentMethodId: z.string().min(1),
@@ -58,8 +59,8 @@ export async function POST(
     ? `[${clinicLabel}] ${parsed.data.description}`
     : `[${clinicLabel}]`;
 
+  const { totalCents } = calcFee(cents);
   try {
-    const { totalCents } = calcFee(cents);
     const lp = await lunarpay.createCharge({
       customerId: pm.lunarpayCustomerId ?? customer.lunarpayCustomerId,
       paymentMethodId: pm.lunarpayPaymentMethodId,
@@ -95,6 +96,15 @@ export async function POST(
   } catch (e) {
     const status = e instanceof LunarPayError ? e.status : 500;
     const msg = e instanceof Error ? e.message : "Charge failed.";
+    await recordFailedCharge({
+      clinicId,
+      customerId: customer.id,
+      paymentMethodId: pm.id,
+      amountCents: totalCents,
+      reason: msg,
+      paymentMethodType: pm.sourceType,
+      description: parsed.data.description || null,
+    });
     return NextResponse.json({ error: msg }, { status });
   }
 }

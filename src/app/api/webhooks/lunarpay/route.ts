@@ -17,6 +17,7 @@ import { NextResponse } from "next/server";
 import crypto from "crypto";
 import { prisma } from "@/lib/prisma";
 import { logAudit } from "@/lib/audit";
+import { recordFailedCharge } from "@/lib/failed-charge";
 
 // ---------- Webhook payload types ----------
 
@@ -109,19 +110,177 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
   }
 
-  if (payload.event !== "checkout.session.completed") {
-    // Ignore events we don't handle
-    return NextResponse.json({ ok: true });
-  }
+  const event = typeof payload.event === "string" ? payload.event : "";
 
   try {
-    await handleSessionCompleted(payload as unknown as CheckoutSessionCompletedPayload);
+    if (event === "checkout.session.completed") {
+      await handleSessionCompleted(payload as unknown as CheckoutSessionCompletedPayload);
+    } else if (isFailureEvent(event)) {
+      // Recurring subscription / installment / one-off declines. LunarPay's
+      // exact event names aren't documented to us, so we match any event whose
+      // name signals a failure and record it best-effort.
+      await handleFailedPayment(event, payload);
+    } else {
+      // Surface unknown events in logs so we can wire them up precisely later.
+      console.info(`[webhook/lunarpay] unhandled event: ${event || "(none)"}`);
+    }
   } catch (err) {
     console.error("[webhook/lunarpay] Unhandled error:", err);
     // Return 200 anyway to prevent LunarPay from retrying indefinitely
   }
 
   return NextResponse.json({ ok: true });
+}
+
+function isFailureEvent(event: string): boolean {
+  const e = event.toLowerCase();
+  return (
+    e.includes("fail") ||
+    e.includes("declin") ||
+    e.endsWith(".error") ||
+    e.includes("payment_failed")
+  );
+}
+
+/** Defensive deep getter for the assorted shapes LunarPay may send. */
+function pick(obj: unknown, paths: string[]): unknown {
+  for (const path of paths) {
+    let cur: unknown = obj;
+    let ok = true;
+    for (const key of path.split(".")) {
+      if (cur && typeof cur === "object" && key in (cur as Record<string, unknown>)) {
+        cur = (cur as Record<string, unknown>)[key];
+      } else {
+        ok = false;
+        break;
+      }
+    }
+    if (ok && cur != null) return cur;
+  }
+  return undefined;
+}
+
+function toCents(amount: unknown): number {
+  if (typeof amount === "number" && Number.isFinite(amount)) {
+    // LunarPay amounts are dollars; integers > 1000 are almost certainly cents
+    // already. Treat sub-10000 numbers with decimals as dollars.
+    return Number.isInteger(amount) && amount < 100000
+      ? Math.round(amount * 100)
+      : Math.round(amount);
+  }
+  if (typeof amount === "string") {
+    const n = parseFloat(amount);
+    if (Number.isFinite(n)) return Math.round(n * 100);
+  }
+  return 0;
+}
+
+/**
+ * Record a failed recurring / installment / one-off payment from a webhook.
+ * Maps the event to one of our customers via the LunarPay customer id, the
+ * subscription id, the schedule id, or a session token — whichever is present.
+ */
+async function handleFailedPayment(event: string, payload: Record<string, unknown>) {
+  const lpCustomerId = Number(
+    pick(payload, [
+      "customer.id",
+      "customer_id",
+      "transaction.customer_id",
+      "subscription.customer_id",
+      "payment_schedule.customer_id",
+    ]) ?? NaN,
+  );
+  const subId = Number(
+    pick(payload, ["subscription.id", "subscription_id", "resources.subscription_id"]) ?? NaN,
+  );
+  const scheduleId = Number(
+    pick(payload, ["payment_schedule.id", "payment_schedule_id", "resources.payment_schedule_id"]) ?? NaN,
+  );
+  const token = pick(payload, ["session.token", "token"]);
+
+  let customer = null;
+  if (Number.isFinite(lpCustomerId)) {
+    customer = await prisma.customer.findFirst({
+      where: { lunarpayCustomerId: lpCustomerId },
+    });
+  }
+  let paymentMethodId: string | null = null;
+  let clinicId: string | null = customer?.clinicId ?? null;
+
+  if (!customer && Number.isFinite(subId)) {
+    const sub = await prisma.subscription.findUnique({
+      where: { lunarpaySubscriptionId: subId },
+    });
+    if (sub) {
+      customer = await prisma.customer.findUnique({ where: { id: sub.customerId } });
+      paymentMethodId = sub.paymentMethodId;
+      clinicId = sub.clinicId;
+    }
+  }
+  if (!customer && Number.isFinite(scheduleId)) {
+    const sch = await prisma.paymentSchedule.findUnique({
+      where: { lunarpayScheduleId: scheduleId },
+    });
+    if (sch) {
+      customer = await prisma.customer.findUnique({ where: { id: sch.customerId } });
+      paymentMethodId = sch.paymentMethodId;
+      clinicId = sch.clinicId;
+    }
+  }
+  if (!customer && typeof token === "string") {
+    const cs = await prisma.checkoutSession.findUnique({ where: { token } });
+    if (cs?.customerId) {
+      customer = await prisma.customer.findUnique({ where: { id: cs.customerId } });
+      clinicId = cs.clinicId;
+    }
+  }
+
+  if (!customer) {
+    console.warn(`[webhook/lunarpay] failure event ${event} could not be mapped to a customer`, {
+      lpCustomerId,
+      subId,
+      scheduleId,
+    });
+    return;
+  }
+
+  const amountCents = toCents(
+    pick(payload, ["transaction.amount", "amount", "payment.amount", "subscription.amount"]),
+  );
+  const reason =
+    (pick(payload, [
+      "transaction.decline_reason",
+      "error.message",
+      "message",
+      "reason",
+      "transaction.status",
+    ]) as string | undefined) ?? event;
+  const txId = pick(payload, ["transaction.id", "id", "payment.id"]);
+  const kind = Number.isFinite(subId)
+    ? "Subscription renewal"
+    : Number.isFinite(scheduleId)
+      ? "Installment payment"
+      : "Payment";
+
+  await recordFailedCharge({
+    clinicId,
+    customerId: customer.id,
+    paymentMethodId,
+    amountCents,
+    reason: String(reason).slice(0, 200),
+    description: `${kind} (auto)`,
+    externalId: txId != null ? String(txId) : `${event}:${subId || scheduleId || customer.id}:${Date.now()}`,
+  });
+
+  await logAudit({
+    actorId: null,
+    actorRole: "WEBHOOK",
+    clinicId,
+    action: "charge.failed.webhook",
+    targetType: "Customer",
+    targetId: customer.id,
+    metadata: { event, amountCents, subId, scheduleId },
+  });
 }
 
 async function handleSessionCompleted(p: CheckoutSessionCompletedPayload) {
