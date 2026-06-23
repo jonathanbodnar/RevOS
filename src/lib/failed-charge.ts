@@ -1,5 +1,7 @@
 import crypto from "crypto";
 import { prisma } from "@/lib/prisma";
+import { formatMoneyCents } from "@/lib/format";
+import { notifyFailedPayment } from "@/lib/notify";
 
 /**
  * Persist a FAILED payment attempt as a Charge row so declines show up in the
@@ -41,6 +43,7 @@ export async function recordFailedCharge(opts: {
       if (existing) return;
     }
 
+    const amountCents = Math.max(0, Math.round(opts.amountCents));
     await prisma.charge.create({
       data: {
         clinicId: opts.clinicId,
@@ -48,12 +51,47 @@ export async function recordFailedCharge(opts: {
         paymentMethodId: opts.paymentMethodId ?? null,
         paymentLinkId: opts.paymentLinkId ?? null,
         lunarpayChargeId,
-        amountCents: Math.max(0, Math.round(opts.amountCents)),
+        amountCents,
         status: "failed",
         paymentMethodType: opts.paymentMethodType ?? null,
         description: desc,
       },
     });
+
+    // Outbound alert (Zapier, etc.) — only when a new failure was recorded.
+    const [customer, clinic] = await Promise.all([
+      prisma.customer.findUnique({
+        where: { id: opts.customerId },
+        select: { id: true, firstName: true, lastName: true, email: true, phone: true },
+      }),
+      opts.clinicId
+        ? prisma.clinic.findUnique({
+            where: { id: opts.clinicId },
+            select: { id: true, name: true },
+          })
+        : Promise.resolve(null),
+    ]);
+
+    if (customer) {
+      const name =
+        [customer.firstName, customer.lastName].filter(Boolean).join(" ") ||
+        customer.email ||
+        "Customer";
+      await notifyFailedPayment({
+        customer: {
+          id: customer.id,
+          name,
+          email: customer.email,
+          phone: customer.phone,
+        },
+        clinic: { id: clinic?.id ?? opts.clinicId ?? null, name: clinic?.name ?? null },
+        amountCents,
+        amount: formatMoneyCents(amountCents),
+        error: opts.reason,
+        description: opts.description ?? null,
+        source: opts.description ?? "Payment",
+      });
+    }
   } catch (e) {
     // eslint-disable-next-line no-console
     console.error("[recordFailedCharge] could not persist failed charge", e);
