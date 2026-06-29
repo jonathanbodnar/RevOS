@@ -29,19 +29,34 @@ const Body = z.object({
   frequency: z.enum(["weekly", "monthly", "quarterly", "yearly"]),
   description: z.string().optional(),
   trial: z.boolean().optional(),
+  // Optional future date (YYYY-MM-DD) for the first cycle. If omitted or today,
+  // the first cycle is charged immediately when a saved card is used.
+  startOn: z.string().optional(),
   // When set, charge a saved card directly instead of generating a link.
   paymentMethodId: z.string().optional(),
 });
 
 type Frequency = "weekly" | "monthly" | "quarterly" | "yearly";
 
-function todayIso(): string {
+function todayIsoDate(): string {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function startOfTodayUtc(): Date {
   const d = new Date();
   return new Date(
     Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), 0, 0, 0),
-  )
-    .toISOString()
-    .replace(".000Z", "Z");
+  );
+}
+
+function normalizeStartOn(raw: string | undefined): {
+  iso: string;
+  isFuture: boolean;
+} {
+  // Accept YYYY-MM-DD. Anything earlier than today is clamped to today.
+  const today = todayIsoDate();
+  if (!raw || raw.slice(0, 10) < today) return { iso: today, isFuture: false };
+  return { iso: raw.slice(0, 10), isFuture: raw.slice(0, 10) > today };
 }
 
 function addOneFrequency(d: Date, frequency: Frequency): Date {
@@ -119,14 +134,17 @@ export async function POST(
     const { totalCents } = calcFee(cents);
     const frequency = parsed.data.frequency;
     const isTrial = !!parsed.data.trial;
-    const startOn = todayIso();
+    const { iso: startOnIso, isFuture: startInFuture } = normalizeStartOn(
+      parsed.data.startOn,
+    );
+    // Charge the first cycle immediately only when no trial AND the start date
+    // is today. Future starts let LunarPay's cron handle the first cycle on the
+    // scheduled date (matches master-link behavior).
+    const chargeFirstNow = !isTrial && !startInFuture;
 
     try {
-      // First cycle charged immediately (skipped for trials), then the
-      // recurring subscription starts today so LunarPay handles every cycle
-      // after this one.
       const chargeCustomerId = pm.lunarpayCustomerId ?? customer.lunarpayCustomerId;
-      if (!isTrial) {
+      if (chargeFirstNow) {
         let lpCharge: Awaited<ReturnType<typeof lunarpay.createCharge>>;
         try {
           lpCharge = await lunarpay.createCharge({
@@ -168,13 +186,13 @@ export async function POST(
         paymentMethodId: pm.lunarpayPaymentMethodId,
         amount: totalCents,
         frequency,
-        startOn,
+        startOn: startOnIso,
         trial: isTrial,
       });
 
       const nextPaymentOn = lpSub.data.nextPaymentOn
         ? new Date(lpSub.data.nextPaymentOn)
-        : addOneFrequency(new Date(startOn), frequency);
+        : addOneFrequency(new Date(startOnIso), frequency);
 
       const subscription = await prisma.subscription.create({
         data: {
@@ -185,7 +203,7 @@ export async function POST(
           amountCents: totalCents,
           frequency,
           status: lpSub.data.status,
-          startOn: lpSub.data.startOn ? new Date(lpSub.data.startOn) : new Date(startOn),
+          startOn: lpSub.data.startOn ? new Date(lpSub.data.startOn) : startOfTodayUtc(),
           nextPaymentOn,
           description: parsed.data.description ?? null,
         },
@@ -204,6 +222,8 @@ export async function POST(
           frequency,
           paymentMethodId: pm.id,
           trial: isTrial,
+          startOn: startOnIso,
+          firstChargeDeferred: !chargeFirstNow,
         },
       });
 
@@ -221,6 +241,10 @@ export async function POST(
   // ─── MODE B: generate a hosted checkout link ─────────────────────────────
   try {
     const { feeCents, totalCents } = calcFee(cents);
+    const { iso: startOnIso, isFuture: startInFuture } = normalizeStartOn(
+      parsed.data.startOn,
+    );
+    const isTrial = !!parsed.data.trial;
     const lp = await lunarpay.createCheckoutSession({
       amount: totalCents / 100, // LP checkout API takes dollars; fee included
       description,
@@ -232,7 +256,8 @@ export async function POST(
       mode: "subscription",
       recurring: {
         frequency: parsed.data.frequency,
-        trial: parsed.data.trial,
+        trial: isTrial,
+        ...(startInFuture ? { start_on: startOnIso } : {}),
       },
       success_url: `${appUrl}/pay/success`,
       cancel_url: `${appUrl}/pay/cancel`,
@@ -261,6 +286,8 @@ export async function POST(
           frequency: parsed.data.frequency,
           baseCents: cents,
           feeCents,
+          trial: isTrial,
+          startOn: startOnIso,
         }),
       },
     });
@@ -272,7 +299,13 @@ export async function POST(
       action: "subscription.create",
       targetType: "CheckoutSession",
       targetId: checkoutSession.id,
-      metadata: { baseCents: cents, totalCents, frequency: parsed.data.frequency },
+      metadata: {
+        baseCents: cents,
+        totalCents,
+        frequency: parsed.data.frequency,
+        trial: isTrial,
+        startOn: startOnIso,
+      },
     });
 
     return NextResponse.json({ url: lp.url, id: checkoutSession.id });

@@ -37,6 +37,14 @@ export function NewSubscriptionForm({
   const [loading, setLoading] = useState(false);
   const [link, setLink] = useState<string | null>(null);
 
+  // Schedule the first cycle for a future date instead of charging now.
+  const [scheduleFirst, setScheduleFirst] = useState(false);
+  const [startOn, setStartOn] = useState(() => {
+    const d = new Date();
+    d.setDate(d.getDate() + 30);
+    return d.toISOString().slice(0, 10);
+  });
+
   const hasCards = methods.length > 0;
   // "" = generate a payment link; otherwise the chosen saved card.
   const [paymentMethodId, setPaymentMethodId] = useState(methods[0]?.id ?? "");
@@ -56,6 +64,10 @@ export function NewSubscriptionForm({
   };
 
   const chargingCard = hasCards && paymentMethodId !== "";
+  const todayIso = new Date().toISOString().slice(0, 10);
+  // When deferring the first charge, no immediate charge is collected — equivalent
+  // to a trial of the first cycle.
+  const firstChargeDeferred = scheduleFirst && startOn > todayIso;
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -69,6 +81,7 @@ export function NewSubscriptionForm({
         amount,
         frequency,
         ...(chargingCard ? { paymentMethodId } : {}),
+        ...(scheduleFirst ? { startOn, trial: firstChargeDeferred } : {}),
       }),
     });
     setLoading(false);
@@ -93,7 +106,9 @@ export function NewSubscriptionForm({
       <h3 className="text-sm font-semibold text-slate-900 mb-3">Start subscription</h3>
       <p className="text-xs text-slate-500 mb-3">
         {chargingCard
-          ? "The first cycle is charged to the selected card now; future cycles bill automatically."
+          ? firstChargeDeferred
+            ? "The first cycle bills on the scheduled date; future cycles bill automatically."
+            : "The first cycle is charged to the selected card now; future cycles bill automatically."
           : "Generates a link the customer pays to start the subscription."}
         {" "}A 3.9% + $0.39 processing fee is added to each billing cycle.
       </p>
@@ -143,6 +158,43 @@ export function NewSubscriptionForm({
           </div>
         )}
 
+        {/* Schedule first charge (mirrors master payment link) */}
+        <div className="border-t border-slate-200 pt-3 space-y-2">
+          <button
+            type="button"
+            onClick={() => setScheduleFirst((v) => !v)}
+            className="flex w-full items-center justify-between gap-3 text-left"
+          >
+            <span className="text-sm text-slate-700">
+              Schedule first charge for a future date
+            </span>
+            <span
+              className={`relative inline-flex h-5 w-9 items-center rounded-full transition ${scheduleFirst ? "bg-brand-600" : "bg-slate-300"}`}
+            >
+              <span
+                className={`inline-block h-4 w-4 transform rounded-full bg-white transition ${scheduleFirst ? "translate-x-4" : "translate-x-1"}`}
+              />
+            </span>
+          </button>
+          {scheduleFirst && (
+            <div>
+              <label className="label">First subscription charge</label>
+              <input
+                type="date"
+                className="input"
+                value={startOn}
+                min={todayIso}
+                onChange={(e) => setStartOn(e.target.value)}
+              />
+              <p className="text-xs text-slate-500 mt-1">
+                {firstChargeDeferred
+                  ? "No charge today. The first cycle bills on the chosen date, then on schedule."
+                  : "First cycle will bill today and recurring cycles on schedule."}
+              </p>
+            </div>
+          )}
+        </div>
+
         {feePreview && (
           <div className="text-xs text-slate-500 bg-slate-50 border border-slate-100 rounded-md px-3 py-2 space-y-1">
             <div className="flex justify-between">
@@ -154,7 +206,11 @@ export function NewSubscriptionForm({
               <span className="tabular-nums">{formatMoney(feePreview.feeCents)}</span>
             </div>
             <div className="flex justify-between font-medium text-slate-700 border-t border-slate-200 pt-1">
-              <span>Customer billed per {freqLabel[frequency] ?? frequency}</span>
+              <span>
+                {firstChargeDeferred
+                  ? `First charge ${startOn} · then per ${freqLabel[frequency] ?? frequency}`
+                  : `Customer billed per ${freqLabel[frequency] ?? frequency}`}
+              </span>
               <span className="tabular-nums">{formatMoney(feePreview.totalCents)}</span>
             </div>
           </div>
@@ -171,16 +227,21 @@ export function NewSubscriptionForm({
               ? "Starting…"
               : "Creating…"
             : chargingCard
-              ? feePreview
-                ? `Start subscription · ${formatMoney(feePreview.totalCents)} now`
-                : "Start subscription"
+              ? firstChargeDeferred
+                ? feePreview
+                  ? `Schedule subscription · ${formatMoney(feePreview.totalCents)} on ${startOn}`
+                  : "Schedule subscription"
+                : feePreview
+                  ? `Start subscription · ${formatMoney(feePreview.totalCents)} now`
+                  : "Start subscription"
               : "Generate subscription link"}
         </button>
       </form>
       {link && (
         <div className="mt-3 rounded-md bg-brand-50 border border-brand-100 p-3 text-sm">
           <div className="text-xs text-slate-500 mb-1">
-            Share this link — first charge happens when the customer pays:
+            Share this link — first charge happens when the customer pays
+            {scheduleFirst ? ` (subscription starts ${startOn})` : ""}:
           </div>
           <div className="flex items-center gap-2">
             <input readOnly value={link} className="input flex-1 font-mono text-xs" />
