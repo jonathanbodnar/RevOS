@@ -1,5 +1,6 @@
 import { formatDate } from "@/lib/format";
 import { coreMetrics, segmentalMetrics, type InBodyTestRow } from "@/lib/inbody-display";
+import { InBodyChart } from "./inbody-chart";
 
 type Test = InBodyTestRow & {
   id: string;
@@ -16,7 +17,9 @@ export function InBodyResults({ tests }: { tests: Test[] }) {
   const seg = segmentalMetrics(latest);
 
   return (
-    <div className="card-pad">
+    <>
+      <InBodyChart tests={tests} />
+      <div className="card-pad">
       <div className="flex items-baseline justify-between mb-3">
         <h3 className="text-sm font-semibold text-slate-900">InBody results</h3>
         <span className="text-xs text-slate-400">
@@ -96,6 +99,7 @@ export function InBodyResults({ tests }: { tests: Test[] }) {
           </table>
         </details>
       )}
-    </div>
+      </div>
+    </>
   );
 }
