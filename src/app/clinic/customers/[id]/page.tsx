@@ -18,7 +18,8 @@ import { CustomerAttribution } from "./customer-attribution";
 import { CareCredits } from "./care-credits";
 import { EditCustomerButton } from "./edit-customer";
 import { MergeCustomerButton } from "./merge-customer";
-import { InBodyResults } from "./inbody-results";
+import { CustomerTabs } from "./customer-tabs";
+import { InBodyTab } from "./inbody-tab";
 
 export default async function CustomerDetailPage({
   params,
@@ -92,6 +93,35 @@ export default async function CustomerDetailPage({
     customer.email ||
     "Customer";
 
+  const inbodyTests = customer.inbodyTests.map((t) => ({
+    id: t.id,
+    testedAt: t.testedAt ? t.testedAt.toISOString() : null,
+    equip: t.equip,
+    equipSerial: t.equipSerial,
+    deviceType: t.deviceType,
+    account: t.account,
+    resultStatus: t.resultStatus,
+    matchStatus: t.matchStatus,
+    fetchError: t.fetchError,
+    weightKg: t.weightKg,
+    totalBodyWaterKg: t.totalBodyWaterKg,
+    dryLeanMassKg: t.dryLeanMassKg,
+    skeletalMuscleMassKg: t.skeletalMuscleMassKg,
+    bodyFatMassKg: t.bodyFatMassKg,
+    bmi: t.bmi,
+    percentBodyFat: t.percentBodyFat,
+    segLeanRightArmKg: t.segLeanRightArmKg,
+    segLeanLeftArmKg: t.segLeanLeftArmKg,
+    segLeanTrunkKg: t.segLeanTrunkKg,
+    segLeanRightLegKg: t.segLeanRightLegKg,
+    segLeanLeftLegKg: t.segLeanLeftLegKg,
+    segLeanRightArmPct: t.segLeanRightArmPct,
+    segLeanLeftArmPct: t.segLeanLeftArmPct,
+    segLeanTrunkPct: t.segLeanTrunkPct,
+    segLeanRightLegPct: t.segLeanRightLegPct,
+    segLeanLeftLegPct: t.segLeanLeftLegPct,
+  }));
+
   return (
     <div className="space-y-6">
       <div className="flex items-start justify-between">
@@ -138,7 +168,11 @@ export default async function CustomerDetailPage({
         )}
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+      <CustomerTabs
+        inbodyCount={inbodyTests.length}
+        inbody={<InBodyTab tests={inbodyTests} />}
+        overview={
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         <div className="lg:col-span-2 space-y-6">
           <PaymentMethods
             customerId={customer.id}
@@ -416,31 +450,6 @@ export default async function CustomerDetailPage({
               }))}
             />
           )}
-          <InBodyResults
-            tests={customer.inbodyTests.map((t) => ({
-              id: t.id,
-              testedAt: t.testedAt ? t.testedAt.toISOString() : null,
-              equip: t.equip,
-              resultStatus: t.resultStatus,
-              weightKg: t.weightKg,
-              totalBodyWaterKg: t.totalBodyWaterKg,
-              dryLeanMassKg: t.dryLeanMassKg,
-              skeletalMuscleMassKg: t.skeletalMuscleMassKg,
-              bodyFatMassKg: t.bodyFatMassKg,
-              bmi: t.bmi,
-              percentBodyFat: t.percentBodyFat,
-              segLeanRightArmKg: t.segLeanRightArmKg,
-              segLeanLeftArmKg: t.segLeanLeftArmKg,
-              segLeanTrunkKg: t.segLeanTrunkKg,
-              segLeanRightLegKg: t.segLeanRightLegKg,
-              segLeanLeftLegKg: t.segLeanLeftLegKg,
-              segLeanRightArmPct: t.segLeanRightArmPct,
-              segLeanLeftArmPct: t.segLeanLeftArmPct,
-              segLeanTrunkPct: t.segLeanTrunkPct,
-              segLeanRightLegPct: t.segLeanRightLegPct,
-              segLeanLeftLegPct: t.segLeanLeftLegPct,
-            }))}
-          />
           <NewChargeForm
             customerId={customer.id}
             methods={customer.paymentMethods.map((m) => ({
@@ -456,7 +465,9 @@ export default async function CustomerDetailPage({
             }))}
           />
         </div>
-      </div>
+          </div>
+        }
+      />
     </div>
   );
 }
