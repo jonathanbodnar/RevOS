@@ -33,11 +33,14 @@ const API_KEY = process.env.INBODY_API_KEY || "";
 const ACCOUNT = process.env.INBODY_ACCOUNT || "";
 /**
  * Path (relative to API_BASE) of the function that returns body-composition
- * results. Left unset until the approved developer docs confirm it, e.g.
- * "/InBodyData" or "/UserData". When empty we skip the fetch and keep the
- * notification (results backfill later via re-fetch).
+ * results. Per InBody's published Web API guide, the REST API is a SINGLE
+ * fixed endpoint — `POST /Function` — and the desired data is selected by
+ * the request body's key (e.g. `UserToken` for a phone-based lookup, or
+ * `UserID` for a location-local lookup), not by the URL path. Overridable via
+ * INBODY_DATA_FUNCTION in case a specific deployment needs a different path
+ * (e.g. if InBody's account-specific docs specify one).
  */
-const DATA_FUNCTION = (process.env.INBODY_DATA_FUNCTION || "").trim();
+const DATA_FUNCTION = (process.env.INBODY_DATA_FUNCTION || "/Function").trim();
 
 export function inbodyConfigured(): boolean {
   return Boolean(API_KEY);
