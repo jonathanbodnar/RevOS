@@ -3,26 +3,33 @@
  *
  * Data flow:
  *   InBody device → LookinBody Web → webhook notification (POST to us) →
- *   we fetch the full body-composition result from the InBody Web API by phone
- *   (UserToken) → auto-pair to a RevOS customer by phone → store InBodyTest.
+ *   we fetch the full body-composition result from the InBody Web API by
+ *   phone (UserToken) + the test's datetimes → auto-pair to a RevOS customer
+ *   by phone → store InBodyTest.
  *
- * The webhook itself is only a NOTIFICATION (identifiers + phone, no metrics).
- * The metrics come from the InBody Web API which authenticates with two HTTP
- * headers: `Account` (the LookinBody Web account, e.g. "revosinbody2") and
- * `API-KEY` (generated in the LookinBody Web API setup page).
+ * Confirmed from InBody's authenticated API docs (apiusa.lookinbody.com/APIPage,
+ * login required — LookinBody Web account credentials):
  *
  *   Base (US):  https://apiusa.lookinbody.com
- *   Test:       POST /user/test            → { "success" }
- *   Data:       POST /<data-function>      → [ { ...metrics } ]
- *               searched by UserToken (phone, global) or UserID (local).
+ *   Auth headers on every call: `Account` (LookinBody Web account name) +
+ *   `API-KEY` (generated in LookinBody Web → API Setup).
  *
- * The exact data-function path + response field names live in the developer
- * docs InBody hands over after the API application is approved. Rather than
- * hard-code a guess that would 404, the function path is configured via
- * INBODY_DATA_FUNCTION and the response is run through a tolerant normalizer
- * (`normalizeInBodyResult`) that matches many field-name variants and always
- * preserves the raw payload. Once the real field names are confirmed, only the
- * alias lists below need touching.
+ *   POST /user/test                                  → connection check
+ *   POST /inbody/GetDateTimes      { usertoken }      → ["yyyyMMddHHmmss", ...]
+ *   POST /inbody/GetDatetimesByID  { UserID }         → ["yyyyMMddHHmmss", ...]
+ *   POST /inbody/GetInBodyData       { usertoken, datetimes }  → abbreviated fields (WT, PBF, BFM, ...)
+ *   POST /inbody/GetInBodyDataByID   { UserID, Datetimes }     → abbreviated fields
+ *   POST /inbody/GetFullInBodyData   { usertoken, datetimes }  → full-named fields (Weight, TBW(TotalBodyWater), ...)
+ *   POST /inbody/GetFullInBodyDataByID { UserID, Datetimes }   → full-named fields
+ *   POST /inbody/GetTodayMeasurements { Date }        → [{ UserID, UserToken, DateTimes }, ...] for that day
+ *
+ * `usertoken` (phone) is a GLOBAL parameter (searches the whole connected
+ * network); `UserID` is LOCAL to this account's location.
+ *
+ * We call BOTH the abbreviated and full-name endpoints and merge them (full
+ * names take priority) since InBody's docs only show a handful of fields in
+ * each sample — this maximizes the chance we capture every required output
+ * regardless of which endpoint actually returns it for a given device model.
  *
  * Never import this file from a client component — it uses the API key.
  */
@@ -31,23 +38,13 @@ const API_BASE = (process.env.INBODY_API_BASE || "https://apiusa.lookinbody.com"
 const API_KEY = process.env.INBODY_API_KEY || "";
 /** LookinBody Web account name, e.g. "revosinbody2". */
 const ACCOUNT = process.env.INBODY_ACCOUNT || "";
-/**
- * Path (relative to API_BASE) of the function that returns body-composition
- * results. Per InBody's published Web API guide, the REST API is a SINGLE
- * fixed endpoint — `POST /Function` — and the desired data is selected by
- * the request body's key (e.g. `UserToken` for a phone-based lookup, or
- * `UserID` for a location-local lookup), not by the URL path. Overridable via
- * INBODY_DATA_FUNCTION in case a specific deployment needs a different path
- * (e.g. if InBody's account-specific docs specify one).
- */
-const DATA_FUNCTION = (process.env.INBODY_DATA_FUNCTION || "/Function").trim();
 
 export function inbodyConfigured(): boolean {
   return Boolean(API_KEY);
 }
 
 export function inbodyCanFetch(): boolean {
-  return Boolean(API_KEY && DATA_FUNCTION);
+  return Boolean(API_KEY);
 }
 
 export type InBodyMetrics = {
@@ -111,35 +108,51 @@ function toNum(v: unknown): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
+function firstNonNull(...vals: (number | null)[]): number | null {
+  for (const v of vals) if (v !== null) return v;
+  return null;
+}
+
 /**
- * Map an arbitrary InBody result object into our required-outputs shape. The
- * same normalizer is used for both API responses and (defensively) webhook
- * payloads in case a location is configured to POST full data.
+ * Map an arbitrary InBody result object into our required-outputs shape.
+ * Covers both the abbreviated field style (WT, PBF, BFM, SMM...) and the
+ * "Full" endpoint's descriptive style (Weight, "TBW(TotalBodyWater)",
+ * "BMI(BodyMassIndex)", "SMM(SkeletalMuscleMass)", ...), plus common
+ * segmental-lean naming variants across InBody device/software versions.
  */
 export function normalizeInBodyResult(raw: unknown): InBodyMetrics {
   if (!raw || typeof raw !== "object") return { ...EMPTY_METRICS };
   const obj = raw as Record<string, unknown>;
   return {
     weightKg: pickNum(obj, ["WT", "Weight", "weight_kg"]),
-    totalBodyWaterKg: pickNum(obj, ["TBW", "TotalBodyWater"]),
+    totalBodyWaterKg: pickNum(obj, ["TBW", "TotalBodyWater", "TBWTotalBodyWater"]),
     dryLeanMassKg: pickNum(obj, ["DLM", "DryLeanMass"]),
-    skeletalMuscleMassKg: pickNum(obj, ["SMM", "SkeletalMuscleMass"]),
-    bodyFatMassKg: pickNum(obj, ["BFM", "BodyFatMass"]),
-    bmi: pickNum(obj, ["BMI", "BodyMassIndex"]),
+    skeletalMuscleMassKg: pickNum(obj, ["SMM", "SkeletalMuscleMass", "SMMSkeletalMuscleMass"]),
+    bodyFatMassKg: pickNum(obj, ["BFM", "BodyFatMass", "BFMBodyFatMass"]),
+    bmi: pickNum(obj, ["BMI", "BodyMassIndex", "BMIBodyMassIndex"]),
     percentBodyFat: pickNum(obj, ["PBF", "PercentBodyFat", "BodyFatPercent"]),
 
-    segLeanRightArmKg: pickNum(obj, ["LeanOfRightArm", "LeanRightArm", "RightArmLean", "LMRA", "SLM_RA", "LeanMassRightArm"]),
-    segLeanLeftArmKg: pickNum(obj, ["LeanOfLeftArm", "LeanLeftArm", "LeftArmLean", "LMLA", "SLM_LA", "LeanMassLeftArm"]),
-    segLeanTrunkKg: pickNum(obj, ["LeanOfTrunk", "LeanTrunk", "TrunkLean", "LMTR", "SLM_TR", "LeanMassTrunk"]),
-    segLeanRightLegKg: pickNum(obj, ["LeanOfRightLeg", "LeanRightLeg", "RightLegLean", "LMRL", "SLM_RL", "LeanMassRightLeg"]),
-    segLeanLeftLegKg: pickNum(obj, ["LeanOfLeftLeg", "LeanLeftLeg", "LeftLegLean", "LMLL", "SLM_LL", "LeanMassLeftLeg"]),
+    segLeanRightArmKg: pickNum(obj, ["LeanOfRightArm", "LeanRightArm", "RightArmLean", "LMRA", "SLM_RA", "LeanMassRightArm", "SLMRA"]),
+    segLeanLeftArmKg: pickNum(obj, ["LeanOfLeftArm", "LeanLeftArm", "LeftArmLean", "LMLA", "SLM_LA", "LeanMassLeftArm", "SLMLA"]),
+    segLeanTrunkKg: pickNum(obj, ["LeanOfTrunk", "LeanTrunk", "TrunkLean", "LMTR", "SLM_TR", "LeanMassTrunk", "SLMTR"]),
+    segLeanRightLegKg: pickNum(obj, ["LeanOfRightLeg", "LeanRightLeg", "RightLegLean", "LMRL", "SLM_RL", "LeanMassRightLeg", "SLMRL"]),
+    segLeanLeftLegKg: pickNum(obj, ["LeanOfLeftLeg", "LeanLeftLeg", "LeftLegLean", "LMLL", "SLM_LL", "LeanMassLeftLeg", "SLMLL"]),
 
-    segLeanRightArmPct: pickNum(obj, ["LeanPercentOfRightArm", "RightArmLeanPercent", "PLMRA", "SLP_RA"]),
-    segLeanLeftArmPct: pickNum(obj, ["LeanPercentOfLeftArm", "LeftArmLeanPercent", "PLMLA", "SLP_LA"]),
-    segLeanTrunkPct: pickNum(obj, ["LeanPercentOfTrunk", "TrunkLeanPercent", "PLMTR", "SLP_TR"]),
-    segLeanRightLegPct: pickNum(obj, ["LeanPercentOfRightLeg", "RightLegLeanPercent", "PLMRL", "SLP_RL"]),
-    segLeanLeftLegPct: pickNum(obj, ["LeanPercentOfLeftLeg", "LeftLegLeanPercent", "PLMLL", "SLP_LL"]),
+    segLeanRightArmPct: pickNum(obj, ["LeanPercentOfRightArm", "RightArmLeanPercent", "PLMRA", "SLP_RA", "PSLMRA"]),
+    segLeanLeftArmPct: pickNum(obj, ["LeanPercentOfLeftArm", "LeftArmLeanPercent", "PLMLA", "SLP_LA", "PSLMLA"]),
+    segLeanTrunkPct: pickNum(obj, ["LeanPercentOfTrunk", "TrunkLeanPercent", "PLMTR", "SLP_TR", "PSLMTR"]),
+    segLeanRightLegPct: pickNum(obj, ["LeanPercentOfRightLeg", "RightLegLeanPercent", "PLMRL", "SLP_RL", "PSLMRL"]),
+    segLeanLeftLegPct: pickNum(obj, ["LeanPercentOfLeftLeg", "LeftLegLeanPercent", "PLMLL", "SLP_LL", "PSLMLL"]),
   };
+}
+
+/** Merge two normalized results, preferring `primary`'s non-null values. */
+export function mergeMetrics(primary: InBodyMetrics, secondary: InBodyMetrics): InBodyMetrics {
+  const out = { ...EMPTY_METRICS };
+  for (const key of Object.keys(out) as (keyof InBodyMetrics)[]) {
+    out[key] = firstNonNull(primary[key], secondary[key]);
+  }
+  return out;
 }
 
 export function hasAnyMetric(m: InBodyMetrics): boolean {
@@ -161,6 +174,15 @@ export function parseTestDatetimes(input: string | null | undefined): Date | nul
   return Number.isFinite(dt.getTime()) ? dt : null;
 }
 
+/** Inverse of parseTestDatetimes — reconstructs the "yyyyMMddHHmmss" string. */
+export function formatTestDatetimes(dt: Date): string {
+  const pad = (n: number, len = 2) => String(n).padStart(len, "0");
+  return (
+    `${dt.getFullYear()}${pad(dt.getMonth() + 1)}${pad(dt.getDate())}` +
+    `${pad(dt.getHours())}${pad(dt.getMinutes())}${pad(dt.getSeconds())}`
+  );
+}
+
 function authHeaders(account?: string | null): Record<string, string> {
   return {
     Account: (account || ACCOUNT || "").trim(),
@@ -168,6 +190,31 @@ function authHeaders(account?: string | null): Record<string, string> {
     "Content-Type": "application/json",
     Accept: "application/json",
   };
+}
+
+async function post(
+  path: string,
+  body: unknown,
+  account?: string | null,
+): Promise<{ ok: boolean; status: number; json: unknown; text: string }> {
+  const res = await fetch(`${API_BASE}${path}`, {
+    method: "POST",
+    headers: authHeaders(account),
+    body: JSON.stringify(body),
+    cache: "no-store",
+  });
+  const text = await res.text();
+  let json: unknown = null;
+  try {
+    json = text ? JSON.parse(text) : null;
+  } catch {
+    json = null;
+  }
+  if (!res.ok) {
+    // eslint-disable-next-line no-console
+    console.error(`[inbody] POST ${path} → ${res.status}`, text.slice(0, 500));
+  }
+  return { ok: res.ok, status: res.status, json, text };
 }
 
 export type InBodyConnectionResult = {
@@ -182,16 +229,54 @@ export async function inbodyConnectionTest(account?: string | null): Promise<InB
     return { ok: false, status: 503, body: "INBODY_API_KEY is not configured." };
   }
   try {
-    const res = await fetch(`${API_BASE}/user/test`, {
-      method: "POST",
-      headers: authHeaders(account),
-      body: "{}",
-      cache: "no-store",
-    });
-    const body = await res.text();
-    return { ok: res.ok, status: res.status, body: body.slice(0, 2000) };
+    const r = await post("/user/test", {}, account);
+    return { ok: r.ok, status: r.status, body: r.text.slice(0, 2000) };
   } catch (err) {
     return { ok: false, status: 0, body: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+/** POST /inbody/GetDateTimes or GetDatetimesByID — list all known test datetimes for a member. */
+export async function inbodyGetDateTimes(opts: {
+  phone?: string | null;
+  userId?: string | null;
+  account?: string | null;
+}): Promise<{ datetimes: string[]; error: string | null }> {
+  if (!inbodyConfigured()) return { datetimes: [], error: "INBODY_API_KEY not configured" };
+  try {
+    const r = opts.phone
+      ? await post("/inbody/GetDateTimes", { usertoken: opts.phone }, opts.account)
+      : await post("/inbody/GetDatetimesByID", { UserID: opts.userId }, opts.account);
+    if (!r.ok) return { datetimes: [], error: `InBody ${r.status}: ${r.text.slice(0, 300)}` };
+    const arr = Array.isArray(r.json) ? r.json.filter((x): x is string => typeof x === "string") : [];
+    return { datetimes: arr, error: null };
+  } catch (err) {
+    return { datetimes: [], error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+/** POST /inbody/GetTodayMeasurements — list all tests recorded on a given date across the account. */
+export async function inbodyGetTodayMeasurements(
+  date: string,
+  account?: string | null,
+): Promise<{ records: { UserID: string; UserToken: string; DateTimes: string }[]; error: string | null }> {
+  if (!inbodyConfigured()) return { records: [], error: "INBODY_API_KEY not configured" };
+  try {
+    const r = await post("/inbody/GetTodayMeasurements", { Date: date }, account);
+    if (!r.ok) return { records: [], error: `InBody ${r.status}: ${r.text.slice(0, 300)}` };
+    const arr = Array.isArray(r.json) ? r.json : [];
+    return {
+      records: arr
+        .filter((x): x is Record<string, unknown> => Boolean(x) && typeof x === "object")
+        .map((x) => ({
+          UserID: String(x.UserID ?? ""),
+          UserToken: String(x.UserToken ?? ""),
+          DateTimes: String(x.DateTimes ?? ""),
+        })),
+      error: null,
+    };
+  } catch (err) {
+    return { records: [], error: err instanceof Error ? err.message : String(err) };
   }
 }
 
@@ -202,54 +287,57 @@ export type InBodyFetchResult = {
 };
 
 /**
- * Fetch the most recent body-composition result for a phone (UserToken) or
- * UserID. Returns normalized metrics + the raw payload. When the data-function
- * path is not configured, resolves with an explanatory error and empty metrics
- * so callers can persist the notification and backfill later.
+ * Fetch a specific body-composition result identified by phone (or UserID)
+ * PLUS the exact test datetimes (as delivered in the webhook's
+ * `TestDatetimes` field, format yyyyMMddHHmmss). Calls both the abbreviated
+ * and full-name endpoints and merges the results for maximum field coverage.
  */
 export async function fetchInBodyResults(opts: {
   phone?: string | null;
   userId?: string | null;
+  datetimes: string;
   account?: string | null;
 }): Promise<InBodyFetchResult> {
   if (!inbodyConfigured()) {
     return { metrics: { ...EMPTY_METRICS }, raw: null, error: "INBODY_API_KEY not configured" };
   }
-  if (!DATA_FUNCTION) {
-    return {
-      metrics: { ...EMPTY_METRICS },
-      raw: null,
-      error:
-        "INBODY_DATA_FUNCTION not configured — awaiting InBody developer docs for the data-fetch endpoint.",
-    };
+  if (!opts.datetimes) {
+    return { metrics: { ...EMPTY_METRICS }, raw: null, error: "Missing test datetimes for InBody lookup" };
   }
-  const path = DATA_FUNCTION.startsWith("/") ? DATA_FUNCTION : `/${DATA_FUNCTION}`;
-  // UserToken (phone) is the global search key; UserID is location-local.
-  const body: Record<string, string> = {};
-  if (opts.phone) body.UserToken = opts.phone;
-  if (opts.userId) body.UserID = opts.userId;
+
+  const byPhone = Boolean(opts.phone);
+  const fullPath = byPhone ? "/inbody/GetFullInBodyData" : "/inbody/GetFullInBodyDataByID";
+  const abbrevPath = byPhone ? "/inbody/GetInBodyData" : "/inbody/GetInBodyDataByID";
+  const fullBody = byPhone
+    ? { usertoken: opts.phone, datetimes: opts.datetimes }
+    : { UserID: opts.userId, Datetimes: opts.datetimes };
+  const abbrevBody = byPhone
+    ? { usertoken: opts.phone, datetimes: opts.datetimes }
+    : { UserID: opts.userId, Datetimes: opts.datetimes };
+
   try {
-    const res = await fetch(`${API_BASE}${path}`, {
-      method: "POST",
-      headers: authHeaders(opts.account),
-      body: JSON.stringify(body),
-      cache: "no-store",
-    });
-    const text = await res.text();
-    if (!res.ok) {
-      // eslint-disable-next-line no-console
-      console.error(`[inbody] POST ${path} → ${res.status}`, text.slice(0, 500));
-      return { metrics: { ...EMPTY_METRICS }, raw: null, error: `InBody ${res.status}: ${text.slice(0, 300)}` };
+    const [full, abbrev] = await Promise.all([
+      post(fullPath, fullBody, opts.account),
+      post(abbrevPath, abbrevBody, opts.account),
+    ]);
+
+    if (!full.ok && !abbrev.ok) {
+      const msg = `InBody ${full.status || abbrev.status}: ${(full.text || abbrev.text).slice(0, 300)}`;
+      return { metrics: { ...EMPTY_METRICS }, raw: null, error: msg };
     }
-    let json: unknown = null;
-    try {
-      json = text ? JSON.parse(text) : null;
-    } catch {
-      return { metrics: { ...EMPTY_METRICS }, raw: text, error: "InBody returned non-JSON body" };
-    }
-    // Results may be an array (most recent first) or a single object.
-    const record = Array.isArray(json) ? json[0] : json;
-    return { metrics: normalizeInBodyResult(record), raw: json, error: null };
+
+    const fullRecord = Array.isArray(full.json) ? full.json[0] : full.json;
+    const abbrevRecord = Array.isArray(abbrev.json) ? abbrev.json[0] : abbrev.json;
+
+    const fullMetrics = normalizeInBodyResult(fullRecord);
+    const abbrevMetrics = normalizeInBodyResult(abbrevRecord);
+    const merged = mergeMetrics(fullMetrics, abbrevMetrics);
+
+    return {
+      metrics: merged,
+      raw: { full: full.ok ? fullRecord : { error: full.text }, abbrev: abbrev.ok ? abbrevRecord : { error: abbrev.text } },
+      error: null,
+    };
   } catch (err) {
     return {
       metrics: { ...EMPTY_METRICS },

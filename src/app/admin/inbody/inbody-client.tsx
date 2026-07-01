@@ -45,6 +45,30 @@ export function InBodyClient({
   const [mapFor, setMapFor] = useState<Test | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [conn, setConn] = useState<string | null>(null);
+  const [syncing, setSyncing] = useState(false);
+  const [syncResult, setSyncResult] = useState<string | null>(null);
+
+  async function syncToday() {
+    setSyncing(true);
+    setSyncResult(null);
+    const res = await fetch("/api/admin/inbody/sync-today", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({}),
+    });
+    const d = (await res.json().catch(() => ({}))) as {
+      found?: number;
+      ingested?: number;
+      errors?: string[];
+    };
+    setSyncing(false);
+    if (d.errors && d.errors.length > 0) {
+      setSyncResult(`Error: ${d.errors[0]}`);
+    } else {
+      setSyncResult(`Found ${d.found ?? 0}, ingested ${d.ingested ?? 0}.`);
+    }
+    startTransition(() => router.refresh());
+  }
 
   async function testConnection() {
     setConn("Testing…");
@@ -104,6 +128,12 @@ export function InBodyClient({
             Test API connection
           </button>
           {conn && <span className="text-xs text-slate-600">{conn}</span>}
+        </div>
+        <div className="flex items-center gap-3 pt-1">
+          <button className="btn-ghost text-xs px-2 py-1" onClick={syncToday} disabled={syncing}>
+            {syncing ? "Syncing…" : "Pull today's InBody data"}
+          </button>
+          {syncResult && <span className="text-xs text-slate-600">{syncResult}</span>}
         </div>
         {!canFetch && (
           <p className="text-xs text-amber-600">

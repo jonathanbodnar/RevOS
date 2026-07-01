@@ -4,8 +4,10 @@ import { normalizePhone } from "./phone";
 import {
   EMPTY_METRICS,
   fetchInBodyResults,
+  formatTestDatetimes,
   hasAnyMetric,
   inbodyCanFetch,
+  inbodyGetTodayMeasurements,
   normalizeInBodyResult,
   parseTestDatetimes,
   type InBodyMetrics,
@@ -74,17 +76,13 @@ export async function ingestInBodyNotification(payload: InBodyWebhookPayload) {
   const inbodyUserId = payload.UserID?.toString().trim() || null;
   const rawPhone = payload.TelHP?.toString().trim() || null;
   const phoneNormalized = normalizePhone(rawPhone);
-  const testedAt = parseTestDatetimes(payload.TestDatetimes?.toString());
+  const rawDatetimes = payload.TestDatetimes?.toString().trim() || "";
+  const testedAt = parseTestDatetimes(rawDatetimes);
   const isTempData =
     payload.IsTempData === true ||
     String(payload.IsTempData ?? "").toLowerCase() === "true";
 
-  const dedupeKey = [
-    account ?? "",
-    equipSerial ?? "",
-    inbodyUserId ?? "",
-    payload.TestDatetimes?.toString() ?? "",
-  ].join(":");
+  const dedupeKey = [account ?? "", equipSerial ?? "", inbodyUserId ?? "", rawDatetimes].join(":");
 
   // ── Auto-pair by phone ──
   let customerId: string | null = null;
@@ -110,10 +108,11 @@ export async function ingestInBodyNotification(payload: InBodyWebhookPayload) {
   // Defensive: some locations may POST full metrics in the webhook itself.
   const webhookMetrics = normalizeInBodyResult(payload);
 
-  if (inbodyCanFetch()) {
+  if (inbodyCanFetch() && rawDatetimes && (rawPhone || inbodyUserId)) {
     const fetched = await fetchInBodyResults({
       phone: rawPhone,
       userId: inbodyUserId,
+      datetimes: rawDatetimes,
       account,
     });
     if (fetched.error) {
@@ -126,11 +125,13 @@ export async function ingestInBodyNotification(payload: InBodyWebhookPayload) {
       rawJson = fetched.raw != null ? safeStringify(fetched.raw) : null;
       resultStatus = hasAnyMetric(metrics) ? "fetched" : "matched_no_data";
     }
-  } else {
-    // No fetch capability yet. Keep any metrics embedded in the webhook.
+  } else if (!inbodyCanFetch()) {
     metrics = webhookMetrics;
-    fetchError =
-      "InBody data fetch not configured (INBODY_DATA_FUNCTION unset); stored notification only.";
+    fetchError = "INBODY_API_KEY not configured; stored notification only.";
+    resultStatus = hasAnyMetric(metrics) ? "fetched" : "pending";
+  } else {
+    metrics = webhookMetrics;
+    fetchError = "Missing phone/UserID or test datetimes; cannot fetch InBody result.";
     resultStatus = hasAnyMetric(metrics) ? "fetched" : "pending";
   }
 
@@ -201,10 +202,17 @@ export async function refetchInBodyTest(testId: string) {
   let fetchError: string | null = null;
   let resultStatus = test.resultStatus;
 
-  if (inbodyCanFetch()) {
+  const datetimes = test.testedAt ? formatTestDatetimes(test.testedAt) : null;
+
+  if (!inbodyCanFetch()) {
+    fetchError = "INBODY_API_KEY not configured.";
+  } else if (!datetimes || (!test.phone && !test.inbodyUserId)) {
+    fetchError = "Missing phone/UserID or test datetimes; cannot fetch InBody result.";
+  } else {
     const fetched = await fetchInBodyResults({
       phone: test.phone,
       userId: test.inbodyUserId,
+      datetimes,
       account: test.account,
     });
     if (fetched.error) {
@@ -215,8 +223,6 @@ export async function refetchInBodyTest(testId: string) {
       rawJson = fetched.raw != null ? safeStringify(fetched.raw) : rawJson;
       resultStatus = hasAnyMetric(metrics) ? "fetched" : "matched_no_data";
     }
-  } else {
-    fetchError = "InBody data fetch not configured (INBODY_DATA_FUNCTION unset).";
   }
 
   return prisma.inBodyTest.update({
@@ -231,6 +237,37 @@ export async function refetchInBodyTest(testId: string) {
       ...(inbodyCanFetch() && !fetchError ? metricColumns(metrics) : {}),
     },
   });
+}
+
+/**
+ * Pull every InBody test recorded on a given date (default: today, UTC)
+ * directly from the InBody Web API — a manual "sync now" path independent of
+ * webhook delivery, e.g. for backfilling existing live data. Returns a
+ * summary of how many records were found/ingested/errored.
+ */
+export async function syncInBodyMeasurementsForDate(
+  date?: string,
+): Promise<{ found: number; ingested: number; errors: string[] }> {
+  const targetDate = date || new Date().toISOString().slice(0, 10);
+  const { records, error } = await inbodyGetTodayMeasurements(targetDate);
+  if (error) return { found: 0, ingested: 0, errors: [error] };
+
+  const errors: string[] = [];
+  let ingested = 0;
+  for (const rec of records) {
+    if (!rec.DateTimes) continue;
+    try {
+      await ingestInBodyNotification({
+        UserID: rec.UserID,
+        TelHP: rec.UserToken,
+        TestDatetimes: rec.DateTimes,
+      });
+      ingested++;
+    } catch (err) {
+      errors.push(err instanceof Error ? err.message : String(err));
+    }
+  }
+  return { found: records.length, ingested, errors };
 }
 
 function safeStringify(v: unknown): string | null {
