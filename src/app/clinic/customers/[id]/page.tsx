@@ -18,6 +18,7 @@ import { CustomerAttribution } from "./customer-attribution";
 import { CareCredits } from "./care-credits";
 import { EditCustomerButton } from "./edit-customer";
 import { MergeCustomerButton } from "./merge-customer";
+import { InBodyResults } from "./inbody-results";
 
 export default async function CustomerDetailPage({
   params,
@@ -40,6 +41,7 @@ export default async function CustomerDetailPage({
       subscriptions: { orderBy: { createdAt: "desc" } },
       schedules: { orderBy: { createdAt: "desc" } },
       careCredits: { orderBy: { collectedOn: "desc" } },
+      inbodyTests: { orderBy: [{ testedAt: "desc" }, { createdAt: "desc" }], take: 20 },
     },
   });
   if (!customer) notFound();
@@ -414,6 +416,31 @@ export default async function CustomerDetailPage({
               }))}
             />
           )}
+          <InBodyResults
+            tests={customer.inbodyTests.map((t) => ({
+              id: t.id,
+              testedAt: t.testedAt ? t.testedAt.toISOString() : null,
+              equip: t.equip,
+              resultStatus: t.resultStatus,
+              weightKg: t.weightKg,
+              totalBodyWaterKg: t.totalBodyWaterKg,
+              dryLeanMassKg: t.dryLeanMassKg,
+              skeletalMuscleMassKg: t.skeletalMuscleMassKg,
+              bodyFatMassKg: t.bodyFatMassKg,
+              bmi: t.bmi,
+              percentBodyFat: t.percentBodyFat,
+              segLeanRightArmKg: t.segLeanRightArmKg,
+              segLeanLeftArmKg: t.segLeanLeftArmKg,
+              segLeanTrunkKg: t.segLeanTrunkKg,
+              segLeanRightLegKg: t.segLeanRightLegKg,
+              segLeanLeftLegKg: t.segLeanLeftLegKg,
+              segLeanRightArmPct: t.segLeanRightArmPct,
+              segLeanLeftArmPct: t.segLeanLeftArmPct,
+              segLeanTrunkPct: t.segLeanTrunkPct,
+              segLeanRightLegPct: t.segLeanRightLegPct,
+              segLeanLeftLegPct: t.segLeanLeftLegPct,
+            }))}
+          />
           <NewChargeForm
             customerId={customer.id}
             methods={customer.paymentMethods.map((m) => ({

@@ -16,35 +16,35 @@ enum Role {
 }
 
 model User {
-  id             String   @id @default(cuid())
-  email          String   @unique
-  passwordHash   String
-  name           String?
-  role           Role
-  clinicId       String?
-  clinic         Clinic?  @relation(fields: [clinicId], references: [id], onDelete: SetNull)
-  isActive       Boolean  @default(true)
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
+  id           String   @id @default(cuid())
+  email        String   @unique
+  passwordHash String
+  name         String?
+  role         Role
+  clinicId     String?
+  clinic       Clinic?  @relation(fields: [clinicId], references: [id], onDelete: SetNull)
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
 
   @@index([clinicId])
 }
 
 model Clinic {
-  id         String     @id @default(cuid())
-  name       String
-  slug       String     @unique
-  logoUrl    String?
+  id        String   @id @default(cuid())
+  name      String
+  slug      String   @unique
+  logoUrl   String?
   // Optional contact info
-  email      String?
-  phone      String?
-  address    String?
-  city       String?
-  state      String?
-  zip        String?
-  isActive   Boolean    @default(true)
-  createdAt  DateTime   @default(now())
-  updatedAt  DateTime   @updatedAt
+  email     String?
+  phone     String?
+  address   String?
+  city      String?
+  state     String?
+  zip       String?
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   // ── Revenue-share / reporting config (per clinic, editable by super admin) ──
   // Percentage of every down payment that RevOS retains (0–100).
@@ -54,70 +54,73 @@ model Clinic {
   // RevOS revenue share per recurring subscription payment, in cents ($75).
   revosRecurringShareCents Int @default(7500)
 
-  users      User[]
-  customers  Customer[]
-  charges    Charge[]
-  subscriptions Subscription[]
-  schedules  PaymentSchedule[]
+  users            User[]
+  customers        Customer[]
+  charges          Charge[]
+  subscriptions    Subscription[]
+  schedules        PaymentSchedule[]
   checkoutSessions CheckoutSession[]
-  auditLogs  AuditLog[]
-  advancedCosts AdvancedCost[]
-  careCredits CareCredit[]
-  payouts    ClinicPayout[]
+  auditLogs        AuditLog[]
+  advancedCosts    AdvancedCost[]
+  careCredits      CareCredit[]
+  payouts          ClinicPayout[]
+  inbodyTests      InBodyTest[]
 }
 
 // Sales implementors. Customers are attributed to an implementor either via
 // the ?implementor=<name> tag on a payment link, or manually in the customer
 // profile. Each closed down payment pays the implementor a commission.
 model Implementor {
-  id              String     @id @default(cuid())
+  id              String   @id @default(cuid())
   name            String
-  commissionCents Int        @default(14000)
-  isActive        Boolean    @default(true)
-  createdAt       DateTime   @default(now())
-  updatedAt       DateTime   @updatedAt
+  commissionCents Int      @default(14000)
+  isActive        Boolean  @default(true)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
 
-  customers       Customer[]
+  customers Customer[]
 }
 
 // A customer belongs to a single clinic.
 // We mirror/cache LunarPay customer id so we can call the API.
 model Customer {
-  id                  String   @id @default(cuid())
-  clinicId            String?
-  clinic              Clinic?  @relation(fields: [clinicId], references: [id], onDelete: SetNull)
+  id       String  @id @default(cuid())
+  clinicId String?
+  clinic   Clinic? @relation(fields: [clinicId], references: [id], onDelete: SetNull)
 
   // LunarPay customer id (shared merchant). Nullable until first sync.
-  lunarpayCustomerId  Int?     @unique
+  lunarpayCustomerId Int? @unique
 
-  firstName           String?
-  lastName            String?
-  email               String?
-  phone               String?
-  address             String?
-  city                String?
-  state               String?
-  zip                 String?
+  firstName String?
+  lastName  String?
+  email     String?
+  phone     String?
+  address   String?
+  city      String?
+  state     String?
+  zip       String?
 
-  createdAt           DateTime @default(now())
-  updatedAt           DateTime @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   // Sales attribution + free-form payment notes (e.g. "down payment via Care Credit").
-  implementorId       String?
-  implementor         Implementor? @relation(fields: [implementorId], references: [id], onDelete: SetNull)
-  paymentNotes        String?
+  implementorId String?
+  implementor   Implementor? @relation(fields: [implementorId], references: [id], onDelete: SetNull)
+  paymentNotes  String?
 
-  paymentMethods      PaymentMethod[]
-  charges             Charge[]
-  subscriptions       Subscription[]
-  schedules           PaymentSchedule[]
-  checkoutSessions    CheckoutSession[]
-  advancedCosts       AdvancedCost[]
-  careCredits         CareCredit[]
+  paymentMethods   PaymentMethod[]
+  charges          Charge[]
+  subscriptions    Subscription[]
+  schedules        PaymentSchedule[]
+  checkoutSessions CheckoutSession[]
+  advancedCosts    AdvancedCost[]
+  careCredits      CareCredit[]
+  inbodyTests      InBodyTest[]
 
   @@index([clinicId])
   @@index([email])
   @@index([implementorId])
+  @@index([phone])
 }
 
 // A Care Credit payment is money the patient paid the CLINIC directly through
@@ -130,19 +133,19 @@ model Customer {
 // its share — so RevOS's care-credit share is SUBTRACTED from the balance RevOS
 // owes the clinic.
 model CareCredit {
-  id          String    @id @default(cuid())
+  id          String   @id @default(cuid())
   clinicId    String?
-  clinic      Clinic?   @relation(fields: [clinicId], references: [id], onDelete: SetNull)
+  clinic      Clinic?  @relation(fields: [clinicId], references: [id], onDelete: SetNull)
   customerId  String
-  customer    Customer  @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  customer    Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
   amountCents Int
-  collectedOn DateTime  @default(now())
+  collectedOn DateTime @default(now())
   note        String?
   // "manual" (logged in the customer profile) | "master_link" (marked on a
   // master payment link at checkout).
-  source      String    @default("manual")
+  source      String   @default("manual")
   createdById String?
-  createdAt   DateTime  @default(now())
+  createdAt   DateTime @default(now())
 
   @@index([clinicId])
   @@index([customerId])
@@ -151,14 +154,14 @@ model CareCredit {
 // A payout RevOS has remitted to a clinic. Reduces the running balance RevOS
 // owes the clinic in the reporting center.
 model ClinicPayout {
-  id          String    @id @default(cuid())
+  id          String   @id @default(cuid())
   clinicId    String
-  clinic      Clinic    @relation(fields: [clinicId], references: [id], onDelete: Cascade)
+  clinic      Clinic   @relation(fields: [clinicId], references: [id], onDelete: Cascade)
   amountCents Int
-  paidOn      DateTime  @default(now())
+  paidOn      DateTime @default(now())
   note        String?
   createdById String?
-  createdAt   DateTime  @default(now())
+  createdAt   DateTime @default(now())
 
   @@index([clinicId])
 }
@@ -173,7 +176,7 @@ model AdvancedCost {
   clinic      Clinic?   @relation(fields: [clinicId], references: [id], onDelete: SetNull)
   customerId  String?
   customer    Customer? @relation(fields: [customerId], references: [id], onDelete: SetNull)
-  category    String    // supplements | booklets | other
+  category    String // supplements | booklets | other
   description String
   amountCents Int
   incurredOn  DateTime  @default(now())
@@ -197,23 +200,23 @@ model SavedReport {
 
 // Cached LunarPay payment method (no raw card data ever stored)
 model PaymentMethod {
-  id                    String   @id @default(cuid())
-  customerId            String
-  customer              Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
-  lunarpayPaymentMethodId Int    @unique
+  id                      String   @id @default(cuid())
+  customerId              String
+  customer                Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  lunarpayPaymentMethodId Int      @unique
   // LunarPay customer that actually owns this vaulted card. Normally equals the
   // owning Customer's lunarpayCustomerId, but if the card is reassigned to a
   // different RevOS profile this preserves the real vault owner so charges
   // still route to the correct LunarPay customer.
-  lunarpayCustomerId    Int?
-  sourceType            String   // "cc" | "ach"
-  lastDigits            String?
-  nameHolder            String?
-  expMonth              String?
-  expYear               String?
-  isDefault             Boolean  @default(false)
-  isActive              Boolean  @default(true)
-  createdAt             DateTime @default(now())
+  lunarpayCustomerId      Int?
+  sourceType              String // "cc" | "ach"
+  lastDigits              String?
+  nameHolder              String?
+  expMonth                String?
+  expYear                 String?
+  isDefault               Boolean  @default(false)
+  isActive                Boolean  @default(true)
+  createdAt               DateTime @default(now())
 
   charges       Charge[]
   subscriptions Subscription[]
@@ -223,29 +226,29 @@ model PaymentMethod {
 }
 
 model Charge {
-  id                   String   @id @default(cuid())
-  clinicId             String?
-  clinic               Clinic?  @relation(fields: [clinicId], references: [id], onDelete: SetNull)
-  customerId           String
-  customer             Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
-  paymentMethodId      String?
-  paymentMethod        PaymentMethod? @relation(fields: [paymentMethodId], references: [id], onDelete: SetNull)
+  id              String         @id @default(cuid())
+  clinicId        String?
+  clinic          Clinic?        @relation(fields: [clinicId], references: [id], onDelete: SetNull)
+  customerId      String
+  customer        Customer       @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  paymentMethodId String?
+  paymentMethod   PaymentMethod? @relation(fields: [paymentMethodId], references: [id], onDelete: SetNull)
 
   // Originating reusable payment link (null for charges created in the admin)
-  paymentLinkId        String?
-  paymentLink          CheckoutSession? @relation("PaymentLinkCharges", fields: [paymentLinkId], references: [id], onDelete: SetNull)
+  paymentLinkId String?
+  paymentLink   CheckoutSession? @relation("PaymentLinkCharges", fields: [paymentLinkId], references: [id], onDelete: SetNull)
 
   // LunarPay charge id (they return a string id, e.g. "789")
-  lunarpayChargeId     String   @unique
-  fortisTransactionId  String?
+  lunarpayChargeId    String  @unique
+  fortisTransactionId String?
 
-  amountCents          Int
-  refundedCents        Int      @default(0)
-  status               String   // "paid" | "pending" | "refunded" | "failed"
-  paymentMethodType    String?  // "cc" | "ach"
-  description          String?
+  amountCents       Int
+  refundedCents     Int     @default(0)
+  status            String // "paid" | "pending" | "refunded" | "failed"
+  paymentMethodType String? // "cc" | "ach"
+  description       String?
 
-  createdAt            DateTime @default(now())
+  createdAt DateTime @default(now())
 
   @@index([clinicId])
   @@index([customerId])
@@ -253,28 +256,28 @@ model Charge {
 }
 
 model Subscription {
-  id                 String   @id @default(cuid())
-  clinicId           String?
-  clinic             Clinic?  @relation(fields: [clinicId], references: [id], onDelete: SetNull)
-  customerId         String
-  customer           Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
-  paymentMethodId    String?
-  paymentMethod      PaymentMethod? @relation(fields: [paymentMethodId], references: [id], onDelete: SetNull)
+  id              String         @id @default(cuid())
+  clinicId        String?
+  clinic          Clinic?        @relation(fields: [clinicId], references: [id], onDelete: SetNull)
+  customerId      String
+  customer        Customer       @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  paymentMethodId String?
+  paymentMethod   PaymentMethod? @relation(fields: [paymentMethodId], references: [id], onDelete: SetNull)
 
   // Originating reusable payment link (null for subs created in the admin)
-  paymentLinkId      String?
-  paymentLink        CheckoutSession? @relation("PaymentLinkSubscriptions", fields: [paymentLinkId], references: [id], onDelete: SetNull)
+  paymentLinkId String?
+  paymentLink   CheckoutSession? @relation("PaymentLinkSubscriptions", fields: [paymentLinkId], references: [id], onDelete: SetNull)
 
-  lunarpaySubscriptionId Int @unique
-  amountCents        Int
-  frequency          String   // weekly | monthly | quarterly | yearly
-  status             String   // active | cancelled
-  startOn            DateTime?
-  nextPaymentOn      DateTime?
-  description        String?
+  lunarpaySubscriptionId Int       @unique
+  amountCents            Int
+  frequency              String // weekly | monthly | quarterly | yearly
+  status                 String // active | cancelled
+  startOn                DateTime?
+  nextPaymentOn          DateTime?
+  description            String?
 
-  createdAt          DateTime @default(now())
-  updatedAt          DateTime @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@index([clinicId])
   @@index([customerId])
@@ -282,24 +285,24 @@ model Subscription {
 }
 
 model PaymentSchedule {
-  id                 String   @id @default(cuid())
-  clinicId           String?
-  clinic             Clinic?  @relation(fields: [clinicId], references: [id], onDelete: SetNull)
-  customerId         String
-  customer           Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
-  paymentMethodId    String?
-  paymentMethod      PaymentMethod? @relation(fields: [paymentMethodId], references: [id], onDelete: SetNull)
+  id              String         @id @default(cuid())
+  clinicId        String?
+  clinic          Clinic?        @relation(fields: [clinicId], references: [id], onDelete: SetNull)
+  customerId      String
+  customer        Customer       @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  paymentMethodId String?
+  paymentMethod   PaymentMethod? @relation(fields: [paymentMethodId], references: [id], onDelete: SetNull)
 
-  lunarpayScheduleId Int      @unique
-  status             String   // active | completed | cancelled
+  lunarpayScheduleId Int     @unique
+  status             String // active | completed | cancelled
   totalAmountCents   Int
-  paidAmountCents    Int      @default(0)
+  paidAmountCents    Int     @default(0)
   description        String?
   // Individual dated payments are stored as JSON snapshot from LunarPay
   paymentsJson       String?
 
-  createdAt          DateTime @default(now())
-  updatedAt          DateTime @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@index([clinicId])
   @@index([customerId])
@@ -312,28 +315,28 @@ model PaymentSchedule {
 // flips to "completed" once the customer adds their card.
 // isGlobal=true links are created by super-admin and visible to all clinics.
 model CheckoutSession {
-  id                 String   @id @default(cuid())
-  clinicId           String?
-  clinic             Clinic?  @relation(fields: [clinicId], references: [id], onDelete: SetNull)
-  customerId         String?
-  customer           Customer? @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  id         String    @id @default(cuid())
+  clinicId   String?
+  clinic     Clinic?   @relation(fields: [clinicId], references: [id], onDelete: SetNull)
+  customerId String?
+  customer   Customer? @relation(fields: [customerId], references: [id], onDelete: SetNull)
 
-  lunarpaySessionId  Int      @unique
-  token              String   @unique
-  url                String
-  amountCents        Int
-  description        String?
-  mode               String   // payment | subscription | combined | save_card
-  status             String   // open | completed | expired
-  metadataJson       String?
-  isGlobal           Boolean  @default(false)
+  lunarpaySessionId Int     @unique
+  token             String  @unique
+  url               String
+  amountCents       Int
+  description       String?
+  mode              String // payment | subscription | combined | save_card
+  status            String // open | completed | expired
+  metadataJson      String?
+  isGlobal          Boolean @default(false)
 
-  createdAt          DateTime @default(now())
-  completedAt        DateTime?
+  createdAt   DateTime  @default(now())
+  completedAt DateTime?
 
   // Reusable links spawn many charges / subscriptions
-  charges            Charge[]       @relation("PaymentLinkCharges")
-  subscriptions      Subscription[] @relation("PaymentLinkSubscriptions")
+  charges       Charge[]       @relation("PaymentLinkCharges")
+  subscriptions Subscription[] @relation("PaymentLinkSubscriptions")
 
   @@index([clinicId])
   @@index([isGlobal])
@@ -341,18 +344,83 @@ model CheckoutSession {
 
 // Audit log: super-admin actions, impersonation, etc.
 model AuditLog {
-  id        String   @id @default(cuid())
-  actorId   String?  // user who did the action
-  actorRole String?
-  clinicId  String?
-  clinic    Clinic?  @relation(fields: [clinicId], references: [id], onDelete: SetNull)
-  action    String   // e.g. "clinic.create", "impersonate.start", "charge.create"
+  id         String   @id @default(cuid())
+  actorId    String? // user who did the action
+  actorRole  String?
+  clinicId   String?
+  clinic     Clinic?  @relation(fields: [clinicId], references: [id], onDelete: SetNull)
+  action     String // e.g. "clinic.create", "impersonate.start", "charge.create"
   targetType String? // e.g. "Clinic", "Customer", "Charge"
-  targetId  String?
-  metadata  String?  // JSON
-  createdAt DateTime @default(now())
+  targetId   String?
+  metadata   String? // JSON
+  createdAt  DateTime @default(now())
 
   @@index([clinicId])
   @@index([actorId])
   @@index([action])
+}
+
+// A single InBody body-composition test, delivered via the LookinBody Web
+// webhook (a notification containing identifiers + phone) and enriched with
+// the full result set fetched from the InBody Web API (searched by phone /
+// UserToken). Tests auto-pair to a RevOS Customer by phone number; unmatched
+// tests can be mapped manually by a super admin.
+model InBodyTest {
+  id String @id @default(cuid())
+
+  // ── RevOS linkage (auto-paired by phone or mapped manually) ──
+  clinicId   String?
+  clinic     Clinic?   @relation(fields: [clinicId], references: [id], onDelete: SetNull)
+  customerId String?
+  customer   Customer? @relation(fields: [customerId], references: [id], onDelete: SetNull)
+
+  // ── Identifiers from the webhook notification ──
+  // Stable dedupe key: account:equipSerial:inbodyUserId:testDatetimes
+  dedupeKey       String    @unique
+  account         String? // LookinBody Web account (e.g. "revosinbody2")
+  equipSerial     String? // EquipSerial
+  equip           String? // Equip (e.g. "InBody770")
+  deviceType      String? // Type (e.g. "InBody")
+  inbodyUserId    String? // UserID (location-local id)
+  phone           String? // TelHP (raw, as delivered)
+  phoneNormalized String? // last-10-digits, for matching
+  testedAt        DateTime? // parsed from TestDatetimes (yyyyMMddHHmmss)
+  isTempData      Boolean   @default(false)
+
+  // ── Minimum required InBody outputs (nullable until result fetched) ──
+  weightKg             Float?
+  totalBodyWaterKg     Float?
+  dryLeanMassKg        Float?
+  skeletalMuscleMassKg Float?
+  bodyFatMassKg        Float?
+  bmi                  Float?
+  percentBodyFat       Float?
+
+  // Segmental Lean Analysis — 10 outputs (5 segments × lean mass + percent).
+  segLeanRightArmKg  Float?
+  segLeanLeftArmKg   Float?
+  segLeanTrunkKg     Float?
+  segLeanRightLegKg  Float?
+  segLeanLeftLegKg   Float?
+  segLeanRightArmPct Float?
+  segLeanLeftArmPct  Float?
+  segLeanTrunkPct    Float?
+  segLeanRightLegPct Float?
+  segLeanLeftLegPct  Float?
+
+  // pending | fetched | matched_no_data | unmatched | error
+  resultStatus String  @default("pending")
+  matchStatus  String  @default("unmatched") // unmatched | auto | manual | ambiguous
+  fetchError   String?
+  rawJson      String? // full fetched result payload
+  webhookJson  String? // original webhook notification payload
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([clinicId])
+  @@index([customerId])
+  @@index([phoneNormalized])
+  @@index([testedAt])
+  @@index([resultStatus])
 }

@@ -20,6 +20,7 @@ export default async function AdminLayout({
         { href: "/admin/clinics", label: "Clinics", icon: "building" },
         { href: "/admin/clinics/new", label: "New clinic", icon: "plus-circle" },
         { href: "/admin/implementors", label: "Implementors", icon: "users" },
+        { href: "/admin/inbody", label: "InBody", icon: "activity" },
         { href: "/admin/payment-links", label: "Payment links", icon: "link" },
         { href: "/admin/audit", label: "Audit log", icon: "list" },
       ]}
