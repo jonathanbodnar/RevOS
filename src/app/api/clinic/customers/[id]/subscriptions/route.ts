@@ -49,14 +49,25 @@ function startOfTodayUtc(): Date {
   );
 }
 
+function toLpIso(dateOnly: string): string {
+  // LunarPay validates `startOn` as a full ISO timestamp with Z
+  // (e.g. "2026-07-02T00:00:00Z"). Sending a bare "YYYY-MM-DD" is rejected
+  // with a generic "Validation error", so always normalize to LP's format.
+  return new Date(`${dateOnly}T00:00:00Z`)
+    .toISOString()
+    .replace(".000Z", "Z");
+}
+
 function normalizeStartOn(raw: string | undefined): {
   iso: string;
   isFuture: boolean;
 } {
   // Accept YYYY-MM-DD. Anything earlier than today is clamped to today.
+  // Comparison stays on the date-only value; the returned `iso` is the full
+  // ISO timestamp LunarPay expects.
   const today = todayIsoDate();
-  if (!raw || raw.slice(0, 10) < today) return { iso: today, isFuture: false };
-  return { iso: raw.slice(0, 10), isFuture: raw.slice(0, 10) > today };
+  const dateOnly = !raw || raw.slice(0, 10) < today ? today : raw.slice(0, 10);
+  return { iso: toLpIso(dateOnly), isFuture: dateOnly > today };
 }
 
 function addOneFrequency(d: Date, frequency: Frequency): Date {
