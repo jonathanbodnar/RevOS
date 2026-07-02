@@ -109,20 +109,37 @@ type ResolvedContext = {
 
 // ---------- Helpers ----------
 
-function computeNextPaymentOn(frequency: string): Date {
-  const d = new Date();
-  switch (frequency) {
-    case "weekly":
-      d.setDate(d.getDate() + 7);
-      break;
-    case "quarterly":
-      d.setMonth(d.getMonth() + 3);
-      break;
-    case "yearly":
-      d.setFullYear(d.getFullYear() + 1);
-      break;
-    default: // monthly
-      d.setMonth(d.getMonth() + 1);
+function computeNextPaymentOn(frequency: string, from?: Date | null): Date {
+  // Advance from the cycle's known due date when we have it, so a webhook that
+  // arrives (or is reprocessed) late doesn't drift the schedule forward off
+  // "now". Falls back to today for the first/unknown cycle.
+  const base =
+    from && !Number.isNaN(from.getTime()) ? new Date(from) : new Date();
+  const d = new Date(base);
+  const advance = (dt: Date) => {
+    switch (frequency) {
+      case "weekly":
+        dt.setDate(dt.getDate() + 7);
+        break;
+      case "quarterly":
+        dt.setMonth(dt.getMonth() + 3);
+        break;
+      case "yearly":
+        dt.setFullYear(dt.getFullYear() + 1);
+        break;
+      default: // monthly
+        dt.setMonth(dt.getMonth() + 1);
+    }
+  };
+  advance(d);
+  // If we processed a very late webhook, keep stepping forward so the stored
+  // next-payment date is never left in the past (it's a display mirror; LP's
+  // cron drives the real charges).
+  const now = new Date();
+  let guard = 0;
+  while (d <= now && guard < 120) {
+    advance(d);
+    guard += 1;
   }
   return d;
 }
@@ -294,7 +311,10 @@ async function handlePaymentSucceeded(event: string, payload: WebhookEnvelope) {
       where: { id: ctx.subscription.id },
       data: {
         status: "active",
-        nextPaymentOn: computeNextPaymentOn(ctx.subscription.frequency),
+        nextPaymentOn: computeNextPaymentOn(
+          ctx.subscription.frequency,
+          ctx.subscription.nextPaymentOn,
+        ),
       },
     });
   }
