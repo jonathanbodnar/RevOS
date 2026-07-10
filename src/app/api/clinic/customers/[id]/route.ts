@@ -13,6 +13,7 @@ const PatchBody = z.object({
   lastName: z.string().max(120).nullable().optional(),
   email: z.string().email().max(255).nullable().optional(),
   phone: z.string().max(40).nullable().optional(),
+  isActive: z.boolean().optional(),
 });
 
 export async function PATCH(
@@ -48,6 +49,7 @@ export async function PATCH(
   }
 
   const d = parsed.data;
+  const statusChanged = d.isActive !== undefined;
   const profileChanged =
     d.firstName !== undefined ||
     d.lastName !== undefined ||
@@ -79,6 +81,7 @@ export async function PATCH(
       ...(d.lastName !== undefined ? { lastName: d.lastName } : {}),
       ...(d.email !== undefined ? { email: d.email } : {}),
       ...(d.phone !== undefined ? { phone: d.phone } : {}),
+      ...(d.isActive !== undefined ? { isActive: d.isActive } : {}),
     },
   });
 
@@ -86,13 +89,20 @@ export async function PATCH(
     actorId: session.user.id,
     actorRole: session.user.originalRole,
     clinicId,
-    action: profileChanged ? "customer.update.profile" : "customer.update.reporting",
+    action: statusChanged
+      ? d.isActive
+        ? "customer.activate"
+        : "customer.deactivate"
+      : profileChanged
+        ? "customer.update.profile"
+        : "customer.update.reporting",
     targetType: "Customer",
     targetId: id,
     metadata: {
       implementorId: d.implementorId,
       hasNotes: d.paymentNotes != null,
       profileChanged,
+      isActive: d.isActive,
     },
   });
 

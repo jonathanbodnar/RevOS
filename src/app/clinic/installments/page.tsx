@@ -3,9 +3,15 @@ import { requireClinicContext, isSuperAdmin, getSession } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
 import { formatMoneyCents, formatDate } from "@/lib/format";
 import { CancelScheduleButton } from "../customers/[id]/cancel-schedule";
+import {
+  toCsv,
+  csvMoney,
+  parsePaymentsJson,
+  nextScheduledDate,
+  formatDateOnly,
+} from "@/lib/csv";
+import { DownloadCsvButton } from "@/components/download-csv-button";
 
-// Force-dynamic so newly-created plans show up immediately without an
-// edge cache stalling the list.
 export const dynamic = "force-dynamic";
 
 export default async function InstallmentsPage() {
@@ -19,9 +25,39 @@ export default async function InstallmentsPage() {
     include: { customer: true },
   });
 
+  const csv = toCsv(
+    [
+      "Customer",
+      "Email",
+      "Total",
+      "Paid",
+      "Status",
+      "Description",
+      "Scheduled dates",
+      "Next scheduled",
+      "Started",
+    ],
+    schedules.map((s) => {
+      const payments = parsePaymentsJson(s.paymentsJson);
+      return [
+        [s.customer.firstName, s.customer.lastName].filter(Boolean).join(" ") ||
+          s.customer.email ||
+          "Customer",
+        s.customer.email,
+        csvMoney(s.totalAmountCents),
+        csvMoney(s.paidAmountCents),
+        s.status,
+        s.description,
+        payments.map((p) => `${p.date} (${csvMoney(p.amount)}${p.status ? ` ${p.status}` : ""})`).join("; "),
+        nextScheduledDate(payments) ?? "",
+        s.createdAt.toISOString(),
+      ];
+    }),
+  );
+
   return (
     <div className="space-y-4">
-      <div className="flex items-baseline justify-between">
+      <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <h2 className="text-xl font-semibold text-slate-900">
             Installment plans
@@ -32,6 +68,7 @@ export default async function InstallmentsPage() {
             the customer&apos;s Transactions list.
           </p>
         </div>
+        <DownloadCsvButton csv={csv} filename="installments.csv" />
       </div>
 
       <div className="card overflow-hidden">
@@ -42,6 +79,7 @@ export default async function InstallmentsPage() {
               <th>Total</th>
               <th>Paid</th>
               <th>Status</th>
+              <th>Scheduled dates</th>
               <th>Description</th>
               <th>Started</th>
               <th className="text-right pr-4">Actions</th>
@@ -50,7 +88,7 @@ export default async function InstallmentsPage() {
           <tbody>
             {schedules.length === 0 && (
               <tr>
-                <td colSpan={7} className="text-center text-slate-500 py-10">
+                <td colSpan={8} className="text-center text-slate-500 py-10">
                   No installment plans yet.
                 </td>
               </tr>
@@ -62,6 +100,7 @@ export default async function InstallmentsPage() {
                   .join(" ") ||
                 s.customer.email ||
                 "Customer";
+              const payments = parsePaymentsJson(s.paymentsJson);
               return (
                 <tr key={s.id}>
                   <td>
@@ -99,6 +138,26 @@ export default async function InstallmentsPage() {
                     >
                       {s.status}
                     </span>
+                  </td>
+                  <td className="text-slate-600 text-xs">
+                    {payments.length === 0 ? (
+                      <span className="text-slate-400">—</span>
+                    ) : (
+                      <div className="space-y-0.5">
+                        {payments.map((p, i) => (
+                          <div key={i}>
+                            <span className="font-medium text-slate-800">
+                              {formatDateOnly(p.date)}
+                            </span>
+                            <span className="text-slate-400">
+                              {" "}
+                              · {formatMoneyCents(p.amount)}
+                              {p.status ? ` · ${p.status}` : ""}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
                   </td>
                   <td className="text-slate-600">{s.description || "—"}</td>
                   <td className="text-slate-500 text-xs">

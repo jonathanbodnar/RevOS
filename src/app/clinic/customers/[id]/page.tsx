@@ -18,8 +18,10 @@ import { CustomerAttribution } from "./customer-attribution";
 import { CareCredits } from "./care-credits";
 import { EditCustomerButton } from "./edit-customer";
 import { MergeCustomerButton } from "./merge-customer";
+import { InactiveToggleButton } from "./inactive-toggle";
 import { CustomerTabs } from "./customer-tabs";
 import { InBodyTab } from "./inbody-tab";
+import { formatDateOnly, parsePaymentsJson } from "@/lib/csv";
 
 export default async function CustomerDetailPage({
   params,
@@ -134,6 +136,11 @@ export default async function CustomerDetailPage({
           </Link>
           <h2 className="text-xl font-semibold text-slate-900 mt-1">
             {fullName}
+            {!customer.isActive && (
+              <span className="ml-2 badge-slate align-middle text-xs font-medium">
+                inactive
+              </span>
+            )}
           </h2>
           <p className="text-sm text-slate-500">
             {customer.email || "—"} · {customer.phone || "—"}
@@ -158,6 +165,10 @@ export default async function CustomerDetailPage({
                 email: customer.email,
                 phone: customer.phone,
               }}
+            />
+            <InactiveToggleButton
+              customerId={customer.id}
+              isActive={customer.isActive}
             />
             <MergeCustomerButton
               customerId={customer.id}
@@ -323,7 +334,9 @@ export default async function CustomerDetailPage({
                       </span>
                     </td>
                     <td className="text-slate-500 text-xs">
-                      {formatDate(s.nextPaymentOn)}
+                      {s.nextPaymentOn
+                        ? formatDateOnly(s.nextPaymentOn.toISOString().slice(0, 10))
+                        : "—"}
                     </td>
                     <td className="text-right pr-3">
                       {s.status === "active" && canPerformSensitiveActions && (
@@ -372,6 +385,7 @@ export default async function CustomerDetailPage({
                   <th>Total</th>
                   <th>Paid</th>
                   <th>Status</th>
+                  <th>Scheduled dates</th>
                   <th>Description</th>
                   <th>Started</th>
                   <th className="text-right pr-3">Actions</th>
@@ -380,12 +394,14 @@ export default async function CustomerDetailPage({
               <tbody>
                 {customer.schedules.length === 0 && (
                   <tr>
-                    <td colSpan={6} className="text-center text-slate-500 py-6">
+                    <td colSpan={7} className="text-center text-slate-500 py-6">
                       No installment plans.
                     </td>
                   </tr>
                 )}
-                {customer.schedules.map((s) => (
+                {customer.schedules.map((s) => {
+                  const payments = parsePaymentsJson(s.paymentsJson);
+                  return (
                   <tr key={s.id}>
                     <td className="font-medium">
                       {formatMoneyCents(s.totalAmountCents)}
@@ -410,6 +426,26 @@ export default async function CustomerDetailPage({
                         {s.status}
                       </span>
                     </td>
+                    <td className="text-slate-600 text-xs">
+                      {payments.length === 0 ? (
+                        <span className="text-slate-400">—</span>
+                      ) : (
+                        <div className="space-y-0.5">
+                          {payments.map((p, i) => (
+                            <div key={i}>
+                              <span className="font-medium text-slate-800">
+                                {formatDateOnly(p.date)}
+                              </span>
+                              <span className="text-slate-400">
+                                {" "}
+                                · {formatMoneyCents(p.amount)}
+                                {p.status ? ` · ${p.status}` : ""}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </td>
                     <td className="text-slate-600">{s.description || "—"}</td>
                     <td className="text-slate-500 text-xs">
                       {formatDate(s.createdAt)}
@@ -423,7 +459,8 @@ export default async function CustomerDetailPage({
                       )}
                     </td>
                   </tr>
-                ))}
+                  );
+                })}
               </tbody>
             </table>
           </div>

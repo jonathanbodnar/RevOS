@@ -100,6 +100,10 @@ model Customer {
   state     String?
   zip       String?
 
+  // Soft-inactive: hidden from default lists, still reachable by direct URL /
+  // cross-clinic search, and retained for reporting history.
+  isActive Boolean @default(true)
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 

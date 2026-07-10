@@ -681,6 +681,7 @@ export async function POST(
             paidAmountCents: chargedToday,
             status: lpSchedule.data.status,
             description: sess.description ?? null,
+            paymentsJson: JSON.stringify(payments),
           },
         });
       }

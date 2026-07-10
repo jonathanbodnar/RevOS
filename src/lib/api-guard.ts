@@ -22,6 +22,23 @@ export async function requireClinicApi() {
   return { session, clinicId };
 }
 
+/** Require a logged-in super admin (clinic impersonation not required). */
+export async function requireSuperAdminApi() {
+  const session = await getSession();
+  if (!session?.user) {
+    return { error: NextResponse.json({ error: "Unauthorized" }, { status: 401 }) };
+  }
+  if (session.user.originalRole !== "SUPER_ADMIN") {
+    return {
+      error: NextResponse.json(
+        { error: "Only super admins can perform this action." },
+        { status: 403 },
+      ),
+    };
+  }
+  return { session };
+}
+
 /**
  * Require super admin (or super admin impersonating) for sensitive operations
  * like refunds and removing payment methods.

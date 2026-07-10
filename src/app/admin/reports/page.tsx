@@ -8,6 +8,12 @@ import {
   monthlyFactor,
   type PeriodPreset,
 } from "@/lib/reporting";
+import {
+  parsePaymentsJson,
+  formatDateOnly,
+  csvEsc,
+  csvMoney,
+} from "@/lib/csv";
 import { ReportsFilters } from "./reports-filters";
 import { ReportActions } from "./report-actions";
 import { AdvancedCostForm } from "./advanced-cost-form";
@@ -108,6 +114,7 @@ export default async function ReportsPage({
       OR: [
         { charges: { some: chargeWhere } },
         { subscriptions: { some: { status: "active" } } },
+        { schedules: { some: { status: { in: ["active", "completed"] } } } },
         { advancedCosts: { some: costWhere } },
         { careCredits: { some: careCreditWhere } },
       ],
@@ -117,6 +124,10 @@ export default async function ReportsPage({
       implementor: { select: { id: true, name: true, commissionCents: true } },
       charges: { where: chargeWhere, orderBy: { createdAt: "asc" } },
       subscriptions: { where: { status: "active" } },
+      schedules: {
+        where: { status: { in: ["active", "completed", "cancelled"] } },
+        orderBy: { createdAt: "desc" },
+      },
       advancedCosts: { where: costWhere, orderBy: { incurredOn: "desc" } },
       careCredits: { where: careCreditWhere, orderBy: { collectedOn: "desc" } },
     },
@@ -176,8 +187,12 @@ export default async function ReportsPage({
     name: string;
     clinic: string;
     implementor: string | null;
-    downPayments: { amount: number; date: Date }[];
+    downPayments: { amount: number; date: Date; kind: "down" | "installment" | "other" }[];
     subs: { amount: number; freq: string; next: Date | null; pending: boolean }[];
+    scheduled: {
+      status: string;
+      payments: { amount: number; date: string; status?: string }[];
+    }[];
     careCredits: { amount: number; date: Date; note: string | null }[];
     refunds: number;
     notes: string | null;
@@ -185,6 +200,21 @@ export default async function ReportsPage({
     clinicProfit: number;
   };
   const rows: Row[] = [];
+
+  function chargeKind(
+    description: string | null,
+  ): "down" | "installment" | "other" {
+    const d = (description || "").toLowerCase();
+    if (d.includes("installment")) return "installment";
+    if (
+      d.includes("subscription") ||
+      d.includes("recurring") ||
+      d.includes("(auto)")
+    ) {
+      return "other";
+    }
+    return "down";
+  }
 
   for (const cust of customers) {
     const cfg =
@@ -200,7 +230,11 @@ export default async function ReportsPage({
     let custRevos = 0;
     let custClinic = 0;
     let custRefunds = 0;
-    const downPayments: { amount: number; date: Date }[] = [];
+    const downPayments: {
+      amount: number;
+      date: Date;
+      kind: "down" | "installment" | "other";
+    }[] = [];
 
     for (const ch of cust.charges) {
       const eco = downPaymentEconomics(ch.amountCents, cfg, commissionCents);
@@ -217,8 +251,17 @@ export default async function ReportsPage({
       custRevos += eco.revosProfitCents;
       custClinic += eco.clinicProfitCents;
       if (ledger) ledger.clinicCollectedShare += eco.clinicShareCents;
-      downPayments.push({ amount: ch.amountCents, date: ch.createdAt });
+      downPayments.push({
+        amount: ch.amountCents,
+        date: ch.createdAt,
+        kind: chargeKind(ch.description),
+      });
     }
+
+    const scheduled = cust.schedules.map((s) => ({
+      status: s.status,
+      payments: parsePaymentsJson(s.paymentsJson),
+    }));
 
     const subs: { amount: number; freq: string; next: Date | null; pending: boolean }[] = [];
     for (const s of cust.subscriptions) {
@@ -283,6 +326,7 @@ export default async function ReportsPage({
       implementor: cust.implementor?.name ?? null,
       downPayments,
       subs,
+      scheduled,
       careCredits,
       refunds: custRefunds,
       notes: cust.paymentNotes,
@@ -367,11 +411,7 @@ export default async function ReportsPage({
   });
 
   // ── CSV export (per-patient rows + a summary block) ──────────────────────
-  const csvEsc = (v: string | number) => {
-    const s = String(v);
-    return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
-  };
-  const money = (cents: number) => (cents / 100).toFixed(2);
+  const money = csvMoney;
   const csvLines: string[] = [];
   csvLines.push(`RevOS Report,${csvEsc(period.label)}`);
   csvLines.push(
@@ -386,6 +426,7 @@ export default async function ReportsPage({
       "Down payments",
       "Down payment dates",
       "Monthly sub",
+      "Scheduled payments",
       "Care credit",
       "Refunds",
       "Notes",
@@ -396,10 +437,34 @@ export default async function ReportsPage({
   for (const r of rows) {
     const downTotal = r.downPayments.reduce((s, d) => s + d.amount, 0);
     const downDates = r.downPayments
-      .map((d) => formatDate(d.date))
+      .map((d) => {
+        const label =
+          d.kind === "installment"
+            ? "scheduled installment"
+            : d.kind === "other"
+              ? "other"
+              : "down";
+        return `${formatDate(d.date)} [${label}]`;
+      })
       .join("; ");
     const subStr = r.subs
-      .map((s) => `${money(s.amount)}${freqLabel(s.freq)}${s.pending ? " (pending)" : ""}`)
+      .map((s) => {
+        const next = s.next
+          ? ` scheduled ${formatDateOnly(s.next.toISOString().slice(0, 10))}`
+          : "";
+        return `${money(s.amount)}${freqLabel(s.freq)}${s.pending ? " (pending)" : ""}${next}`;
+      })
+      .join("; ");
+    const schedStr = r.scheduled
+      .map((s) => {
+        const dates = s.payments
+          .map(
+            (p) =>
+              `${formatDateOnly(p.date)} ${money(p.amount)}${p.status ? ` ${p.status}` : ""}`,
+          )
+          .join(" | ");
+        return `${s.status}: ${dates || "no dates stored"}`;
+      })
       .join("; ");
     const ccTotal = r.careCredits.reduce((s, c) => s + c.amount, 0);
     csvLines.push(
@@ -410,6 +475,7 @@ export default async function ReportsPage({
         money(downTotal),
         csvEsc(downDates),
         csvEsc(subStr),
+        csvEsc(schedStr),
         ccTotal > 0 ? money(ccTotal) : "",
         money(r.refunds),
         csvEsc(r.notes ?? ""),
@@ -605,6 +671,7 @@ export default async function ReportsPage({
                   <th>Implementor</th>
                   <th>Down payment(s)</th>
                   <th>Monthly sub</th>
+                  <th>Scheduled payments</th>
                   <th>Care credit</th>
                   <th>Refunds</th>
                   <th>Notes</th>
@@ -615,7 +682,7 @@ export default async function ReportsPage({
               <tbody>
                 {rows.length === 0 && (
                   <tr>
-                    <td colSpan={10} className="text-center text-slate-500 py-8">
+                    <td colSpan={11} className="text-center text-slate-500 py-8">
                       No activity in this period.
                     </td>
                   </tr>
@@ -633,7 +700,15 @@ export default async function ReportsPage({
                           {r.downPayments.map((d, i) => (
                             <div key={i} className="text-xs">
                               {formatMoneyCents(d.amount)}
-                              <span className="text-slate-400"> · {formatDate(d.date)}</span>
+                              <span className="text-slate-400">
+                                {" "}
+                                · {formatDate(d.date)}
+                              </span>
+                              {d.kind === "installment" && (
+                                <span className="badge-indigo ml-1 text-[10px]">
+                                  scheduled
+                                </span>
+                              )}
                             </div>
                           ))}
                         </div>
@@ -650,12 +725,60 @@ export default async function ReportsPage({
                               <span className="text-slate-400">{freqLabel(s.freq)}</span>
                               {s.pending ? (
                                 <span className="badge-yellow ml-1 text-[10px]">
-                                  pending{s.next ? ` · ${formatDate(s.next)}` : ""}
+                                  pending
+                                  {s.next
+                                    ? ` · ${formatDateOnly(s.next.toISOString().slice(0, 10))}`
+                                    : ""}
                                 </span>
                               ) : (
                                 s.next && (
-                                  <span className="text-slate-400"> · next {formatDate(s.next)}</span>
+                                  <span className="text-slate-400">
+                                    {" "}
+                                    · next{" "}
+                                    {formatDateOnly(
+                                      s.next.toISOString().slice(0, 10),
+                                    )}
+                                  </span>
                                 )
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </td>
+                    <td>
+                      {r.scheduled.length === 0 ? (
+                        <span className="text-slate-400">—</span>
+                      ) : (
+                        <div className="space-y-1">
+                          {r.scheduled.map((s, i) => (
+                            <div key={i} className="text-xs space-y-0.5">
+                              <span
+                                className={
+                                  s.status === "active"
+                                    ? "badge-green"
+                                    : s.status === "completed"
+                                      ? "badge-indigo"
+                                      : "badge-slate"
+                                }
+                              >
+                                {s.status}
+                              </span>
+                              {s.payments.length === 0 ? (
+                                <div className="text-slate-400">No dates stored</div>
+                              ) : (
+                                s.payments.map((p, j) => (
+                                  <div key={j}>
+                                    <span className="font-medium text-slate-800">
+                                      {formatDateOnly(p.date)}
+                                    </span>
+                                    <span className="text-slate-400">
+                                      {" "}
+                                      · {formatMoneyCents(p.amount)}
+                                      {p.status ? ` · ${p.status}` : ""}
+                                    </span>
+                                  </div>
+                                ))
                               )}
                             </div>
                           ))}

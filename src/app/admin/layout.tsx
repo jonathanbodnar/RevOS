@@ -16,6 +16,7 @@ export default async function AdminLayout({
       subtitle="Global control across all clinics"
       nav={[
         { href: "/admin", label: "Overview", icon: "home" },
+        { href: "/admin/customers", label: "Patients", icon: "users" },
         { href: "/admin/reports", label: "Reports", icon: "receipt" },
         { href: "/admin/clinics", label: "Clinics", icon: "building" },
         { href: "/admin/clinics/new", label: "New clinic", icon: "plus-circle" },
