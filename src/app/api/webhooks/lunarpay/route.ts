@@ -25,6 +25,7 @@ import crypto from "crypto";
 import { prisma } from "@/lib/prisma";
 import { logAudit } from "@/lib/audit";
 import { recordFailedCharge } from "@/lib/failed-charge";
+import { reconChargeId } from "@/lib/subscription-reconcile";
 
 // ---------- checkout.session.completed payload (legacy) ----------
 
@@ -302,6 +303,20 @@ async function handlePaymentSucceeded(event: string, payload: WebhookEnvelope) {
           description: `${kind} (auto)`,
         },
       });
+
+      // If the daily reconciliation already backfilled this cycle as a
+      // placeholder, drop it now that the real charge (with the true tx id)
+      // has arrived — otherwise the cycle would be counted twice.
+      if (ctx.subscription?.nextPaymentOn) {
+        await prisma.charge.deleteMany({
+          where: {
+            lunarpayChargeId: reconChargeId(
+              ctx.subscription.lunarpaySubscriptionId,
+              ctx.subscription.nextPaymentOn,
+            ),
+          },
+        });
+      }
     }
   }
 
