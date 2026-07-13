@@ -15,9 +15,11 @@
  *    RevOS's NET take — but does NOT change the share split columns.
  *  - Advanced costs (supplements, booklets) are subtracted from RevOS net.
  *
- * NOTE: recurring subscription cron charges are not stored as individual Charge
- * rows, so recurring revenue is projected from active subscriptions, not actual
- * historical charges. The UI labels these figures as projected.
+ * NOTE: recurring subscription cron charges ARE stored as individual Charge
+ * rows now — mirrored live by the LunarPay webhook and backfilled/kept current
+ * by the daily reconciliation (see src/lib/subscription-reconcile.ts). Reports
+ * therefore count actual recurring charges collected in the period rather than
+ * projecting from active subscriptions.
  */
 
 import { FEE_PERCENT, FEE_FLAT_CENTS, calcFee } from "./fees";

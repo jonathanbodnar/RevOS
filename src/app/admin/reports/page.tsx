@@ -5,7 +5,6 @@ import {
   downPaymentEconomics,
   recurringEconomics,
   careCreditEconomics,
-  monthlyFactor,
   type PeriodPreset,
 } from "@/lib/reporting";
 import {
@@ -237,6 +236,32 @@ export default async function ReportsPage({
     }[] = [];
 
     for (const ch of cust.charges) {
+      // Recurring/subscription charges (real Charge rows, now backfilled +
+      // kept current by the webhook/reconciliation) are counted as ACTUAL
+      // recurring revenue for the selected period — no longer projected from
+      // the Subscription table. Match the exact "Subscription renewal" marker
+      // the webhook/reconciliation use, so a down payment merely described as
+      // e.g. "Down payment + monthly subscription" is NOT misclassified.
+      const isRecurring = /subscription renewal/.test(
+        (ch.description || "").toLowerCase(),
+      );
+      if (isRecurring) {
+        const eco = recurringEconomics(ch.amountCents, cfg);
+        t.recurringCount += 1;
+        t.recurringMonthlyGross += eco.grossCents;
+        t.recurringMonthlyBase += eco.baseCents;
+        t.recurringProcessingFee += eco.processingFeeCents;
+        t.recurringLunarpayCost += eco.lunarpayCostCents;
+        t.revosRecurringShare += eco.revosShareCents;
+        t.clinicRecurringShare += eco.clinicShareCents;
+        t.refunds += ch.refundedCents;
+        custRefunds += ch.refundedCents;
+        custRevos += eco.revosProfitCents;
+        custClinic += eco.clinicProfitCents;
+        if (ledger) ledger.clinicCollectedShare += eco.clinicShareCents;
+        continue;
+      }
+
       const eco = downPaymentEconomics(ch.amountCents, cfg, commissionCents);
       t.downCount += 1;
       t.downGross += eco.grossCents;
@@ -263,13 +288,12 @@ export default async function ReportsPage({
       payments: parsePaymentsJson(s.paymentsJson),
     }));
 
+    // Subscriptions are shown for context (plan amount + next charge date), but
+    // recurring REVENUE now comes from the real recurring Charge rows above —
+    // not projected here — so a sub contributes to totals only when it actually
+    // bills. `pending` still flags a sub whose first charge hasn't happened yet.
     const subs: { amount: number; freq: string; next: Date | null; pending: boolean }[] = [];
     for (const s of cust.subscriptions) {
-      // Only count a subscription toward collected revenue once its first
-      // charge has actually happened. The first charge date is the originally
-      // scheduled nextPaymentOn (falling back to startOn for legacy rows). A
-      // subscription whose first charge is still in the future (e.g. a master
-      // $0-down sub starting in 30 days) has collected nothing yet.
       const firstCharge = s.nextPaymentOn ?? s.startOn ?? null;
       const hasCollected = firstCharge != null && firstCharge.getTime() <= now.getTime();
       subs.push({
@@ -278,20 +302,6 @@ export default async function ReportsPage({
         next: s.nextPaymentOn,
         pending: !hasCollected,
       });
-      if (!hasCollected) continue;
-
-      const eco = recurringEconomics(s.amountCents, cfg);
-      const factor = monthlyFactor(s.frequency);
-      t.recurringCount += 1;
-      t.recurringMonthlyGross += Math.round(eco.grossCents * factor);
-      t.recurringMonthlyBase += Math.round(eco.baseCents * factor);
-      t.recurringProcessingFee += Math.round(eco.processingFeeCents * factor);
-      t.recurringLunarpayCost += Math.round(eco.lunarpayCostCents * factor);
-      t.revosRecurringShare += Math.round(eco.revosShareCents * factor);
-      t.clinicRecurringShare += Math.round(eco.clinicShareCents * factor);
-      custRevos += Math.round(eco.revosProfitCents * factor);
-      custClinic += Math.round(eco.clinicProfitCents * factor);
-      if (ledger) ledger.clinicCollectedShare += Math.round(eco.clinicShareCents * factor);
     }
 
     // Care credits: split like a down payment (no fee). Counts in the share
@@ -490,7 +500,7 @@ export default async function ReportsPage({
   csvLines.push(`Clinic share,${money(clinicProfit)}`);
   csvLines.push(`RevOS net (after fees & costs),${money(revosNet)}`);
   csvLines.push(`Down payments gross,${money(t.downGross)}`);
-  csvLines.push(`Recurring monthly gross,${money(t.recurringMonthlyGross)}`);
+  csvLines.push(`Recurring collected gross,${money(t.recurringMonthlyGross)}`);
   csvLines.push(`Care credit collected,${money(t.careCreditTotal)}`);
   csvLines.push(`Care credit RevOS take (owed by clinic),${money(t.careCreditRevosShare)}`);
   csvLines.push(`Refunds,${money(t.refunds)}`);
@@ -536,9 +546,9 @@ export default async function ReportsPage({
       sub: `${t.downCount} payment${t.downCount === 1 ? "" : "s"}`,
     },
     {
-      label: "Recurring (monthly)",
+      label: "Recurring (collected)",
       value: formatMoneyCents(t.recurringMonthlyGross),
-      sub: `${t.recurringCount} billing sub${t.recurringCount === 1 ? "" : "s"} · excludes not-yet-charged`,
+      sub: `${t.recurringCount} recurring charge${t.recurringCount === 1 ? "" : "s"} in period`,
     },
     {
       label: "Care credit",
@@ -644,9 +654,9 @@ export default async function ReportsPage({
 
           <div className="card-pad space-y-2">
             <h3 className="text-sm font-semibold text-slate-900 mb-2">
-              Recurring revenue (monthly, projected)
+              Recurring revenue (collected in period)
             </h3>
-            <BreakdownRow label="Monthly recurring gross" value={t.recurringMonthlyGross} />
+            <BreakdownRow label="Recurring collected (gross)" value={t.recurringMonthlyGross} />
             <BreakdownRow label="Base (fee removed)" value={t.recurringMonthlyBase} muted />
             <BreakdownRow label="RevOS share ($/cycle)" value={t.revosRecurringShare} />
             <BreakdownRow label="Clinic share" value={t.clinicRecurringShare} />
@@ -976,8 +986,8 @@ export default async function ReportsPage({
 
         <p className="text-[11px] text-slate-400">
           Processing fees reflect the customer-facing 3.9% + $0.39 (RevOS revenue) and a
-          separate LunarPay 3.9% + $0.39 (cost). Recurring figures are projected from
-          active subscriptions, not individual historical charges.
+          separate LunarPay 3.9% + $0.39 (cost). Recurring figures reflect actual
+          recurring charges collected in the selected period.
         </p>
       </div>
     </div>
