@@ -125,6 +125,14 @@ export type LPSubscription = {
   status: "active" | "cancelled";
   startOn?: string;
   nextPaymentOn?: string;
+  // Authoritative charge history counters. `successTrxns` is the number of
+  // recurring charges that actually SUCCEEDED (the count we mirror), and
+  // `lastPaymentOn` is the date of the most recent success. `nextPaymentOn`
+  // advances on failed attempts too, so it must NOT be used to infer how many
+  // charges landed.
+  lastPaymentOn?: string | null;
+  successTrxns?: number;
+  failTrxns?: number;
   createdAt?: string;
 };
 

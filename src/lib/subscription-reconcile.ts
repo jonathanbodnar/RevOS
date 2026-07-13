@@ -4,45 +4,47 @@
  * LunarPay's cron drives the real recurring charges; RevOS is supposed to learn
  * about each one via the `payment.succeeded` webhook and mirror it into the
  * `Charge` table. Those deliveries are fire-and-forget and have been getting
- * lost, so recurring charges are missing from the `Charge` table entirely
- * (they never show in the transactions export, and reports have to project
+ * lost, so recurring charges were missing from the `Charge` table entirely
+ * (they never showed in the transactions export, and reports had to project
  * them from the `Subscription` table instead of counting real dollars).
  *
- * This module self-heals that gap. For each subscription we ask LunarPay for
- * its authoritative `nextPaymentOn` (via the existing get-by-id endpoint) and
- * compare it to what we last recorded. Every cycle boundary LunarPay has
- * advanced PAST — but that we have no charge for — represents a renewal that
- * succeeded while our webhook was asleep. We materialize a `Charge` row for
- * each such cycle, dated to the cycle it belongs to, and fast-forward our
- * subscription's `nextPaymentOn`/`status` to match LunarPay.
+ * This module self-heals that gap using LunarPay's AUTHORITATIVE counters from
+ * get-subscription: `successTrxns` (how many recurring charges actually
+ * succeeded) and `lastPaymentOn` (the most recent success). We make the number
+ * of recorded renewal charges for a subscription's customer EQUAL
+ * `successTrxns` — creating only the delta, dated back from `lastPaymentOn`.
+ *
+ * IMPORTANT: we deliberately do NOT infer cycles from `nextPaymentOn` — that
+ * field advances on FAILED attempts too, so counting cycles against it would
+ * fabricate charges for declines that never actually collected.
  *
  * Idempotent: each backfilled charge gets a deterministic id
- * `recon:sub:<lunarpaySubscriptionId>:<YYYY-MM-DD>`, so re-running (daily cron,
- * or a manual re-run) never duplicates. We also skip a cycle if a real charge
- * for that customer/amount already lives on that day, so we don't double-count
- * a webhook that did land.
+ * `recon:sub:<lunarpaySubscriptionId>:<YYYY-MM-DD>`, and because creation is
+ * bounded by `successTrxns - alreadyRecorded`, re-running (daily cron or a
+ * manual re-run) never duplicates or overshoots.
  */
 
 import { prisma } from "@/lib/prisma";
 import { lunarpay, LunarPayError } from "@/lib/lunarpay";
 
 export const RECON_ID_PREFIX = "recon:sub:";
+const RENEWAL_MARKER = "Subscription renewal";
 
-/** Advance a date by one billing cycle. Mirrors the webhook's stepper. */
-function addCycle(date: Date, frequency: string): Date {
+/** Step a date BACK by `n` billing cycles. */
+function stepBack(date: Date, frequency: string, n: number): Date {
   const d = new Date(date);
   switch (frequency) {
     case "weekly":
-      d.setDate(d.getDate() + 7);
+      d.setDate(d.getDate() - 7 * n);
       break;
     case "quarterly":
-      d.setMonth(d.getMonth() + 3);
+      d.setMonth(d.getMonth() - 3 * n);
       break;
     case "yearly":
-      d.setFullYear(d.getFullYear() + 1);
+      d.setFullYear(d.getFullYear() - n);
       break;
     default: // monthly
-      d.setMonth(d.getMonth() + 1);
+      d.setMonth(d.getMonth() - n);
   }
   return d;
 }
@@ -69,11 +71,11 @@ export type ReconSubResult = {
   subscriptionId: string;
   lunarpaySubscriptionId: number;
   frequency: string;
-  ourNextPaymentOn: string | null;
-  lunarpayNextPaymentOn: string | null;
   lunarpayStatus: string | null;
+  successTrxns: number;
+  alreadyRecorded: number;
   cyclesBackfilled: string[]; // ISO dates we created charges for
-  cyclesSkippedExisting: string[]; // real charge already covered the cycle
+  cyclesSkippedExisting: string[]; // a real charge already covered the date
   amountCentsPerCycle: number;
   error?: string;
 };
@@ -92,8 +94,8 @@ export type ReconcileOptions = {
   dryRun?: boolean;
   /** Limit to a single subscription (by our cuid) — handy for testing. */
   subscriptionId?: string;
-  /** Cap on how many cycles to backfill per subscription (guards runaway loops). */
-  maxCyclesPerSub?: number;
+  /** Safety cap on how many charges to backfill per subscription. */
+  maxPerSub?: number;
 };
 
 /**
@@ -105,8 +107,7 @@ export async function reconcileRecurringCharges(
   opts: ReconcileOptions = {},
 ): Promise<ReconSummary> {
   const dryRun = opts.dryRun ?? true;
-  const maxCycles = opts.maxCyclesPerSub ?? 24;
-  const now = new Date();
+  const maxPerSub = opts.maxPerSub ?? 24;
 
   const subs = await prisma.subscription.findMany({
     where: {
@@ -130,9 +131,9 @@ export async function reconcileRecurringCharges(
       subscriptionId: sub.id,
       lunarpaySubscriptionId: sub.lunarpaySubscriptionId,
       frequency: sub.frequency,
-      ourNextPaymentOn: sub.nextPaymentOn?.toISOString() ?? null,
-      lunarpayNextPaymentOn: null,
       lunarpayStatus: null,
+      successTrxns: 0,
+      alreadyRecorded: 0,
       cyclesBackfilled: [],
       cyclesSkippedExisting: [],
       // Use OUR stored cents (a known unit) for the charge amount to avoid any
@@ -143,38 +144,43 @@ export async function reconcileRecurringCharges(
     try {
       const lp = await lunarpay.getSubscription(sub.lunarpaySubscriptionId);
       const data = lp.data;
+      const successTrxns = Math.max(0, Math.floor(Number(data?.successTrxns ?? 0)));
+      const lastPaymentOn = data?.lastPaymentOn ? new Date(data.lastPaymentOn) : null;
       const lpNext = data?.nextPaymentOn ? new Date(data.nextPaymentOn) : null;
-      result.lunarpayNextPaymentOn = lpNext?.toISOString() ?? null;
       result.lunarpayStatus = data?.status ?? null;
+      result.successTrxns = successTrxns;
 
-      // The first un-recorded expected charge. Fall back to startOn for legacy
-      // rows that never had a nextPaymentOn.
-      const start = sub.nextPaymentOn ?? sub.startOn ?? null;
+      // How many renewal charges have we already recorded for this customer?
+      // (Webhook/manual rows aren't keyed by subscription, so we match on the
+      // customer + the shared "Subscription renewal" description marker.)
+      const alreadyRecorded = await prisma.charge.count({
+        where: {
+          customerId: sub.customerId,
+          status: { in: ["paid", "pending", "refunded"] },
+          description: { contains: RENEWAL_MARKER, mode: "insensitive" },
+        },
+      });
+      result.alreadyRecorded = alreadyRecorded;
 
-      if (start && lpNext && start.getTime() < lpNext.getTime()) {
-        let cycle = new Date(start);
-        let guard = 0;
-        while (
-          cycle.getTime() < lpNext.getTime() &&
-          cycle.getTime() <= now.getTime() &&
-          guard < maxCycles
-        ) {
-          guard += 1;
+      const toCreate = Math.min(
+        maxPerSub,
+        Math.max(0, successTrxns - alreadyRecorded),
+      );
+
+      if (toCreate > 0 && lastPaymentOn) {
+        // Create the missing successes, most recent first, stepping back a
+        // cycle each time from lastPaymentOn.
+        for (let k = 0; k < toCreate; k++) {
+          const cycle = stepBack(lastPaymentOn, sub.frequency, k);
           const id = reconChargeId(sub.lunarpaySubscriptionId, cycle);
 
-          // Already backfilled this cycle on a prior run?
           const existingRecon = await prisma.charge.findUnique({
             where: { lunarpayChargeId: id },
             select: { id: true },
           });
-          if (existingRecon) {
-            cycle = addCycle(cycle, sub.frequency);
-            continue;
-          }
+          if (existingRecon) continue;
 
-          // A real (webhook/manual) charge already covering this cycle? Match on
-          // same customer + same amount + same calendar day, ignoring failed and
-          // other reconciled rows.
+          // A real (webhook/manual) charge already covering this day?
           const realHit = await prisma.charge.findFirst({
             where: {
               customerId: sub.customerId,
@@ -187,7 +193,6 @@ export async function reconcileRecurringCharges(
           });
           if (realHit) {
             result.cyclesSkippedExisting.push(cycle.toISOString().slice(0, 10));
-            cycle = addCycle(cycle, sub.frequency);
             continue;
           }
 
@@ -200,7 +205,7 @@ export async function reconcileRecurringCharges(
                 lunarpayChargeId: id,
                 amountCents: sub.amountCents,
                 status: "paid",
-                description: `Subscription renewal (reconciled ${cycle
+                description: `${RENEWAL_MARKER} (reconciled ${cycle
                   .toISOString()
                   .slice(0, 10)})`,
                 // Date the charge to the cycle it belongs to so period-scoped
@@ -211,17 +216,17 @@ export async function reconcileRecurringCharges(
           }
           result.cyclesBackfilled.push(cycle.toISOString().slice(0, 10));
           summary.chargesCreated += 1;
-          cycle = addCycle(cycle, sub.frequency);
         }
       }
 
-      // Fast-forward our mirror of the subscription so the drift is fixed and
-      // the projection-based reports stay accurate too.
-      if (!dryRun) {
-        const advanced =
-          (lpNext && lpNext.getTime() !== (sub.nextPaymentOn?.getTime() ?? 0)) ||
-          (data?.status && data.status !== sub.status);
-        if (advanced) {
+      // Fast-forward our mirror of the subscription (status + next date) to
+      // match LunarPay's authoritative state.
+      const statusChanged = data?.status && data.status !== sub.status;
+      const nextChanged =
+        !!lpNext && lpNext.getTime() !== (sub.nextPaymentOn?.getTime() ?? 0);
+      if (statusChanged || nextChanged) {
+        summary.subscriptionsAdvanced += 1;
+        if (!dryRun) {
           await prisma.subscription.update({
             where: { id: sub.id },
             data: {
@@ -229,13 +234,7 @@ export async function reconcileRecurringCharges(
               status: data?.status ?? sub.status,
             },
           });
-          summary.subscriptionsAdvanced += 1;
         }
-      } else if (
-        lpNext &&
-        lpNext.getTime() !== (sub.nextPaymentOn?.getTime() ?? 0)
-      ) {
-        summary.subscriptionsAdvanced += 1;
       }
     } catch (e) {
       summary.errors += 1;
