@@ -1,11 +1,16 @@
 # RevOS
 
-A multi-tenant clinic platform with integrated LunarPay billing. This repo is
-the **foundational slice** of the full RevOS spec — it ships a clean admin +
-clinic UI with a complete LunarPay payments integration.
+A multi-tenant clinic platform with integrated LunarPay billing, a revenue-share
+reporting engine, and an InBody body-composition integration.
 
-For the full feature roadmap (charting, InBody, eLearning, internal chat,
-audit KPIs, HIPAA/AWS infra), see [`FUTURE_SCOPE.md`](./FUTURE_SCOPE.md).
+> **Working in this codebase (human or AI agent)?** Start with
+> [`AGENTS.md`](./AGENTS.md), then the full context graph under
+> [`docs/`](./docs) — architecture diagrams, data model, API reference, and
+> subsystem deep dives (payments, reporting, InBody). Those docs are kept in
+> sync with the code and are more complete than this quickstart.
+
+For the full feature roadmap (charting, eLearning, internal chat, audit KPIs,
+HIPAA/AWS infra), see [`FUTURE_SCOPE.md`](./FUTURE_SCOPE.md).
 
 ## What's built
 
@@ -57,7 +62,7 @@ for a reusable `paymentMethodId` via LunarPay.
 
 - Next.js 15 (App Router) + React 18 + TypeScript
 - Tailwind CSS
-- Prisma ORM (SQLite in dev; swap to Postgres in prod)
+- Prisma ORM → PostgreSQL (Supabase-hosted; pooled URL at runtime, direct URL for migrations)
 - NextAuth (credentials / email + password, JWT sessions)
 - bcryptjs for password hashing
 - Zod for input validation
@@ -90,7 +95,7 @@ Key settings:
 
 | Var | Purpose |
 | --- | --- |
-| `DATABASE_URL` | Prisma connection string. SQLite locally. |
+| `DATABASE_URL` | Prisma connection string. Supabase Postgres pooler (port 6543). |
 | `NEXTAUTH_SECRET` | JWT signing key. Generate with `openssl rand -base64 32`. |
 | `LUNARPAY_SECRET_KEY` | Server-side LunarPay key (`lp_sk_…`). |
 | `LUNARPAY_PUBLISHABLE_KEY` | Client-side LunarPay key (`lp_pk_…`). |
