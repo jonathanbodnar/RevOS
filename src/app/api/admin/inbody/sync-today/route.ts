@@ -1,8 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireSuperAdminClinicApi } from "@/lib/api-guard";
+import { requireSuperAdminApi } from "@/lib/api-guard";
 import { syncInBodyMeasurementsForDate } from "@/lib/inbody-ingest";
 
 export const dynamic = "force-dynamic";
+export const maxDuration = 300;
 
 /**
  * Manually pull every InBody test recorded on a given date (default today)
@@ -12,7 +13,7 @@ export const dynamic = "force-dynamic";
  * the basic connection test).
  */
 export async function POST(req: NextRequest) {
-  const guard = await requireSuperAdminClinicApi();
+  const guard = await requireSuperAdminApi();
   if ("error" in guard) return guard.error;
 
   const body = (await req.json().catch(() => ({}))) as { date?: string };

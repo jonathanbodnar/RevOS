@@ -56,10 +56,10 @@ export default async function InBodyAdminPage({
           <div className="text-xs uppercase tracking-wide text-slate-400">API status</div>
           <div className="text-sm font-medium mt-1">
             <span className={configured ? "badge-green" : "badge-red"}>
-              {configured ? "Key configured" : "No API key"}
+              {configured ? "Credentials configured" : "Credentials incomplete"}
             </span>{" "}
             <span className={canFetch ? "badge-green" : "badge-yellow"}>
-              {canFetch ? "Fetch enabled" : "Fetch pending docs"}
+              {canFetch ? "Fetch enabled" : "Fetch unavailable"}
             </span>
           </div>
         </div>

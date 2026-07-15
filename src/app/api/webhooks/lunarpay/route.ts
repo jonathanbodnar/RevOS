@@ -26,6 +26,7 @@ import { prisma } from "@/lib/prisma";
 import { logAudit } from "@/lib/audit";
 import { recordFailedCharge } from "@/lib/failed-charge";
 import { reconChargeId } from "@/lib/subscription-reconcile";
+import { SCHEDULE_RECON_ID_PREFIX } from "@/lib/payment-schedule-reconcile";
 
 // ---------- checkout.session.completed payload (legacy) ----------
 
@@ -88,6 +89,9 @@ type WebhookEventData = {
   error?: string | null;
   consecutive_failures?: number | null;
   auto_cancelled?: boolean | null;
+  created_at?: string | null;
+  paid_at?: string | null;
+  transaction_date?: string | null;
 };
 
 type WebhookEnvelope = {
@@ -271,6 +275,42 @@ function eventKind(ctx: ResolvedContext, event: string): string {
   return event.startsWith("charge.") ? "Charge" : "Payment";
 }
 
+function webhookTransactionDate(
+  data: WebhookEventData,
+  payload: WebhookEnvelope,
+): Date {
+  for (const value of [
+    data.paid_at,
+    data.transaction_date,
+    data.created_at,
+    payload.timestamp,
+  ]) {
+    if (!value) continue;
+    const parsed = new Date(value);
+    if (!Number.isNaN(parsed.getTime())) return parsed;
+  }
+  return new Date();
+}
+
+function utcDayBounds(date: Date): { gte: Date; lte: Date } {
+  return {
+    gte: new Date(
+      Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()),
+    ),
+    lte: new Date(
+      Date.UTC(
+        date.getUTCFullYear(),
+        date.getUTCMonth(),
+        date.getUTCDate(),
+        23,
+        59,
+        59,
+        999,
+      ),
+    ),
+  };
+}
+
 async function handlePaymentSucceeded(event: string, payload: WebhookEnvelope) {
   const data = payload.data ?? {};
   const ctx = await resolveContext(data);
@@ -280,17 +320,34 @@ async function handlePaymentSucceeded(event: string, payload: WebhookEnvelope) {
   }
 
   const txId = data.transaction_id != null ? String(data.transaction_id) : null;
-  const amountCents = Math.max(0, Math.round(Number(data.amount_cents ?? 0)));
+  const providedAmount = Math.round(Number(data.amount_cents));
+  const amountCents =
+    Number.isFinite(providedAmount) && providedAmount > 0
+      ? providedAmount
+      : (ctx.subscription?.amountCents ?? 0);
   const pmType = data.payment_method ?? null;
   const kind = eventKind(ctx, event);
+  const occurredAt = webhookTransactionDate(data, payload);
+  let newlySettled = false;
 
-  if (txId) {
-    // Idempotent, and dedupes against charges RevOS already recorded
-    // synchronously (manual charges / payment links share the same tx id).
+  if (txId && amountCents > 0) {
+    // A succeeded webhook is authoritative, including ACH settlement. Update a
+    // synchronously-created pending row instead of ignoring it forever.
     const existing = await prisma.charge.findUnique({
       where: { lunarpayChargeId: txId },
     });
-    if (!existing) {
+    if (existing) {
+      newlySettled = !["paid", "refunded"].includes(existing.status);
+      await prisma.charge.update({
+        where: { id: existing.id },
+        data: {
+          amountCents,
+          status: existing.status === "refunded" ? "refunded" : "paid",
+          paymentMethodType: pmType ?? existing.paymentMethodType,
+          description: existing.description || `${kind} (auto)`,
+        },
+      });
+    } else {
       await prisma.charge.create({
         data: {
           clinicId: ctx.clinicId,
@@ -298,30 +355,45 @@ async function handlePaymentSucceeded(event: string, payload: WebhookEnvelope) {
           paymentMethodId: ctx.paymentMethodId,
           lunarpayChargeId: txId,
           amountCents,
-          status: pmType === "ach" ? "pending" : "paid",
+          status: "paid",
           paymentMethodType: pmType,
           description: `${kind} (auto)`,
+          createdAt: occurredAt,
         },
       });
+      newlySettled = true;
+    }
 
-      // If the daily reconciliation already backfilled this cycle as a
-      // placeholder, drop it now that the real charge (with the true tx id)
-      // has arrived — otherwise the cycle would be counted twice.
-      if (ctx.subscription?.nextPaymentOn) {
-        await prisma.charge.deleteMany({
-          where: {
-            lunarpayChargeId: reconChargeId(
-              ctx.subscription.lunarpaySubscriptionId,
-              ctx.subscription.nextPaymentOn,
-            ),
+    // Replace a nightly placeholder with the real LunarPay transaction id.
+    if (ctx.subscription) {
+      await prisma.charge.deleteMany({
+        where: {
+          lunarpayChargeId: reconChargeId(
+            ctx.subscription.lunarpaySubscriptionId,
+            occurredAt,
+          ),
+        },
+      });
+    }
+    if (ctx.schedule) {
+      const placeholder = await prisma.charge.findFirst({
+        where: {
+          lunarpayChargeId: {
+            startsWith: `${SCHEDULE_RECON_ID_PREFIX}${ctx.schedule.lunarpayScheduleId}:`,
           },
-        });
+          amountCents,
+          createdAt: utcDayBounds(occurredAt),
+        },
+        select: { id: true },
+      });
+      if (placeholder) {
+        await prisma.charge.delete({ where: { id: placeholder.id } });
       }
     }
   }
 
-  // Advance the subscription's next payment date so the portal stays accurate.
-  if (ctx.subscription) {
+  // Duplicate deliveries must not advance subscription/schedule state twice.
+  if (ctx.subscription && newlySettled) {
     await prisma.subscription.update({
       where: { id: ctx.subscription.id },
       data: {
@@ -335,7 +407,7 @@ async function handlePaymentSucceeded(event: string, payload: WebhookEnvelope) {
   }
 
   // Track installment progress; mark completed once fully paid.
-  if (ctx.schedule) {
+  if (ctx.schedule && newlySettled) {
     const paid = ctx.schedule.paidAmountCents + amountCents;
     await prisma.paymentSchedule.update({
       where: { id: ctx.schedule.id },
@@ -354,7 +426,7 @@ async function handlePaymentSucceeded(event: string, payload: WebhookEnvelope) {
     action: "charge.succeeded.webhook",
     targetType: "Customer",
     targetId: ctx.customer.id,
-    metadata: { event, amountCents, transactionId: txId },
+    metadata: { event, amountCents, transactionId: txId, newlySettled },
   });
 }
 

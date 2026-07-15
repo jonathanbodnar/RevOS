@@ -47,6 +47,8 @@ export function InBodyClient({
   const [conn, setConn] = useState<string | null>(null);
   const [syncing, setSyncing] = useState(false);
   const [syncResult, setSyncResult] = useState<string | null>(null);
+  const [backfilling, setBackfilling] = useState(false);
+  const [backfillResult, setBackfillResult] = useState<string | null>(null);
 
   async function syncToday() {
     setSyncing(true);
@@ -83,6 +85,30 @@ export function InBodyClient({
         ? `Success (HTTP ${d.status})`
         : `Failed (HTTP ${d.status ?? "?"}): ${d.body || "no response"}`,
     );
+  }
+
+  async function backfillExisting() {
+    setBackfilling(true);
+    setBackfillResult(null);
+    const res = await fetch("/api/admin/inbody/backfill", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ limit: 200 }),
+    });
+    const d = (await res.json().catch(() => ({}))) as {
+      scanned?: number;
+      fetched?: number;
+      mapped?: number;
+      errors?: string[];
+      error?: string;
+    };
+    setBackfilling(false);
+    setBackfillResult(
+      res.ok
+        ? `Scanned ${d.scanned ?? 0}; fetched ${d.fetched ?? 0}; mapped ${d.mapped ?? 0}${d.errors?.length ? `; ${d.errors.length} errors` : ""}.`
+        : `Error: ${d.error || d.errors?.[0] || "backfill failed"}`,
+    );
+    startTransition(() => router.refresh());
   }
 
   async function refetch(id: string) {
@@ -135,11 +161,21 @@ export function InBodyClient({
           </button>
           {syncResult && <span className="text-xs text-slate-600">{syncResult}</span>}
         </div>
+        <div className="flex items-center gap-3 pt-1">
+          <button
+            className="btn-ghost text-xs px-2 py-1"
+            onClick={backfillExisting}
+            disabled={backfilling || !canFetch}
+          >
+            {backfilling ? "Backfilling…" : "Backfill existing tests"}
+          </button>
+          {backfillResult && <span className="text-xs text-slate-600">{backfillResult}</span>}
+        </div>
         {!canFetch && (
           <p className="text-xs text-amber-600">
-            Metrics fetch is not active yet — set <code>INBODY_DATA_FUNCTION</code>{" "}
-            once InBody provides the data-endpoint in their developer docs.
-            Notifications and phone auto-pairing already work.
+            Metrics fetch requires both <code>INBODY_API_KEY</code> and{" "}
+            <code>INBODY_ACCOUNT</code>. Notifications are still stored when
+            credentials are unavailable.
           </p>
         )}
       </div>
@@ -367,6 +403,7 @@ function MapModal({
   const [results, setResults] = useState<SearchResult[]>([]);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const debounce = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
@@ -394,12 +431,18 @@ function MapModal({
 
   async function map(customerId: string) {
     setSaving(true);
-    await fetch(`/api/admin/inbody/tests/${test.id}/map`, {
+    setError(null);
+    const res = await fetch(`/api/admin/inbody/tests/${test.id}/map`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ customerId }),
     });
+    const body = (await res.json().catch(() => ({}))) as { error?: string };
     setSaving(false);
+    if (!res.ok) {
+      setError(body.error || "Mapping failed.");
+      return;
+    }
     onMapped();
   }
 
@@ -444,6 +487,7 @@ function MapModal({
             </button>
           ))}
         </div>
+        {error && <p className="text-xs text-red-600">{error}</p>}
         <div className="flex justify-end">
           <button className="btn-ghost text-sm" onClick={onClose}>
             Cancel

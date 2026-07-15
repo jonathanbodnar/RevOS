@@ -39,12 +39,20 @@ const API_KEY = process.env.INBODY_API_KEY || "";
 /** LookinBody Web account name, e.g. "revosinbody2". */
 const ACCOUNT = process.env.INBODY_ACCOUNT || "";
 
-export function inbodyConfigured(): boolean {
-  return Boolean(API_KEY);
+function hasCredentials(account?: string | null): boolean {
+  return Boolean(API_KEY && (account || ACCOUNT).trim());
 }
 
-export function inbodyCanFetch(): boolean {
-  return Boolean(API_KEY);
+export function inbodyAccount(): string {
+  return ACCOUNT.trim();
+}
+
+export function inbodyConfigured(account?: string | null): boolean {
+  return hasCredentials(account);
+}
+
+export function inbodyCanFetch(account?: string | null): boolean {
+  return hasCredentials(account);
 }
 
 export type InBodyMetrics = {
@@ -92,9 +100,20 @@ function normKey(k: string): string {
 }
 
 /** Case/format-insensitive numeric field lookup across many name variants. */
+function deepEntries(obj: Record<string, unknown>, depth = 0): [string, unknown][] {
+  const entries: [string, unknown][] = [];
+  for (const [key, value] of Object.entries(obj)) {
+    entries.push([key, value]);
+    if (depth < 3 && value && typeof value === "object") {
+      entries.push(...deepEntries(value as Record<string, unknown>, depth + 1));
+    }
+  }
+  return entries;
+}
+
 function pickNum(obj: Record<string, unknown>, aliases: string[]): number | null {
   const wanted = new Set(aliases.map(normKey));
-  for (const [key, val] of Object.entries(obj)) {
+  for (const [key, val] of deepEntries(obj)) {
     if (!wanted.has(normKey(key))) continue;
     const n = toNum(val);
     if (n !== null) return n;
@@ -171,7 +190,18 @@ export function parseTestDatetimes(input: string | null | undefined): Date | nul
   const mi = Number(s.slice(10, 12) || "0");
   const se = Number(s.slice(12, 14) || "0");
   const dt = new Date(y, mo - 1, d, h, mi, se);
-  return Number.isFinite(dt.getTime()) ? dt : null;
+  if (!Number.isFinite(dt.getTime())) return null;
+  if (
+    dt.getFullYear() !== y ||
+    dt.getMonth() !== mo - 1 ||
+    dt.getDate() !== d ||
+    dt.getHours() !== h ||
+    dt.getMinutes() !== mi ||
+    dt.getSeconds() !== se
+  ) {
+    return null;
+  }
+  return dt;
 }
 
 /** Inverse of parseTestDatetimes — reconstructs the "yyyyMMddHHmmss" string. */
@@ -225,8 +255,8 @@ export type InBodyConnectionResult = {
 
 /** POST /user/test — verifies Account + API-KEY credentials. */
 export async function inbodyConnectionTest(account?: string | null): Promise<InBodyConnectionResult> {
-  if (!inbodyConfigured()) {
-    return { ok: false, status: 503, body: "INBODY_API_KEY is not configured." };
+  if (!inbodyConfigured(account)) {
+    return { ok: false, status: 503, body: "INBODY_API_KEY and INBODY_ACCOUNT must both be configured." };
   }
   try {
     const r = await post("/user/test", {}, account);
@@ -242,14 +272,15 @@ export async function inbodyGetDateTimes(opts: {
   userId?: string | null;
   account?: string | null;
 }): Promise<{ datetimes: string[]; error: string | null }> {
-  if (!inbodyConfigured()) return { datetimes: [], error: "INBODY_API_KEY not configured" };
+  if (!inbodyConfigured(opts.account)) {
+    return { datetimes: [], error: "INBODY_API_KEY and INBODY_ACCOUNT must both be configured" };
+  }
   try {
     const r = opts.phone
       ? await post("/inbody/GetDateTimes", { usertoken: opts.phone }, opts.account)
       : await post("/inbody/GetDatetimesByID", { UserID: opts.userId }, opts.account);
     if (!r.ok) return { datetimes: [], error: `InBody ${r.status}: ${r.text.slice(0, 300)}` };
-    const arr = Array.isArray(r.json) ? r.json.filter((x): x is string => typeof x === "string") : [];
-    return { datetimes: arr, error: null };
+    return { datetimes: extractDateTimes(r.json), error: null };
   } catch (err) {
     return { datetimes: [], error: err instanceof Error ? err.message : String(err) };
   }
@@ -260,21 +291,13 @@ export async function inbodyGetTodayMeasurements(
   date: string,
   account?: string | null,
 ): Promise<{ records: { UserID: string; UserToken: string; DateTimes: string }[]; error: string | null }> {
-  if (!inbodyConfigured()) return { records: [], error: "INBODY_API_KEY not configured" };
+  if (!inbodyConfigured(account)) {
+    return { records: [], error: "INBODY_API_KEY and INBODY_ACCOUNT must both be configured" };
+  }
   try {
     const r = await post("/inbody/GetTodayMeasurements", { Date: date }, account);
     if (!r.ok) return { records: [], error: `InBody ${r.status}: ${r.text.slice(0, 300)}` };
-    const arr = Array.isArray(r.json) ? r.json : [];
-    return {
-      records: arr
-        .filter((x): x is Record<string, unknown> => Boolean(x) && typeof x === "object")
-        .map((x) => ({
-          UserID: String(x.UserID ?? ""),
-          UserToken: String(x.UserToken ?? ""),
-          DateTimes: String(x.DateTimes ?? ""),
-        })),
-      error: null,
-    };
+    return { records: parseTodayMeasurementRecords(r.json), error: null };
   } catch (err) {
     return { records: [], error: err instanceof Error ? err.message : String(err) };
   }
@@ -298,8 +321,12 @@ export async function fetchInBodyResults(opts: {
   datetimes: string;
   account?: string | null;
 }): Promise<InBodyFetchResult> {
-  if (!inbodyConfigured()) {
-    return { metrics: { ...EMPTY_METRICS }, raw: null, error: "INBODY_API_KEY not configured" };
+  if (!inbodyConfigured(opts.account)) {
+    return {
+      metrics: { ...EMPTY_METRICS },
+      raw: null,
+      error: "INBODY_API_KEY and INBODY_ACCOUNT must both be configured",
+    };
   }
   if (!opts.datetimes) {
     return { metrics: { ...EMPTY_METRICS }, raw: null, error: "Missing test datetimes for InBody lookup" };
@@ -326,8 +353,8 @@ export async function fetchInBodyResults(opts: {
       return { metrics: { ...EMPTY_METRICS }, raw: null, error: msg };
     }
 
-    const fullRecord = Array.isArray(full.json) ? full.json[0] : full.json;
-    const abbrevRecord = Array.isArray(abbrev.json) ? abbrev.json[0] : abbrev.json;
+    const fullRecord = selectResultRecord(full.json, opts.datetimes);
+    const abbrevRecord = selectResultRecord(abbrev.json, opts.datetimes);
 
     const fullMetrics = normalizeInBodyResult(fullRecord);
     const abbrevMetrics = normalizeInBodyResult(abbrevRecord);
@@ -345,4 +372,63 @@ export async function fetchInBodyResults(opts: {
       error: err instanceof Error ? err.message : String(err),
     };
   }
+}
+
+function findArrayPayload(value: unknown): unknown[] {
+  if (Array.isArray(value)) return value;
+  if (!value || typeof value !== "object") return [];
+  const obj = value as Record<string, unknown>;
+  for (const key of ["data", "Data", "result", "Result", "results", "Results", "items", "Items"]) {
+    if (Array.isArray(obj[key])) return obj[key] as unknown[];
+  }
+  return [];
+}
+
+function pickString(obj: Record<string, unknown>, aliases: string[]): string {
+  const wanted = new Set(aliases.map(normKey));
+  for (const [key, value] of Object.entries(obj)) {
+    if (!wanted.has(normKey(key)) || value === null || value === undefined) continue;
+    return String(value).trim();
+  }
+  return "";
+}
+
+function extractDateTimes(value: unknown): string[] {
+  return findArrayPayload(value)
+    .map((item) => {
+      if (typeof item === "string" || typeof item === "number") return String(item).trim();
+      if (!item || typeof item !== "object") return "";
+      return pickString(item as Record<string, unknown>, ["DateTimes", "Datetimes", "TestDatetimes"]);
+    })
+    .filter(Boolean);
+}
+
+/** Normalize GetTodayMeasurements response wrappers and field-name casing. */
+export function parseTodayMeasurementRecords(
+  value: unknown,
+): { UserID: string; UserToken: string; DateTimes: string }[] {
+  return findArrayPayload(value)
+    .filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === "object")
+    .map((item) => ({
+      UserID: pickString(item, ["UserID", "ID"]),
+      UserToken: pickString(item, ["UserToken", "TelHP", "Phone"]),
+      DateTimes: pickString(item, ["DateTimes", "Datetimes", "TestDatetimes"]),
+    }))
+    .filter((item) => Boolean(item.DateTimes));
+}
+
+function selectResultRecord(value: unknown, datetimes: string): unknown {
+  const records = findArrayPayload(value);
+  if (records.length === 0) return value;
+  const wanted = datetimes.replace(/\D/g, "");
+  const exact = records.find((item) => {
+    if (!item || typeof item !== "object") return false;
+    const actual = pickString(item as Record<string, unknown>, [
+      "DateTimes",
+      "Datetimes",
+      "TestDatetimes",
+    ]).replace(/\D/g, "");
+    return Boolean(actual && actual === wanted);
+  });
+  return exact ?? records[0];
 }

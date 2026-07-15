@@ -79,10 +79,11 @@ Guard legend:
 | DELETE | `/api/admin/advanced-costs/[id]` | Super admin | Delete an advanced cost. |
 | POST | `/api/admin/clinic-payouts` | Super admin | Record a payout to a clinic. |
 | DELETE | `/api/admin/clinic-payouts/[id]` | Super admin | Delete a payout. |
-| POST | `/api/admin/inbody/connection-test` | `requireSuperAdminClinicApi` | Test InBody API credentials. |
-| POST | `/api/admin/inbody/sync-today` | `requireSuperAdminClinicApi` | Pull today's InBody measurements. |
-| POST | `/api/admin/inbody/tests/[id]/map` | `requireSuperAdminClinicApi` | Map/unmap a test to a customer. |
-| POST | `/api/admin/inbody/tests/[id]/refetch` | `requireSuperAdminClinicApi` | Re-fetch a test's results. |
+| POST | `/api/admin/inbody/connection-test` | `requireSuperAdminApi` | Test InBody API credentials. |
+| POST | `/api/admin/inbody/sync-today` | `requireSuperAdminApi` | Pull today's InBody measurements. |
+| POST | `/api/admin/inbody/backfill` | `requireSuperAdminApi` | Re-fetch up to 500 historical tests that still lack metrics. |
+| POST | `/api/admin/inbody/tests/[id]/map` | `requireSuperAdminApi` | Map/unmap a test to a customer. |
+| POST | `/api/admin/inbody/tests/[id]/refetch` | `requireSuperAdminApi` | Re-fetch a test's results. |
 | POST / GET | `/api/admin/lunarpay/reconcile-subscriptions` | `requireSuperAdminApi` | Manually run subscription reconciliation. |
 | POST / GET | `/api/admin/lunarpay/probe-transactions` | `requireSuperAdminApi` | Diagnostic probe of LunarPay transactions. |
 | POST | `/api/admin/wipe-test-data` | Super admin | Destructive: wipe test data. |

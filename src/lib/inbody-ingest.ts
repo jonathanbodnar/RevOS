@@ -6,6 +6,7 @@ import {
   fetchInBodyResults,
   formatTestDatetimes,
   hasAnyMetric,
+  inbodyAccount,
   inbodyCanFetch,
   inbodyGetTodayMeasurements,
   normalizeInBodyResult,
@@ -31,12 +32,15 @@ export type InBodyWebhookPayload = {
  */
 async function findCustomersByPhone(
   phoneNormalized: string,
-): Promise<{ id: string; clinicId: string | null }[]> {
-  if (!phoneNormalized) return [];
-  return prisma.$queryRaw<{ id: string; clinicId: string | null }[]>(Prisma.sql`
+): Promise<{ id: string; clinicId: string }[]> {
+  // Auto-link only a complete US national number. A short extension or other
+  // partial value must never be enough to attach medical data to a customer.
+  if (phoneNormalized.length !== 10) return [];
+  return prisma.$queryRaw<{ id: string; clinicId: string }[]>(Prisma.sql`
     SELECT id, "clinicId"
     FROM "Customer"
-    WHERE right(regexp_replace(coalesce(phone, ''), '\\D', '', 'g'), 10) = ${phoneNormalized}
+    WHERE "clinicId" IS NOT NULL
+      AND right(regexp_replace(coalesce(phone, ''), '\\D', '', 'g'), 10) = ${phoneNormalized}
     LIMIT 5
   `);
 }
@@ -83,6 +87,7 @@ export async function ingestInBodyNotification(payload: InBodyWebhookPayload) {
     String(payload.IsTempData ?? "").toLowerCase() === "true";
 
   const dedupeKey = [account ?? "", equipSerial ?? "", inbodyUserId ?? "", rawDatetimes].join(":");
+  const existing = await prisma.inBodyTest.findUnique({ where: { dedupeKey } });
 
   // ── Auto-pair by phone ──
   let customerId: string | null = null;
@@ -108,7 +113,7 @@ export async function ingestInBodyNotification(payload: InBodyWebhookPayload) {
   // Defensive: some locations may POST full metrics in the webhook itself.
   const webhookMetrics = normalizeInBodyResult(payload);
 
-  if (inbodyCanFetch() && rawDatetimes && (rawPhone || inbodyUserId)) {
+  if (inbodyCanFetch(account) && rawDatetimes && (rawPhone || inbodyUserId)) {
     const fetched = await fetchInBodyResults({
       phone: rawPhone,
       userId: inbodyUserId,
@@ -125,9 +130,9 @@ export async function ingestInBodyNotification(payload: InBodyWebhookPayload) {
       rawJson = fetched.raw != null ? safeStringify(fetched.raw) : null;
       resultStatus = hasAnyMetric(metrics) ? "fetched" : "matched_no_data";
     }
-  } else if (!inbodyCanFetch()) {
+  } else if (!inbodyCanFetch(account)) {
     metrics = webhookMetrics;
-    fetchError = "INBODY_API_KEY not configured; stored notification only.";
+    fetchError = "INBODY_API_KEY and INBODY_ACCOUNT must both be configured; stored notification only.";
     resultStatus = hasAnyMetric(metrics) ? "fetched" : "pending";
   } else {
     metrics = webhookMetrics;
@@ -136,6 +141,12 @@ export async function ingestInBodyNotification(payload: InBodyWebhookPayload) {
   }
 
   const webhookJson = safeStringify(payload);
+
+  const newMetricsAvailable = hasAnyMetric(metrics);
+  const existingMetricsAvailable = existing ? hasStoredMetric(existing) : false;
+  const preservedResultStatus =
+    existingMetricsAvailable && !newMetricsAvailable ? "fetched" : resultStatus;
+  const preserveManualMapping = existing?.matchStatus === "manual";
 
   const test = await prisma.inBodyTest.upsert({
     where: { dedupeKey },
@@ -162,15 +173,22 @@ export async function ingestInBodyNotification(payload: InBodyWebhookPayload) {
     update: {
       // Re-delivery: refresh metrics/pairing but don't clobber a manual mapping.
       account,
+      equipSerial,
       equip,
       deviceType,
+      inbodyUserId,
+      phone: rawPhone,
+      phoneNormalized,
       testedAt,
       isTempData,
-      resultStatus,
+      resultStatus: preservedResultStatus,
       fetchError,
       ...(rawJson ? { rawJson } : {}),
       webhookJson,
-      ...metricColumns(metrics),
+      ...(newMetricsAvailable ? metricColumns(metrics) : {}),
+      ...(!preserveManualMapping && phoneNormalized
+        ? { customerId, clinicId, matchStatus }
+        : {}),
     },
   });
 
@@ -202,10 +220,11 @@ export async function refetchInBodyTest(testId: string) {
   let fetchError: string | null = null;
   let resultStatus = test.resultStatus;
 
-  const datetimes = test.testedAt ? formatTestDatetimes(test.testedAt) : null;
+  const datetimes = originalTestDatetimes(test);
+  const storedMetricsAvailable = hasStoredMetric(test);
 
-  if (!inbodyCanFetch()) {
-    fetchError = "INBODY_API_KEY not configured.";
+  if (!inbodyCanFetch(test.account)) {
+    fetchError = "INBODY_API_KEY and INBODY_ACCOUNT must both be configured.";
   } else if (!datetimes || (!test.phone && !test.inbodyUserId)) {
     fetchError = "Missing phone/UserID or test datetimes; cannot fetch InBody result.";
   } else {
@@ -217,11 +236,12 @@ export async function refetchInBodyTest(testId: string) {
     });
     if (fetched.error) {
       fetchError = fetched.error;
-      resultStatus = "error";
+      resultStatus = storedMetricsAvailable ? "fetched" : "error";
     } else {
       metrics = fetched.metrics;
       rawJson = fetched.raw != null ? safeStringify(fetched.raw) : rawJson;
-      resultStatus = hasAnyMetric(metrics) ? "fetched" : "matched_no_data";
+      resultStatus =
+        hasAnyMetric(metrics) || storedMetricsAvailable ? "fetched" : "matched_no_data";
     }
   }
 
@@ -234,7 +254,7 @@ export async function refetchInBodyTest(testId: string) {
       resultStatus,
       fetchError,
       rawJson,
-      ...(inbodyCanFetch() && !fetchError ? metricColumns(metrics) : {}),
+      ...(hasAnyMetric(metrics) ? metricColumns(metrics) : {}),
     },
   });
 }
@@ -258,6 +278,7 @@ export async function syncInBodyMeasurementsForDate(
     if (!rec.DateTimes) continue;
     try {
       await ingestInBodyNotification({
+        Account: inbodyAccount() || undefined,
         UserID: rec.UserID,
         TelHP: rec.UserToken,
         TestDatetimes: rec.DateTimes,
@@ -268,6 +289,79 @@ export async function syncInBodyMeasurementsForDate(
     }
   }
   return { found: records.length, ingested, errors };
+}
+
+/** Re-fetch historical tests that still lack stored measurements. */
+export async function backfillInBodyTests(
+  limit = 200,
+): Promise<{ scanned: number; fetched: number; mapped: number; errors: string[] }> {
+  const safeLimit = Math.max(1, Math.min(Math.trunc(limit) || 200, 500));
+  const tests = await prisma.inBodyTest.findMany({
+    where: { resultStatus: { not: "fetched" } },
+    orderBy: [{ testedAt: "desc" }, { createdAt: "desc" }],
+    select: { id: true },
+    take: safeLimit,
+  });
+
+  let fetched = 0;
+  let mapped = 0;
+  const errors: string[] = [];
+  for (const test of tests) {
+    try {
+      const updated = await refetchInBodyTest(test.id);
+      if (!updated) continue;
+      if (updated.resultStatus === "fetched") fetched++;
+      if (updated.customerId) mapped++;
+      if (updated.fetchError && updated.resultStatus !== "fetched") {
+        errors.push(`${test.id}: ${updated.fetchError}`);
+      }
+    } catch (err) {
+      errors.push(`${test.id}: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
+  return { scanned: tests.length, fetched, mapped, errors };
+}
+
+function hasStoredMetric(test: {
+  weightKg: number | null;
+  totalBodyWaterKg: number | null;
+  dryLeanMassKg: number | null;
+  skeletalMuscleMassKg: number | null;
+  bodyFatMassKg: number | null;
+  bmi: number | null;
+  percentBodyFat: number | null;
+  segLeanRightArmKg: number | null;
+  segLeanLeftArmKg: number | null;
+  segLeanTrunkKg: number | null;
+  segLeanRightLegKg: number | null;
+  segLeanLeftLegKg: number | null;
+  segLeanRightArmPct: number | null;
+  segLeanLeftArmPct: number | null;
+  segLeanTrunkPct: number | null;
+  segLeanRightLegPct: number | null;
+  segLeanLeftLegPct: number | null;
+}): boolean {
+  return Object.values(metricColumns(test)).some((value) => value !== null);
+}
+
+function originalTestDatetimes(test: {
+  webhookJson: string | null;
+  dedupeKey: string;
+  testedAt: Date | null;
+}): string | null {
+  if (test.webhookJson) {
+    try {
+      const payload = JSON.parse(test.webhookJson) as Record<string, unknown>;
+      const raw = payload.TestDatetimes;
+      if (typeof raw === "string" && raw.trim()) return raw.trim();
+    } catch {
+      // Fall through to the stable dedupe key / parsed Date fallback.
+    }
+  }
+  const dedupePart = test.dedupeKey.split(":").at(-1) || "";
+  if (/^\d{8,14}$/.test(dedupePart)) return dedupePart;
+  return test.testedAt ? formatTestDatetimes(test.testedAt) : null;
 }
 
 function safeStringify(v: unknown): string | null {

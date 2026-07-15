@@ -5,6 +5,7 @@ import { requireClinicApi } from "@/lib/api-guard";
 import { lunarpay, LunarPayError } from "@/lib/lunarpay";
 import { logAudit } from "@/lib/audit";
 import { parseMoneyInputToCents } from "@/lib/format";
+import { recordFailedCharge } from "@/lib/failed-charge";
 
 /**
  * Place an authorization hold on a customer's card.
@@ -115,6 +116,19 @@ export async function POST(
   } catch (e) {
     const status = e instanceof LunarPayError ? e.status : 500;
     const msg = e instanceof Error ? e.message : "Hold failed";
+    // A declined authorization is still a denied payment attempt — record it so
+    // it surfaces in reports and fires the failed-payment webhook.
+    await recordFailedCharge({
+      clinicId,
+      customerId: id,
+      paymentMethodId: pm.id,
+      amountCents: cents,
+      reason: msg,
+      paymentMethodType: pm.sourceType,
+      description: parsed.data.description
+        ? `Hold — ${parsed.data.description}`
+        : "Hold",
+    });
     return NextResponse.json({ error: msg }, { status });
   }
 }

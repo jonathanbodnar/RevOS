@@ -26,6 +26,10 @@ export async function recordFailedCharge(opts: {
   // When provided, the row gets a stable `failed:<externalId>` id and is
   // skipped if one already exists (idempotent webhook retries).
   externalId?: string | null;
+  // Fire the outbound (Zapier) alert when a new failure row is recorded.
+  // Defaults to true. Set false when backfilling historical declines so a
+  // reconciler sweep doesn't blast stale alerts.
+  notify?: boolean;
 }): Promise<void> {
   try {
     const desc = [opts.description, `Failed: ${opts.reason}`]
@@ -59,6 +63,7 @@ export async function recordFailedCharge(opts: {
     });
 
     // Outbound alert (Zapier, etc.) — only when a new failure was recorded.
+    if (opts.notify === false) return;
     const [customer, clinic] = await Promise.all([
       prisma.customer.findUnique({
         where: { id: opts.customerId },

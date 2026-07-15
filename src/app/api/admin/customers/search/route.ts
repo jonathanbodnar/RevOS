@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { Prisma } from "@prisma/client";
 import { requireSuperAdminApi } from "@/lib/api-guard";
 import { prisma } from "@/lib/prisma";
 
@@ -15,6 +16,16 @@ export async function GET(req: NextRequest) {
   const includeInactive =
     req.nextUrl.searchParams.get("includeInactive") === "1";
   const digits = q.replace(/\D+/g, "");
+  const phoneMatches =
+    digits.length >= 3
+      ? await prisma.$queryRaw<{ id: string }[]>(Prisma.sql`
+          SELECT id
+          FROM "Customer"
+          WHERE regexp_replace(coalesce(phone, ''), '\\D', '', 'g') LIKE ${`%${digits}%`}
+          LIMIT 40
+        `)
+      : [];
+  const phoneMatchIds = phoneMatches.map((customer) => customer.id);
 
   const customers = await prisma.customer.findMany({
     where: {
@@ -23,7 +34,7 @@ export async function GET(req: NextRequest) {
         { firstName: { contains: q, mode: "insensitive" } },
         { lastName: { contains: q, mode: "insensitive" } },
         { email: { contains: q, mode: "insensitive" } },
-        ...(digits.length >= 3 ? [{ phone: { contains: digits } }] : []),
+        ...(phoneMatchIds.length > 0 ? [{ id: { in: phoneMatchIds } }] : []),
       ],
     },
     orderBy: [{ lastName: "asc" }, { firstName: "asc" }],

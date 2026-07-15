@@ -21,6 +21,24 @@ function parseAmount(raw: string): number | null {
   return Math.round(n * 100);
 }
 
+function todayDateStr(): string {
+  const n = new Date();
+  const y = n.getFullYear();
+  const m = String(n.getMonth() + 1).padStart(2, "0");
+  const d = String(n.getDate()).padStart(2, "0");
+  return `${y}-${m}-${d}`;
+}
+
+function formatDateLabel(iso: string): string {
+  const d = new Date(`${iso}T00:00:00`);
+  if (Number.isNaN(d.getTime())) return iso;
+  return d.toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  });
+}
+
 export function NewChargeForm({
   customerId,
   methods,
@@ -33,6 +51,7 @@ export function NewChargeForm({
   const [loading, setLoading] = useState(false);
   const [amount, setAmount] = useState("");
   const [description, setDescription] = useState("");
+  const [scheduledDate, setScheduledDate] = useState("");
   const [paymentMethodId, setPaymentMethodId] = useState(methods[0]?.id ?? "");
   const [error, setError] = useState<string | null>(null);
 
@@ -45,6 +64,9 @@ export function NewChargeForm({
     if (!base) return null;
     return calcFee(base);
   }, [amount]);
+
+  const today = useMemo(() => todayDateStr(), []);
+  const isScheduled = !!scheduledDate && scheduledDate > today;
 
   const disabled = methods.length === 0;
 
@@ -60,6 +82,7 @@ export function NewChargeForm({
           paymentMethodId,
           amount,
           description: description || undefined,
+          scheduledDate: isScheduled ? scheduledDate : undefined,
         }),
       });
       if (!res.ok) {
@@ -69,6 +92,7 @@ export function NewChargeForm({
       }
       setAmount("");
       setDescription("");
+      setScheduledDate("");
       startTransition(() => router.refresh());
     } finally {
       setLoading(false);
@@ -134,6 +158,21 @@ export function NewChargeForm({
               onChange={(e) => setDescription(e.target.value)}
             />
           </div>
+          <div>
+            <label className="label">Charge date (optional)</label>
+            <input
+              className="input"
+              type="date"
+              min={today}
+              value={scheduledDate}
+              onChange={(e) => setScheduledDate(e.target.value)}
+            />
+            <p className="mt-1 text-xs text-slate-500">
+              {isScheduled
+                ? `Card will be charged on ${formatDateLabel(scheduledDate)}.`
+                : "Leave blank to charge now, or pick a future date to schedule it."}
+            </p>
+          </div>
           {error && (
             <div className="text-sm text-red-600 bg-red-50 border border-red-100 rounded-md px-3 py-2">
               {error}
@@ -142,6 +181,10 @@ export function NewChargeForm({
           <button className="btn-primary w-full" disabled={loading}>
             {loading
               ? "Processing…"
+              : isScheduled
+              ? feePreview
+                ? `Schedule ${formatMoney(feePreview.totalCents)} for ${formatDateLabel(scheduledDate)}`
+                : "Schedule"
               : feePreview
               ? `Charge ${formatMoney(feePreview.totalCents)}`
               : "Charge"}

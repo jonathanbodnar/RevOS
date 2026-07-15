@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { logAudit } from "@/lib/audit";
 import { reconcileRecurringCharges } from "@/lib/subscription-reconcile";
+import { reconcilePaymentSchedules } from "@/lib/payment-schedule-reconcile";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
@@ -29,7 +30,10 @@ export async function GET(req: Request) {
     return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
   }
 
-  const summary = await reconcileRecurringCharges({ dryRun: false });
+  const [subscriptions, schedules] = await Promise.all([
+    reconcileRecurringCharges({ dryRun: false }),
+    reconcilePaymentSchedules({ dryRun: false }),
+  ]);
 
   await logAudit({
     actorId: null,
@@ -39,18 +43,22 @@ export async function GET(req: Request) {
     targetType: "Subscription",
     targetId: "ALL",
     metadata: {
-      scanned: summary.scanned,
-      chargesCreated: summary.chargesCreated,
-      subscriptionsAdvanced: summary.subscriptionsAdvanced,
-      errors: summary.errors,
+      subscriptionsScanned: subscriptions.scanned,
+      schedulesScanned: schedules.scanned,
+      chargesCreated:
+        subscriptions.chargesCreated + schedules.chargesCreated,
+      chargesDeleted:
+        subscriptions.chargesDeleted + schedules.chargesDeleted,
+      failuresRecorded: schedules.failuresRecorded,
+      subscriptionsAdvanced: subscriptions.subscriptionsAdvanced,
+      schedulesUpdated: schedules.schedulesUpdated,
+      errors: subscriptions.errors + schedules.errors,
     },
   });
 
   return NextResponse.json({
     ok: true,
-    scanned: summary.scanned,
-    chargesCreated: summary.chargesCreated,
-    subscriptionsAdvanced: summary.subscriptionsAdvanced,
-    errors: summary.errors,
+    subscriptions,
+    schedules,
   });
 }

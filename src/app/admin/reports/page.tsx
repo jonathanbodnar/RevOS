@@ -5,6 +5,7 @@ import {
   downPaymentEconomics,
   recurringEconomics,
   careCreditEconomics,
+  netChargeAmountCents,
   type PeriodPreset,
 } from "@/lib/reporting";
 import {
@@ -236,6 +237,13 @@ export default async function ReportsPage({
     }[] = [];
 
     for (const ch of cust.charges) {
+      // LunarPay reports refunds against the original transaction. Revenue
+      // share and clinic balances must therefore use the amount that remains
+      // collected, not the original pre-refund gross.
+      const netAmountCents = netChargeAmountCents(
+        ch.amountCents,
+        ch.refundedCents,
+      );
       // Recurring/subscription charges (real Charge rows, now backfilled +
       // kept current by the webhook/reconciliation) are counted as ACTUAL
       // recurring revenue for the selected period — no longer projected from
@@ -246,7 +254,7 @@ export default async function ReportsPage({
         (ch.description || "").toLowerCase(),
       );
       if (isRecurring) {
-        const eco = recurringEconomics(ch.amountCents, cfg);
+        const eco = recurringEconomics(netAmountCents, cfg);
         t.recurringCount += 1;
         t.recurringMonthlyGross += eco.grossCents;
         t.recurringMonthlyBase += eco.baseCents;
@@ -262,7 +270,11 @@ export default async function ReportsPage({
         continue;
       }
 
-      const eco = downPaymentEconomics(ch.amountCents, cfg, commissionCents);
+      const eco = downPaymentEconomics(
+        netAmountCents,
+        cfg,
+        netAmountCents > 0 ? commissionCents : null,
+      );
       t.downCount += 1;
       t.downGross += eco.grossCents;
       t.downBase += eco.baseCents;
@@ -276,11 +288,13 @@ export default async function ReportsPage({
       custRevos += eco.revosProfitCents;
       custClinic += eco.clinicProfitCents;
       if (ledger) ledger.clinicCollectedShare += eco.clinicShareCents;
-      downPayments.push({
-        amount: ch.amountCents,
-        date: ch.createdAt,
-        kind: chargeKind(ch.description),
-      });
+      if (netAmountCents > 0) {
+        downPayments.push({
+          amount: netAmountCents,
+          date: ch.createdAt,
+          kind: chargeKind(ch.description),
+        });
+      }
     }
 
     const scheduled = cust.schedules.map((s) => ({

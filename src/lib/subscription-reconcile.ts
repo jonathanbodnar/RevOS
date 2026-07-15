@@ -1,70 +1,84 @@
 /**
- * Recurring-charge reconciliation.
+ * Reconcile LunarPay subscription successes into RevOS Charge rows.
  *
- * LunarPay's cron drives the real recurring charges; RevOS is supposed to learn
- * about each one via the `payment.succeeded` webhook and mirror it into the
- * `Charge` table. Those deliveries are fire-and-forget and have been getting
- * lost, so recurring charges were missing from the `Charge` table entirely
- * (they never showed in the transactions export, and reports had to project
- * them from the `Subscription` table instead of counting real dollars).
- *
- * This module self-heals that gap using LunarPay's AUTHORITATIVE counters from
- * get-subscription: `successTrxns` (how many recurring charges actually
- * succeeded) and `lastPaymentOn` (the most recent success). We make the number
- * of recorded renewal charges for a subscription's customer EQUAL
- * `successTrxns` — creating only the delta, dated back from `lastPaymentOn`.
- *
- * IMPORTANT: we deliberately do NOT infer cycles from `nextPaymentOn` — that
- * field advances on FAILED attempts too, so counting cycles against it would
- * fabricate charges for declines that never actually collected.
- *
- * Idempotent: each backfilled charge gets a deterministic id
- * `recon:sub:<lunarpaySubscriptionId>:<YYYY-MM-DD>`, and because creation is
- * bounded by `successTrxns - alreadyRecorded`, re-running (daily cron or a
- * manual re-run) never duplicates or overshoots.
+ * LunarPay is authoritative. For every subscription we build the complete set
+ * of successful cycle dates from successTrxns + lastPaymentOn, match real
+ * webhook rows to those cycles, create missing placeholders, and remove stale
+ * placeholders. The write cap limits creations, not scanned cycles, so skipped
+ * recent rows no longer prevent older missing cycles from being repaired.
  */
 
 import { prisma } from "@/lib/prisma";
 import { lunarpay, LunarPayError } from "@/lib/lunarpay";
 
 export const RECON_ID_PREFIX = "recon:sub:";
-const RENEWAL_MARKER = "Subscription renewal";
+export const RENEWAL_MARKER = "Subscription renewal";
 
-/** Step a date BACK by `n` billing cycles. */
-function stepBack(date: Date, frequency: string, n: number): Date {
-  const d = new Date(date);
-  switch (frequency) {
-    case "weekly":
-      d.setDate(d.getDate() - 7 * n);
-      break;
-    case "quarterly":
-      d.setMonth(d.getMonth() - 3 * n);
-      break;
-    case "yearly":
-      d.setFullYear(d.getFullYear() - n);
-      break;
-    default: // monthly
-      d.setMonth(d.getMonth() - n);
-  }
-  return d;
+function shiftUtcMonthsClamped(date: Date, months: number): Date {
+  const day = date.getUTCDate();
+  const out = new Date(date);
+  out.setUTCDate(1);
+  out.setUTCMonth(out.getUTCMonth() + months);
+  const lastDay = new Date(
+    Date.UTC(out.getUTCFullYear(), out.getUTCMonth() + 1, 0),
+  ).getUTCDate();
+  out.setUTCDate(Math.min(day, lastDay));
+  return out;
 }
 
-/** Deterministic id for a reconciled (backfilled) subscription charge. */
-export function reconChargeId(lunarpaySubscriptionId: number, cycle: Date): string {
+function shiftUtcYearsClamped(date: Date, years: number): Date {
+  const month = date.getUTCMonth();
+  const day = date.getUTCDate();
+  const out = new Date(date);
+  out.setUTCDate(1);
+  out.setUTCFullYear(out.getUTCFullYear() + years);
+  out.setUTCMonth(month);
+  const lastDay = new Date(
+    Date.UTC(out.getUTCFullYear(), out.getUTCMonth() + 1, 0),
+  ).getUTCDate();
+  out.setUTCDate(Math.min(day, lastDay));
+  return out;
+}
+
+/** Step back from the latest success without month-end rollover drift. */
+export function stepBack(date: Date, frequency: string, n: number): Date {
+  const out = new Date(date);
+  switch (frequency) {
+    case "weekly":
+      out.setUTCDate(out.getUTCDate() - 7 * n);
+      return out;
+    case "quarterly":
+      return shiftUtcMonthsClamped(out, -3 * n);
+    case "yearly":
+      return shiftUtcYearsClamped(out, -n);
+    default:
+      return shiftUtcMonthsClamped(out, -n);
+  }
+}
+
+export function expectedRecurringCycles(
+  lastPaymentOn: Date,
+  frequency: string,
+  successTrxns: number,
+): Date[] {
+  const count = Math.max(0, Math.floor(successTrxns));
+  return Array.from({ length: count }, (_, index) =>
+    stepBack(lastPaymentOn, frequency, index),
+  );
+}
+
+/** Deterministic id for a reconciled subscription charge. */
+export function reconChargeId(
+  lunarpaySubscriptionId: number,
+  cycle: Date,
+): string {
   return `${RECON_ID_PREFIX}${lunarpaySubscriptionId}:${cycle
     .toISOString()
     .slice(0, 10)}`;
 }
 
-function startOfUtcDay(d: Date): Date {
-  return new Date(
-    Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), 0, 0, 0, 0),
-  );
-}
-function endOfUtcDay(d: Date): Date {
-  return new Date(
-    Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), 23, 59, 59, 999),
-  );
+function sameUtcDay(a: Date, b: Date): boolean {
+  return a.toISOString().slice(0, 10) === b.toISOString().slice(0, 10);
 }
 
 export type ReconSubResult = {
@@ -74,8 +88,9 @@ export type ReconSubResult = {
   lunarpayStatus: string | null;
   successTrxns: number;
   alreadyRecorded: number;
-  cyclesBackfilled: string[]; // ISO dates we created charges for
-  cyclesSkippedExisting: string[]; // a real charge already covered the date
+  cyclesBackfilled: string[];
+  cyclesSkippedExisting: string[];
+  cyclesRemoved: string[];
   amountCentsPerCycle: number;
   error?: string;
 };
@@ -84,35 +99,26 @@ export type ReconSummary = {
   dryRun: boolean;
   scanned: number;
   chargesCreated: number;
+  chargesDeleted: number;
   subscriptionsAdvanced: number;
   errors: number;
   results: ReconSubResult[];
 };
 
 export type ReconcileOptions = {
-  /** When true (default), compute the plan but write nothing. */
   dryRun?: boolean;
-  /** Limit to a single subscription (by our cuid) — handy for testing. */
   subscriptionId?: string;
-  /** Safety cap on how many charges to backfill per subscription. */
+  /** Maximum new rows per subscription per run. Existing cycles do not consume it. */
   maxPerSub?: number;
 };
 
-/**
- * Reconcile recurring charges for every subscription (or one, if scoped).
- * Never throws — per-subscription failures are collected and reporting
- * continues.
- */
 export async function reconcileRecurringCharges(
   opts: ReconcileOptions = {},
 ): Promise<ReconSummary> {
   const dryRun = opts.dryRun ?? true;
-  const maxPerSub = opts.maxPerSub ?? 24;
-
+  const maxPerSub = opts.maxPerSub ?? 120;
   const subs = await prisma.subscription.findMany({
-    where: {
-      ...(opts.subscriptionId ? { id: opts.subscriptionId } : {}),
-    },
+    where: opts.subscriptionId ? { id: opts.subscriptionId } : {},
     orderBy: { createdAt: "asc" },
   });
 
@@ -120,10 +126,14 @@ export async function reconcileRecurringCharges(
     dryRun,
     scanned: 0,
     chargesCreated: 0,
+    chargesDeleted: 0,
     subscriptionsAdvanced: 0,
     errors: 0,
     results: [],
   };
+  // A legacy webhook row has no subscription FK. Never let two subscriptions
+  // for the same customer claim the same real transaction during one run.
+  const claimedRealChargeIds = new Set<string>();
 
   for (const sub of subs) {
     summary.scanned += 1;
@@ -136,114 +146,161 @@ export async function reconcileRecurringCharges(
       alreadyRecorded: 0,
       cyclesBackfilled: [],
       cyclesSkippedExisting: [],
-      // Use OUR stored cents (a known unit) for the charge amount to avoid any
-      // dollars-vs-cents ambiguity in the LunarPay `amount` field.
+      cyclesRemoved: [],
       amountCentsPerCycle: sub.amountCents,
     };
 
     try {
       const lp = await lunarpay.getSubscription(sub.lunarpaySubscriptionId);
       const data = lp.data;
-      const successTrxns = Math.max(0, Math.floor(Number(data?.successTrxns ?? 0)));
-      const lastPaymentOn = data?.lastPaymentOn ? new Date(data.lastPaymentOn) : null;
-      const lpNext = data?.nextPaymentOn ? new Date(data.nextPaymentOn) : null;
+      const successTrxns = Math.max(
+        0,
+        Math.floor(Number(data?.successTrxns ?? 0)),
+      );
+      const parsedLast = data?.lastPaymentOn
+        ? new Date(data.lastPaymentOn)
+        : null;
+      const lastPaymentOn =
+        parsedLast && !Number.isNaN(parsedLast.getTime()) ? parsedLast : null;
+      const parsedNext = data?.nextPaymentOn
+        ? new Date(data.nextPaymentOn)
+        : null;
+      const lpNext =
+        parsedNext && !Number.isNaN(parsedNext.getTime()) ? parsedNext : null;
+      const lpAmount = Math.round(Number(data?.amount));
+      const amountCents =
+        Number.isFinite(lpAmount) && lpAmount > 0 ? lpAmount : sub.amountCents;
+
       result.lunarpayStatus = data?.status ?? null;
       result.successTrxns = successTrxns;
+      result.amountCentsPerCycle = amountCents;
 
-      // How many renewal charges have we already recorded for this customer?
-      // (Webhook/manual rows aren't keyed by subscription, so we match on the
-      // customer + the shared "Subscription renewal" description marker.)
-      const alreadyRecorded = await prisma.charge.count({
+      const reconPrefix = `${RECON_ID_PREFIX}${sub.lunarpaySubscriptionId}:`;
+      const candidates = await prisma.charge.findMany({
         where: {
           customerId: sub.customerId,
           status: { in: ["paid", "pending", "refunded"] },
-          description: { contains: RENEWAL_MARKER, mode: "insensitive" },
+          OR: [
+            { lunarpayChargeId: { startsWith: reconPrefix } },
+            {
+              description: {
+                contains: RENEWAL_MARKER,
+                mode: "insensitive",
+              },
+            },
+          ],
         },
+        select: {
+          id: true,
+          lunarpayChargeId: true,
+          amountCents: true,
+          createdAt: true,
+        },
+        orderBy: { createdAt: "desc" },
       });
-      result.alreadyRecorded = alreadyRecorded;
 
-      const toCreate = Math.min(
-        maxPerSub,
-        Math.max(0, successTrxns - alreadyRecorded),
+      const cycles = lastPaymentOn
+        ? expectedRecurringCycles(lastPaymentOn, sub.frequency, successTrxns)
+        : [];
+      const expectedIds = new Set(
+        cycles.map((cycle) => reconChargeId(sub.lunarpaySubscriptionId, cycle)),
       );
 
-      if (toCreate > 0 && lastPaymentOn) {
-        // Create the missing successes, most recent first, stepping back a
-        // cycle each time from lastPaymentOn.
-        for (let k = 0; k < toCreate; k++) {
-          const cycle = stepBack(lastPaymentOn, sub.frequency, k);
-          const id = reconChargeId(sub.lunarpaySubscriptionId, cycle);
-
-          const existingRecon = await prisma.charge.findUnique({
-            where: { lunarpayChargeId: id },
-            select: { id: true },
-          });
-          if (existingRecon) continue;
-
-          // A real (webhook/manual) charge already covering this day?
-          const realHit = await prisma.charge.findFirst({
-            where: {
-              customerId: sub.customerId,
-              amountCents: sub.amountCents,
-              status: { in: ["paid", "pending", "refunded"] },
-              createdAt: { gte: startOfUtcDay(cycle), lte: endOfUtcDay(cycle) },
-              NOT: { lunarpayChargeId: { startsWith: RECON_ID_PREFIX } },
-            },
-            select: { id: true },
-          });
-          if (realHit) {
-            result.cyclesSkippedExisting.push(cycle.toISOString().slice(0, 10));
-            continue;
+      // Remove placeholders created by the old nextPaymentOn-based algorithm,
+      // plus placeholders superseded by a real transaction below.
+      if (lastPaymentOn || successTrxns === 0) {
+        for (const row of candidates) {
+          if (
+            row.lunarpayChargeId.startsWith(reconPrefix) &&
+            !expectedIds.has(row.lunarpayChargeId)
+          ) {
+            if (!dryRun) {
+              await prisma.charge.delete({ where: { id: row.id } });
+            }
+            result.cyclesRemoved.push(row.createdAt.toISOString().slice(0, 10));
+            summary.chargesDeleted += 1;
           }
-
-          if (!dryRun) {
-            await prisma.charge.create({
-              data: {
-                clinicId: sub.clinicId,
-                customerId: sub.customerId,
-                paymentMethodId: sub.paymentMethodId,
-                lunarpayChargeId: id,
-                amountCents: sub.amountCents,
-                status: "paid",
-                description: `${RENEWAL_MARKER} (reconciled ${cycle
-                  .toISOString()
-                  .slice(0, 10)})`,
-                // Date the charge to the cycle it belongs to so period-scoped
-                // reports and the transactions export place it correctly.
-                createdAt: cycle,
-              },
-            });
-          }
-          result.cyclesBackfilled.push(cycle.toISOString().slice(0, 10));
-          summary.chargesCreated += 1;
         }
       }
 
-      // Fast-forward our mirror of the subscription (status + next date) to
-      // match LunarPay's authoritative state.
-      const statusChanged = data?.status && data.status !== sub.status;
+      let createdForSub = 0;
+      for (const cycle of cycles) {
+        const dateLabel = cycle.toISOString().slice(0, 10);
+        const placeholderId = reconChargeId(sub.lunarpaySubscriptionId, cycle);
+        const placeholder = candidates.find(
+          (row) => row.lunarpayChargeId === placeholderId,
+        );
+        const real = candidates.find(
+          (row) =>
+            !row.lunarpayChargeId.startsWith(RECON_ID_PREFIX) &&
+            !claimedRealChargeIds.has(row.id) &&
+            row.amountCents === amountCents &&
+            sameUtcDay(row.createdAt, cycle),
+        );
+
+        if (real) {
+          claimedRealChargeIds.add(real.id);
+          result.alreadyRecorded += 1;
+          result.cyclesSkippedExisting.push(dateLabel);
+          if (placeholder) {
+            if (!dryRun) {
+              await prisma.charge.delete({ where: { id: placeholder.id } });
+            }
+            result.cyclesRemoved.push(dateLabel);
+            summary.chargesDeleted += 1;
+          }
+          continue;
+        }
+        if (placeholder) {
+          result.alreadyRecorded += 1;
+          continue;
+        }
+        if (createdForSub >= maxPerSub) continue;
+
+        if (!dryRun) {
+          await prisma.charge.create({
+            data: {
+              clinicId: sub.clinicId,
+              customerId: sub.customerId,
+              paymentMethodId: sub.paymentMethodId,
+              lunarpayChargeId: placeholderId,
+              amountCents,
+              status: "paid",
+              description: `${RENEWAL_MARKER} (reconciled ${dateLabel})`,
+              createdAt: cycle,
+            },
+          });
+        }
+        createdForSub += 1;
+        result.cyclesBackfilled.push(dateLabel);
+        summary.chargesCreated += 1;
+      }
+
+      const statusChanged = !!data?.status && data.status !== sub.status;
       const nextChanged =
         !!lpNext && lpNext.getTime() !== (sub.nextPaymentOn?.getTime() ?? 0);
-      if (statusChanged || nextChanged) {
+      const amountChanged = amountCents !== sub.amountCents;
+      if (statusChanged || nextChanged || amountChanged) {
         summary.subscriptionsAdvanced += 1;
         if (!dryRun) {
           await prisma.subscription.update({
             where: { id: sub.id },
             data: {
+              amountCents,
               nextPaymentOn: lpNext ?? sub.nextPaymentOn,
               status: data?.status ?? sub.status,
             },
           });
         }
       }
-    } catch (e) {
+    } catch (error) {
       summary.errors += 1;
       result.error =
-        e instanceof LunarPayError
-          ? `LunarPay ${e.status}: ${e.message}`
-          : e instanceof Error
-            ? e.message
-            : String(e);
+        error instanceof LunarPayError
+          ? `LunarPay ${error.status}: ${error.message}`
+          : error instanceof Error
+            ? error.message
+            : String(error);
     }
 
     summary.results.push(result);

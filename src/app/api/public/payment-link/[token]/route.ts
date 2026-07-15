@@ -490,11 +490,14 @@ export async function POST(
             customerId: customer.id,
             paymentMethodId: pm.id,
             lunarpayScheduleId: lpSchedule.data.id,
-            totalAmountCents: downCents,
-            paidAmountCents: chargedTodayBase,
+            // Mirror LunarPay's schedule ledger exactly. The previous values
+            // mixed base dollars with fee-included webhook amounts, causing
+            // the schedule to complete early and disagree with LunarPay.
+            totalAmountCents: Math.round(lpSchedule.data.totalAmount),
+            paidAmountCents: Math.round(lpSchedule.data.paidAmount),
             status: lpSchedule.data.status,
             description: sess.description ?? null,
-            paymentsJson: JSON.stringify(scheduledPayments),
+            paymentsJson: JSON.stringify(lpSchedule.data.payments),
           },
         });
       }
@@ -677,11 +680,11 @@ export async function POST(
             customerId: customer.id,
             paymentMethodId: pm.id,
             lunarpayScheduleId: lpSchedule.data.id,
-            totalAmountCents: meta.totalCents ?? 0,
-            paidAmountCents: chargedToday,
+            totalAmountCents: Math.round(lpSchedule.data.totalAmount),
+            paidAmountCents: Math.round(lpSchedule.data.paidAmount),
             status: lpSchedule.data.status,
             description: sess.description ?? null,
-            paymentsJson: JSON.stringify(payments),
+            paymentsJson: JSON.stringify(lpSchedule.data.payments),
           },
         });
       }

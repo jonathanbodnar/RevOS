@@ -93,6 +93,6 @@ See [`payments.md`](./payments.md#reconciliation) for what it does.
 | Symptom | Likely cause |
 | --- | --- |
 | Recurring charges missing from reports | Lost LunarPay webhook; run reconciliation (`/api/admin/lunarpay/reconcile-subscriptions` or wait for cron). |
-| InBody scans show no metrics | InBody data-access add-on not activated (only `/user/test` works). |
+| InBody scans show no metrics | Confirm both InBody env vars, run the connection test, then run **Backfill existing tests** and inspect the per-test fetch error. |
 | Card add fails silently | Check `NEXT_PUBLIC_FORTIS_ELEMENTS_URL` and the publishable key on the intention. |
 | Cron returns 503 | `CRON_SECRET` not set. |

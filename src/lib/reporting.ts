@@ -96,7 +96,16 @@ export function reverseFee(totalCents: number): { baseCents: number; feeCents: n
 
 /** The fee LunarPay charges RevOS on a gross transaction (a RevOS cost). */
 export function lunarpayCostCents(grossCents: number): number {
+  if (grossCents <= 0) return 0;
   return Math.round(grossCents * FEE_PERCENT) + FEE_FLAT_CENTS;
+}
+
+/** Amount that actually remains collected after full or partial refunds. */
+export function netChargeAmountCents(
+  amountCents: number,
+  refundedCents: number,
+): number {
+  return Math.max(0, amountCents - Math.max(0, refundedCents));
 }
 
 export type ClinicShareConfig = {
