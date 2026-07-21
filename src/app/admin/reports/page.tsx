@@ -203,6 +203,61 @@ export default async function ReportsPage({
   const periodWeeks = Math.max(1, periodSpanMs / WEEK_MS);
   const avgSoldPerWeek = soldInPeriod / periodWeeks;
 
+  // ── Program-chart KPIs (adherence) ───────────────────────────────────────
+  // Chart weeks are program-relative, not period-bounded, so they honor the
+  // clinic/implementor scope but not the date window. Adherence = the share of
+  // scheduled visits that were completed.
+  const chartWeeksInScope = await prisma.chartWeek.findMany({
+    where: { customer: scopeCustomerWhere },
+    select: {
+      customerId: true,
+      weekNumber: true,
+      scheduled: true,
+      completed: true,
+      progressNotes: true,
+    },
+  });
+  const chart = {
+    scheduled: 0,
+    completed: 0,
+    // Completed AND scheduled — the adherence numerator. Counting completed
+    // independently of scheduled lets adherence exceed 100%.
+    completedOfScheduled: 0,
+    notes: 0,
+    patients: new Set<string>(),
+  };
+  const chartByWeekNum = new Map<
+    number,
+    { scheduled: number; completed: number; completedOfScheduled: number }
+  >();
+  for (const w of chartWeeksInScope) {
+    const hasNotes = !!(w.progressNotes && w.progressNotes.trim());
+    if (w.scheduled) chart.scheduled += 1;
+    if (w.completed) chart.completed += 1;
+    if (w.scheduled && w.completed) chart.completedOfScheduled += 1;
+    if (hasNotes) chart.notes += 1;
+    if (w.scheduled || w.completed || hasNotes) chart.patients.add(w.customerId);
+    const b =
+      chartByWeekNum.get(w.weekNumber) ??
+      { scheduled: 0, completed: 0, completedOfScheduled: 0 };
+    if (w.scheduled) b.scheduled += 1;
+    if (w.completed) b.completed += 1;
+    if (w.scheduled && w.completed) b.completedOfScheduled += 1;
+    chartByWeekNum.set(w.weekNumber, b);
+  }
+  const chartAdherence =
+    chart.scheduled > 0 ? chart.completedOfScheduled / chart.scheduled : null;
+  const chartPatientCount = chart.patients.size;
+  const chartWeekBreakdown = [...chartByWeekNum.entries()]
+    .map(([weekNumber, v]) => ({
+      weekNumber,
+      scheduled: v.scheduled,
+      completed: v.completed,
+      adherence:
+        v.scheduled > 0 ? v.completedOfScheduled / v.scheduled : null,
+    }))
+    .sort((a, b) => a.weekNumber - b.weekNumber);
+
   // Customers in scope, with their period-bounded charges, active subs, costs.
   const customers = await prisma.customer.findMany({
     where: {
@@ -702,6 +757,23 @@ export default async function ReportsPage({
   csvLines.push(
     `Avg time on program (weeks),${avgProgramWeeks != null ? avgProgramWeeks.toFixed(1) : ""}`,
   );
+  csvLines.push(`Patients with a program chart,${chartPatientCount}`);
+  csvLines.push(`Visits scheduled,${chart.scheduled}`);
+  csvLines.push(`Visits completed,${chart.completed}`);
+  csvLines.push(
+    `Visit adherence,${chartAdherence != null ? `${Math.round(chartAdherence * 100)}%` : ""}`,
+  );
+  csvLines.push(`Progress notes logged,${chart.notes}`);
+  if (chartWeekBreakdown.length > 0) {
+    csvLines.push("");
+    csvLines.push("Program week,Scheduled,Completed,Adherence (program-to-date)");
+    for (const w of chartWeekBreakdown) {
+      csvLines.push(
+        `Week ${w.weekNumber},${w.scheduled},${w.completed},${w.adherence != null ? `${Math.round(w.adherence * 100)}%` : ""}`,
+      );
+    }
+    csvLines.push(""); // separate the 4-col table from the resumed 2-col summary
+  }
   csvLines.push(`Down payments gross,${money(t.downGross)}`);
   csvLines.push(`Recurring collected gross,${money(t.recurringMonthlyGross)}`);
   csvLines.push(`Care credit collected,${money(t.careCreditTotal)}`);
@@ -761,6 +833,12 @@ export default async function ReportsPage({
       label: "Avg time on program",
       value: avgProgramWeeks != null ? `${avgProgramWeeks.toFixed(1)} wks` : "—",
       sub: "patients currently billing",
+    },
+    {
+      label: "Visit adherence",
+      value:
+        chartAdherence != null ? `${Math.round(chartAdherence * 100)}%` : "—",
+      sub: `${chart.completedOfScheduled}/${chart.scheduled} scheduled visits done · ${chartPatientCount} charted (program-to-date)`,
     },
     {
       label: "Down payments",
@@ -886,6 +964,57 @@ export default async function ReportsPage({
             <BreakdownRow label="LunarPay fees (cost)" value={-t.recurringLunarpayCost} negative />
           </div>
         </div>
+
+        {/* Program-chart adherence by week */}
+        {chartWeekBreakdown.length > 0 && (
+          <div className="card overflow-hidden">
+            <div className="px-5 py-3 border-b border-line">
+              <h3 className="text-sm font-semibold text-slate-900">
+                Program adherence by week
+              </h3>
+              <p className="text-xs text-slate-500">
+                Completed vs scheduled visits across {chartPatientCount} charted
+                patient{chartPatientCount === 1 ? "" : "s"}
+                {clinicId ? " in this clinic" : ""} · overall{" "}
+                {chartAdherence != null
+                  ? `${Math.round(chartAdherence * 100)}%`
+                  : "—"}
+              </p>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="table">
+                <thead>
+                  <tr>
+                    <th>Program week</th>
+                    <th className="text-right">Scheduled</th>
+                    <th className="text-right">Completed</th>
+                    <th className="text-right pr-5">Adherence</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {chartWeekBreakdown.map((w) => (
+                    <tr key={w.weekNumber}>
+                      <td className="font-medium text-slate-900">
+                        Week {w.weekNumber}
+                      </td>
+                      <td className="text-right text-slate-600 tabular-nums">
+                        {w.scheduled}
+                      </td>
+                      <td className="text-right text-slate-600 tabular-nums">
+                        {w.completed}
+                      </td>
+                      <td className="text-right font-medium text-slate-900 tabular-nums pr-5">
+                        {w.adherence != null
+                          ? `${Math.round(w.adherence * 100)}%`
+                          : "—"}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
 
         {/* Per-patient table */}
         <div className="card overflow-hidden">

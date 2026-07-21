@@ -22,7 +22,14 @@ import { MoveClinicButton } from "./move-clinic";
 import { InactiveToggleButton } from "./inactive-toggle";
 import { CustomerTabs } from "./customer-tabs";
 import { InBodyTab } from "./inbody-tab";
+import { ProgramChart, type ChartWeekRow } from "./program-chart";
 import { formatDateOnly, parsePaymentsJson } from "@/lib/csv";
+import {
+  programWeekOf,
+  weekBounds,
+  weeksToShow,
+  startOfUtcDay,
+} from "@/lib/program-week";
 
 export default async function CustomerDetailPage({
   params,
@@ -47,6 +54,7 @@ export default async function CustomerDetailPage({
       schedules: { orderBy: { createdAt: "desc" } },
       careCredits: { orderBy: { collectedOn: "desc" } },
       inbodyTests: { orderBy: [{ testedAt: "desc" }, { createdAt: "desc" }], take: 20 },
+      chartWeeks: true,
     },
   });
   if (!customer) notFound();
@@ -135,6 +143,85 @@ export default async function CustomerDetailPage({
     segLeanLeftLegPct: t.segLeanLeftLegPct,
   }));
 
+  // ── Program chart week rows ────────────────────────────────────────────
+  // Anchor week 1 on the signed date, else the earliest money actually
+  // collected, so week numbers match the reporting "week N" and InBody scans.
+  // The earliest charge must come from a dedicated query — the customer's
+  // `charges` include is capped at 50 (newest first), so a long-tenured
+  // patient's true first payment isn't in that window.
+  const now = new Date();
+  const firstPaidCharge = customer.programSignedOn
+    ? null
+    : await prisma.charge.findFirst({
+        where: {
+          customerId: customer.id,
+          status: { in: ["paid", "refunded", "pending"] },
+        },
+        orderBy: { createdAt: "asc" },
+        select: { createdAt: true },
+      });
+  const rawAnchor = customer.programSignedOn ?? firstPaidCharge?.createdAt ?? null;
+  // Day-align so week bounds match the date labels and scan buckets.
+  const chartAnchor = rawAnchor ? startOfUtcDay(rawAnchor) : null;
+  const signedDateStr = customer.programSignedOn
+    ? customer.programSignedOn.toISOString().slice(0, 10)
+    : null;
+  const currentWeek = chartAnchor ? programWeekOf(chartAnchor, now) : 0;
+  const chartByWeek = new Map(customer.chartWeeks.map((w) => [w.weekNumber, w]));
+  const weekCount = weeksToShow(
+    chartAnchor,
+    now,
+    customer.chartWeeks.map((w) => w.weekNumber),
+  );
+  // Scans with a real test date, for matching into week buckets.
+  const datedScans = customer.inbodyTests
+    .filter((t) => t.testedAt)
+    .map((t) => ({
+      id: t.id,
+      at: t.testedAt as Date,
+      bmi: t.bmi,
+      pbf: t.percentBodyFat,
+      weightKg: t.weightKg,
+    }));
+  const chartWeekRows: ChartWeekRow[] = [];
+  for (let wk = 1; wk <= weekCount; wk++) {
+    const row = chartByWeek.get(wk);
+    let rangeLabel = "—";
+    let scan: ChartWeekRow["scan"] = null;
+    if (chartAnchor) {
+      const { start, end } = weekBounds(chartAnchor, wk);
+      const endDisplay = new Date(end.getTime() - 24 * 60 * 60 * 1000);
+      rangeLabel = `${formatDateOnly(start.toISOString().slice(0, 10))} – ${formatDateOnly(endDisplay.toISOString().slice(0, 10))}`;
+      // datedScans is newest-first; the first match in a week is the latest
+      // scan that week. Note when a week has more than one.
+      const inWeek = datedScans.filter((x) => x.at >= start && x.at < end);
+      const s = inWeek[0];
+      if (s) {
+        const parts = [
+          s.weightKg != null ? `${s.weightKg.toFixed(1)} kg` : null,
+          s.bmi != null ? `${s.bmi.toFixed(1)} BMI` : null,
+          s.pbf != null ? `${s.pbf.toFixed(1)}% BF` : null,
+        ].filter(Boolean);
+        const summary = parts.join(" · ") || "scan on file";
+        scan = {
+          id: s.id,
+          dateLabel: formatDate(s.at),
+          summary: inWeek.length > 1 ? `${summary} · +${inWeek.length - 1} more` : summary,
+        };
+      }
+    }
+    chartWeekRows.push({
+      weekNumber: wk,
+      rangeLabel,
+      scheduled: row?.scheduled ?? false,
+      completed: row?.completed ?? false,
+      notes: row?.progressNotes ?? "",
+      isCurrent: chartAnchor != null && wk === currentWeek,
+      isFuture: chartAnchor != null && wk > currentWeek,
+      scan,
+    });
+  }
+
   return (
     <div className="space-y-6">
       <div className="flex items-start justify-between">
@@ -199,6 +286,14 @@ export default async function CustomerDetailPage({
       <CustomerTabs
         inbodyCount={inbodyTests.length}
         inbody={<InBodyTab tests={inbodyTests} />}
+        chart={
+          <ProgramChart
+            customerId={customer.id}
+            signedDate={signedDateStr}
+            initialWeeks={chartWeekRows}
+            canEdit
+          />
+        }
         overview={
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         <div className="lg:col-span-2 space-y-6">

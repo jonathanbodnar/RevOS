@@ -7,19 +7,24 @@ import { useState } from "react";
  * server-rendered and passed in as nodes; we just toggle visibility so state
  * is preserved and there's no refetch when switching tabs.
  */
+type TabId = "overview" | "chart" | "inbody";
+
 export function CustomerTabs({
   overview,
+  chart,
   inbody,
   inbodyCount,
 }: {
   overview: React.ReactNode;
+  chart: React.ReactNode;
   inbody: React.ReactNode;
   inbodyCount: number;
 }) {
-  const [active, setActive] = useState<"overview" | "inbody">("overview");
+  const [active, setActive] = useState<TabId>("overview");
 
-  const tabs: { id: "overview" | "inbody"; label: string; badge?: number }[] = [
+  const tabs: { id: TabId; label: string; badge?: number }[] = [
     { id: "overview", label: "Overview" },
+    { id: "chart", label: "Program chart" },
     { id: "inbody", label: "InBody", badge: inbodyCount },
   ];
 
@@ -47,6 +52,7 @@ export function CustomerTabs({
       </div>
 
       <div className={active === "overview" ? "" : "hidden"}>{overview}</div>
+      <div className={active === "chart" ? "" : "hidden"}>{chart}</div>
       <div className={active === "inbody" ? "" : "hidden"}>{inbody}</div>
     </div>
   );

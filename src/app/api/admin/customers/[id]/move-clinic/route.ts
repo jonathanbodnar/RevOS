@@ -77,6 +77,7 @@ export async function POST(
     await tx.careCredit.updateMany({ where, data });
     await tx.advancedCost.updateMany({ where, data });
     await tx.inBodyTest.updateMany({ where, data });
+    await tx.chartWeek.updateMany({ where, data });
   });
 
   await logAudit({

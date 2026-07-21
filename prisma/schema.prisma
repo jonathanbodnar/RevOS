@@ -65,6 +65,7 @@ model Clinic {
   careCredits      CareCredit[]
   payouts          ClinicPayout[]
   inbodyTests      InBodyTest[]
+  chartWeeks       ChartWeek[]
 }
 
 // Sales implementors. Customers are attributed to an implementor either via
@@ -104,6 +105,10 @@ model Customer {
   // cross-clinic search, and retained for reporting history.
   isActive Boolean @default(true)
 
+  // Date the customer signed onto the program — anchors the weekly program
+  // chart (week 1 = signed week). Falls back to first paid charge when unset.
+  programSignedOn DateTime?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -120,11 +125,42 @@ model Customer {
   advancedCosts    AdvancedCost[]
   careCredits      CareCredit[]
   inbodyTests      InBodyTest[]
+  chartWeeks       ChartWeek[]
 
   @@index([clinicId])
   @@index([email])
   @@index([implementorId])
   @@index([phone])
+}
+
+// A single week of a customer's program chart — the weekly adherence grid
+// providers keep (mirrors the per-week "Scheduled / Completed / Progress
+// Notes" columns of the legacy tracking sheet). Weeks are numbered from the
+// customer's program start (see programSignedOn / program-week helper), so
+// week numbers line up with InBody "week N" scans. One row per (customer,
+// week); rows are created lazily the first time a week is touched.
+model ChartWeek {
+  id         String   @id @default(cuid())
+  clinicId   String?
+  clinic     Clinic?  @relation(fields: [clinicId], references: [id], onDelete: SetNull)
+  customerId String
+  customer   Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  weekNumber    Int
+  scheduled     Boolean @default(false)
+  completed     Boolean @default(false)
+  progressNotes String?
+
+  // Who last touched this week (provider/clinic-admin user id) — the audit
+  // trail proper lives in AuditLog; this is a cheap "last edited by".
+  updatedById String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([customerId, weekNumber])
+  @@index([clinicId])
+  @@index([customerId])
 }
 
 // A Care Credit payment is money the patient paid the CLINIC directly through
