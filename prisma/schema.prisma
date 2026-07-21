@@ -30,6 +30,10 @@ model User {
   clinicId     String?
   clinic       Clinic?  @relation(fields: [clinicId], references: [id], onDelete: SetNull)
   isActive     Boolean  @default(true)
+  // Optional TOTP MFA. Secret is stored encrypted; only enforced at login when
+  // mfaEnabled is true (so a half-finished enrollment can't lock anyone out).
+  mfaSecret    String?
+  mfaEnabled   Boolean  @default(false)
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 

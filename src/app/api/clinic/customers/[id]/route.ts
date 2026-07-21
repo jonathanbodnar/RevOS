@@ -5,6 +5,7 @@ import { requireSuperAdminClinicApi } from "@/lib/api-guard";
 import { requireStringParams } from "@/lib/route-params";
 import { logAudit } from "@/lib/audit";
 import { lunarpay } from "@/lib/lunarpay";
+import { encryptField } from "@/lib/encryption";
 
 const PatchBody = z.object({
   implementorId: z.string().nullable().optional(),
@@ -76,7 +77,7 @@ export async function PATCH(
     where: { id },
     data: {
       ...(d.implementorId !== undefined ? { implementorId: d.implementorId } : {}),
-      ...(d.paymentNotes !== undefined ? { paymentNotes: d.paymentNotes } : {}),
+      ...(d.paymentNotes !== undefined ? { paymentNotes: encryptField(d.paymentNotes) } : {}),
       ...(d.firstName !== undefined ? { firstName: d.firstName } : {}),
       ...(d.lastName !== undefined ? { lastName: d.lastName } : {}),
       ...(d.email !== undefined ? { email: d.email } : {}),

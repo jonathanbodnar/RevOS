@@ -59,6 +59,17 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Unknown account" }, { status: 401 });
   }
 
+  // Minimal validation: a test must carry enough to build a stable dedupe key
+  // (a datetime plus an equipment serial or user id). Reject clearly-malformed
+  // notifications with a 200 so LookinBody stops retrying, but don't ingest.
+  const hasDatetimes = !!String(payload.TestDatetimes ?? "").trim();
+  const hasIdentifier =
+    !!String(payload.EquipSerial ?? "").trim() ||
+    !!String(payload.UserID ?? "").trim();
+  if (!hasDatetimes || !hasIdentifier) {
+    return NextResponse.json({ success: false, reason: "missing identifiers" });
+  }
+
   try {
     const test = await ingestInBodyNotification(payload);
     // eslint-disable-next-line no-console
@@ -70,7 +81,9 @@ export async function POST(req: NextRequest) {
   } catch (err) {
     // eslint-disable-next-line no-console
     console.error("[inbody] webhook ingest failed", err);
-    return NextResponse.json({ error: "Ingest failed" }, { status: 500 });
+    // Webhooks return 200 even on internal error so the sender stops retrying
+    // (idempotency is on the dedupe key). See AGENTS.md webhook convention.
+    return NextResponse.json({ success: false, error: "ingest failed" });
   }
 }
 

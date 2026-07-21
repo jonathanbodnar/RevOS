@@ -33,6 +33,7 @@ export default async function AdminLayout({
         { href: "/admin/learning", label: "Training", icon: "book" },
         { href: "/admin/payment-links", label: "Payment links", icon: "link" },
         { href: "/admin/audit", label: "Audit log", icon: "list" },
+        { href: "/admin/security", label: "Security", icon: "shield" },
       ];
 
   return (

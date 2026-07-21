@@ -14,6 +14,7 @@ import {
   csvEsc,
   csvMoney,
 } from "@/lib/csv";
+import { decryptField } from "@/lib/encryption";
 import { ReportsFilters } from "./reports-filters";
 import { ReportActions } from "./report-actions";
 import { AdvancedCostForm } from "./advanced-cost-form";
@@ -565,7 +566,7 @@ export default async function ReportsPage({
       scheduled,
       careCredits,
       refunds: custRefunds,
-      notes: cust.paymentNotes,
+      notes: decryptField(cust.paymentNotes),
       programWeeks,
       programActive,
       revosProfit: custRevos,

@@ -3,6 +3,7 @@ import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { getSession } from "@/lib/session";
 import { logAudit } from "@/lib/audit";
+import { securityAlert } from "@/lib/security-alert";
 
 /**
  * Super-admin "login as clinic".
@@ -37,6 +38,10 @@ export async function POST(req: Request) {
     action: "impersonate.start",
     targetType: "Clinic",
     targetId: clinic.id,
+  });
+  void securityAlert("impersonation.start", {
+    actorId: session.user.id,
+    clinicId: clinic.id,
   });
 
   return NextResponse.json({ ok: true, clinicId: clinic.id });

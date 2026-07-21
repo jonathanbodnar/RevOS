@@ -1,6 +1,7 @@
 import { Prisma } from "@prisma/client";
 import { prisma } from "./prisma";
 import { normalizePhone } from "./phone";
+import { encryptField, decryptField } from "./encryption";
 import {
   EMPTY_METRICS,
   fetchInBodyResults,
@@ -45,25 +46,33 @@ async function findCustomersByPhone(
   `);
 }
 
+// Reject physiologically-impossible values (negative, zero, or absurd) rather
+// than storing garbage that would skew charts and KPIs. Out-of-range → null.
+function inRange(v: number | null, min: number, max: number): number | null {
+  return v != null && Number.isFinite(v) && v >= min && v <= max ? v : null;
+}
+const KG = (v: number | null) => inRange(v, 0.1, 500);
+const PCT = (v: number | null) => inRange(v, 0, 100);
+
 function metricColumns(m: InBodyMetrics) {
   return {
-    weightKg: m.weightKg,
-    totalBodyWaterKg: m.totalBodyWaterKg,
-    dryLeanMassKg: m.dryLeanMassKg,
-    skeletalMuscleMassKg: m.skeletalMuscleMassKg,
-    bodyFatMassKg: m.bodyFatMassKg,
-    bmi: m.bmi,
-    percentBodyFat: m.percentBodyFat,
-    segLeanRightArmKg: m.segLeanRightArmKg,
-    segLeanLeftArmKg: m.segLeanLeftArmKg,
-    segLeanTrunkKg: m.segLeanTrunkKg,
-    segLeanRightLegKg: m.segLeanRightLegKg,
-    segLeanLeftLegKg: m.segLeanLeftLegKg,
-    segLeanRightArmPct: m.segLeanRightArmPct,
-    segLeanLeftArmPct: m.segLeanLeftArmPct,
-    segLeanTrunkPct: m.segLeanTrunkPct,
-    segLeanRightLegPct: m.segLeanRightLegPct,
-    segLeanLeftLegPct: m.segLeanLeftLegPct,
+    weightKg: KG(m.weightKg),
+    totalBodyWaterKg: KG(m.totalBodyWaterKg),
+    dryLeanMassKg: KG(m.dryLeanMassKg),
+    skeletalMuscleMassKg: KG(m.skeletalMuscleMassKg),
+    bodyFatMassKg: KG(m.bodyFatMassKg),
+    bmi: inRange(m.bmi, 5, 100),
+    percentBodyFat: PCT(m.percentBodyFat),
+    segLeanRightArmKg: KG(m.segLeanRightArmKg),
+    segLeanLeftArmKg: KG(m.segLeanLeftArmKg),
+    segLeanTrunkKg: KG(m.segLeanTrunkKg),
+    segLeanRightLegKg: KG(m.segLeanRightLegKg),
+    segLeanLeftLegKg: KG(m.segLeanLeftLegKg),
+    segLeanRightArmPct: PCT(m.segLeanRightArmPct),
+    segLeanLeftArmPct: PCT(m.segLeanLeftArmPct),
+    segLeanTrunkPct: PCT(m.segLeanTrunkPct),
+    segLeanRightLegPct: PCT(m.segLeanRightLegPct),
+    segLeanLeftLegPct: PCT(m.segLeanLeftLegPct),
   };
 }
 
@@ -166,8 +175,9 @@ export async function ingestInBodyNotification(payload: InBodyWebhookPayload) {
       matchStatus,
       resultStatus,
       fetchError,
-      rawJson,
-      webhookJson,
+      // Raw payloads contain PHI (phone) — encrypt at rest.
+      rawJson: encryptField(rawJson),
+      webhookJson: encryptField(webhookJson),
       ...metricColumns(metrics),
     },
     update: {
@@ -183,8 +193,8 @@ export async function ingestInBodyNotification(payload: InBodyWebhookPayload) {
       isTempData,
       resultStatus: preservedResultStatus,
       fetchError,
-      ...(rawJson ? { rawJson } : {}),
-      webhookJson,
+      ...(rawJson ? { rawJson: encryptField(rawJson) } : {}),
+      webhookJson: encryptField(webhookJson),
       ...(newMetricsAvailable ? metricColumns(metrics) : {}),
       ...(!preserveManualMapping && phoneNormalized
         ? { customerId, clinicId, matchStatus }
@@ -216,7 +226,9 @@ export async function refetchInBodyTest(testId: string) {
   }
 
   let metrics: InBodyMetrics = { ...EMPTY_METRICS };
-  let rawJson = test.rawJson;
+  // Decrypt the stored blob so downstream logic works on plaintext; it's
+  // re-encrypted at the write below.
+  let rawJson = decryptField(test.rawJson);
   let fetchError: string | null = null;
   let resultStatus = test.resultStatus;
 
@@ -253,7 +265,7 @@ export async function refetchInBodyTest(testId: string) {
       matchStatus,
       resultStatus,
       fetchError,
-      rawJson,
+      rawJson: encryptField(rawJson),
       ...(hasAnyMetric(metrics) ? metricColumns(metrics) : {}),
     },
   });
@@ -352,7 +364,10 @@ function originalTestDatetimes(test: {
 }): string | null {
   if (test.webhookJson) {
     try {
-      const payload = JSON.parse(test.webhookJson) as Record<string, unknown>;
+      // Stored encrypted; decryptField passes plaintext through unchanged.
+      const payload = JSON.parse(
+        decryptField(test.webhookJson) ?? "",
+      ) as Record<string, unknown>;
       const raw = payload.TestDatetimes;
       if (typeof raw === "string" && raw.trim()) return raw.trim();
     } catch {

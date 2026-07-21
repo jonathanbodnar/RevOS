@@ -2,6 +2,32 @@ import type { NextAuthOptions, Session } from "next-auth";
 import CredentialsProvider from "next-auth/providers/credentials";
 import bcrypt from "bcryptjs";
 import { prisma } from "./prisma";
+import { logAudit } from "./audit";
+import { securityAlert } from "./security-alert";
+import { decryptField } from "./encryption";
+import { verifyTotp } from "./totp";
+
+// In-process failed-login throttle. Per-instance (not shared across Railway
+// replicas) — a first line of defense against password guessing, not a
+// distributed limiter.
+const LOGIN_FAILS = new Map<string, { n: number; resetAt: number }>();
+const MAX_LOGIN_FAILS = 8;
+const LOGIN_WINDOW_MS = 15 * 60 * 1000;
+
+function recordLoginFail(email: string): number {
+  const now = Date.now();
+  const cur = LOGIN_FAILS.get(email);
+  if (!cur || now > cur.resetAt) {
+    LOGIN_FAILS.set(email, { n: 1, resetAt: now + LOGIN_WINDOW_MS });
+    return 1;
+  }
+  cur.n += 1;
+  return cur.n;
+}
+function loginBlocked(email: string): boolean {
+  const cur = LOGIN_FAILS.get(email);
+  return !!cur && Date.now() <= cur.resetAt && cur.n >= MAX_LOGIN_FAILS;
+}
 
 /**
  * Session shape.
@@ -47,15 +73,46 @@ export const authOptions: NextAuthOptions = {
       credentials: {
         email: { label: "Email", type: "email" },
         password: { label: "Password", type: "password" },
+        totp: { label: "Authenticator code", type: "text" },
       },
       async authorize(credentials) {
         if (!credentials?.email || !credentials?.password) return null;
-        const user = await prisma.user.findUnique({
-          where: { email: credentials.email.toLowerCase().trim() },
-        });
-        if (!user || !user.isActive) return null;
+        const email = credentials.email.toLowerCase().trim();
+        // Throttle: after too many failures, reject without even checking.
+        if (loginBlocked(email)) return null;
+        const user = await prisma.user.findUnique({ where: { email } });
+        if (!user || !user.isActive) {
+          recordLoginFail(email);
+          return null;
+        }
         const ok = await bcrypt.compare(credentials.password, user.passwordHash);
-        if (!ok) return null;
+        if (!ok) {
+          const n = recordLoginFail(email);
+          if (n === MAX_LOGIN_FAILS) {
+            // First time we hit the threshold — alert on-call.
+            void securityAlert("auth.repeated_failures", {
+              email,
+              failures: n,
+              windowMinutes: LOGIN_WINDOW_MS / 60000,
+            });
+          }
+          return null;
+        }
+        // Second factor — ONLY enforced when the user has finished enrollment,
+        // so anyone without MFA logs in unchanged. Defensive: a decrypt/verify
+        // error fails closed for that MFA user, never for others.
+        if (user.mfaEnabled && user.mfaSecret) {
+          try {
+            const secret = decryptField(user.mfaSecret);
+            if (!secret || !verifyTotp(secret, String(credentials.totp ?? ""))) {
+              recordLoginFail(email);
+              return null;
+            }
+          } catch {
+            return null;
+          }
+        }
+        LOGIN_FAILS.delete(email); // success resets the counter
         return {
           id: user.id,
           email: user.email,
@@ -107,6 +164,27 @@ export const authOptions: NextAuthOptions = {
         originalRole: role,
       };
       return session;
+    },
+  },
+  events: {
+    async signIn({ user }) {
+      await logAudit({
+        actorId: (user as { id?: string })?.id ?? null,
+        actorRole: (user as { role?: string })?.role ?? null,
+        clinicId: (user as { clinicId?: string | null })?.clinicId ?? null,
+        action: "auth.login",
+        targetType: "User",
+        targetId: (user as { id?: string })?.id ?? null,
+      });
+    },
+    async signOut({ token }) {
+      await logAudit({
+        actorId: (token?.uid as string) ?? null,
+        actorRole: (token?.role as string) ?? null,
+        action: "auth.logout",
+        targetType: "User",
+        targetId: (token?.uid as string) ?? null,
+      });
     },
   },
 };

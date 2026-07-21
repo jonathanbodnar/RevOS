@@ -27,6 +27,17 @@ export async function notifyFailedPayment(
   const url = process.env.FAILED_PAYMENT_WEBHOOK_URL;
   if (!url) return;
 
+  // The receiver (e.g. Zapier) is generally NOT HIPAA-eligible, so no PHI
+  // leaves by default: we send ids + a deep link to the patient's RevOS
+  // profile so staff can act, but not name/email/phone. Set
+  // FAILED_PAYMENT_WEBHOOK_INCLUDE_PII=true ONLY if the receiver is covered by
+  // a BAA.
+  const includePii = process.env.FAILED_PAYMENT_WEBHOOK_INCLUDE_PII === "true";
+  const appUrl = process.env.NEXT_PUBLIC_APP_URL || "";
+  const profileUrl = appUrl
+    ? `${appUrl.replace(/\/$/, "")}/clinic/customers/${payload.customer.id}`
+    : null;
+
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 5000);
   try {
@@ -37,9 +48,7 @@ export async function notifyFailedPayment(
         event: "payment.failed",
         timestamp: new Date().toISOString(),
         customer_id: payload.customer.id,
-        customer_name: payload.customer.name,
-        customer_email: payload.customer.email,
-        customer_phone: payload.customer.phone,
+        customer_profile_url: profileUrl,
         clinic_id: payload.clinic.id,
         clinic_name: payload.clinic.name,
         amount_cents: payload.amountCents,
@@ -47,6 +56,13 @@ export async function notifyFailedPayment(
         error: payload.error,
         description: payload.description,
         source: payload.source,
+        ...(includePii
+          ? {
+              customer_name: payload.customer.name,
+              customer_email: payload.customer.email,
+              customer_phone: payload.customer.phone,
+            }
+          : {}),
       }),
       signal: controller.signal,
       cache: "no-store",

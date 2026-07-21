@@ -629,7 +629,7 @@ export default async function CustomerDetailPage({
               customerId={customer.id}
               implementors={implementors}
               currentImplementorId={customer.implementorId}
-              currentNotes={customer.paymentNotes}
+              currentNotes={decryptField(customer.paymentNotes)}
             />
           )}
           {canPerformSensitiveActions && (

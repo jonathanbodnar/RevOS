@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getSession } from "@/lib/session";
 import { logAudit } from "@/lib/audit";
+import { securityAlert } from "@/lib/security-alert";
 
 export const dynamic = "force-dynamic";
 
@@ -28,6 +29,9 @@ export async function POST(req: Request) {
       { status: 403 },
     );
   }
+
+  // Alert on-call the moment a wipe is attempted (even a valid one).
+  void securityAlert("admin.wipe_attempt", { actorId: session.user.id });
 
   const body = (await req.json().catch(() => ({}))) as { confirm?: string };
   if (body.confirm !== "WIPE") {

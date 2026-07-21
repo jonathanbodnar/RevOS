@@ -32,3 +32,12 @@ jobs:
             "https://revosportal.com/api/cron/evaluate-kpis")
           echo "$resp"
           echo "$resp" | grep -q '"ok":true'
+
+      - name: Data retention purge
+        run: |
+          set -euo pipefail
+          resp=$(curl -fsS --max-time 300 \
+            -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
+            "https://revosportal.com/api/cron/retention")
+          echo "$resp"
+          echo "$resp" | grep -q '"ok":true'

@@ -8,6 +8,7 @@ export function LoginForm() {
   const router = useRouter();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [totp, setTotp] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -19,11 +20,12 @@ export function LoginForm() {
     const res = await signIn("credentials", {
       email,
       password,
+      totp,
       redirect: false,
     });
     setLoading(false);
     if (res?.error) {
-      setError("Invalid email or password.");
+      setError("Invalid email, password, or authenticator code.");
       return;
     }
     router.push("/");
@@ -100,6 +102,22 @@ export function LoginForm() {
             )}
           </button>
         </div>
+      </div>
+
+      <div>
+        <label className="label" htmlFor="totp">
+          Authenticator code <span className="text-slate-400">(if enabled)</span>
+        </label>
+        <input
+          id="totp"
+          type="text"
+          inputMode="numeric"
+          autoComplete="one-time-code"
+          className="input"
+          placeholder="123456"
+          value={totp}
+          onChange={(e) => setTotp(e.target.value)}
+        />
       </div>
 
       {error && (

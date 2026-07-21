@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { Prisma } from "@prisma/client";
 import { requireSuperAdminApi } from "@/lib/api-guard";
 import { prisma } from "@/lib/prisma";
+import { logAudit } from "@/lib/audit";
 
 export const dynamic = "force-dynamic";
 
@@ -12,6 +13,17 @@ export async function GET(req: NextRequest) {
 
   const q = (req.nextUrl.searchParams.get("q") || "").trim();
   if (q.length < 2) return NextResponse.json({ results: [] });
+
+  // Cross-clinic PII search is a PHI access — log it (query term, not results).
+  await logAudit({
+    actorId: guard.session.user.id,
+    actorRole: guard.session.user.originalRole,
+    clinicId: null,
+    action: "customer.search",
+    targetType: "Customer",
+    targetId: null,
+    metadata: { queryLength: q.length },
+  });
 
   const includeInactive =
     req.nextUrl.searchParams.get("includeInactive") === "1";

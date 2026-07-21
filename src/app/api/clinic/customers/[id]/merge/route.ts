@@ -4,6 +4,7 @@ import { prisma } from "@/lib/prisma";
 import { requireSuperAdminClinicApi } from "@/lib/api-guard";
 import { requireStringParams } from "@/lib/route-params";
 import { logAudit } from "@/lib/audit";
+import { encryptField, decryptField } from "@/lib/encryption";
 
 /**
  * Merge a duplicate patient profile INTO the one being viewed.
@@ -98,7 +99,11 @@ export async function POST(
     });
 
     // Carry over attribution / notes / contact gaps from the duplicate.
-    const mergedNotes = [primary.paymentNotes, source.paymentNotes]
+    // Notes are encrypted at rest — decrypt both, join, re-encrypt.
+    const mergedNotes = [
+      decryptField(primary.paymentNotes),
+      decryptField(source.paymentNotes),
+    ]
       .filter(Boolean)
       .join("\n");
     await tx.customer.update({
@@ -109,7 +114,7 @@ export async function POST(
         phone: primary.phone ?? source.phone,
         firstName: primary.firstName ?? source.firstName,
         lastName: primary.lastName ?? source.lastName,
-        paymentNotes: mergedNotes || null,
+        paymentNotes: mergedNotes ? encryptField(mergedNotes) : null,
       },
     });
 
