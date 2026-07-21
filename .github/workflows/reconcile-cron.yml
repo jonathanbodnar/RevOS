@@ -1,0 +1,25 @@
+# Nightly subscription/schedule reconciliation.
+#
+# The app runs on Railway, which does not read vercel.json crons — this
+# workflow is the production scheduler. It calls the reconcile endpoint with
+# CRON_SECRET (repository secret, must match the Railway env var).
+name: Reconcile subscriptions
+
+on:
+  schedule:
+    - cron: "0 8 * * *" # 08:00 UTC daily — matches the original vercel.json intent
+  workflow_dispatch: {}
+
+jobs:
+  reconcile:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Call reconcile endpoint
+        run: |
+          set -euo pipefail
+          resp=$(curl -fsS --max-time 300 \
+            -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
+            "https://revosportal.com/api/cron/reconcile-subscriptions")
+          echo "$resp"
+          # Fail the run if the endpoint reported an error so we get notified.
+          echo "$resp" | grep -q '"ok":true'

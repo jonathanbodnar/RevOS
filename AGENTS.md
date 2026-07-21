@@ -24,7 +24,7 @@ ingests scan results and auto-pairs them to customers by phone number.
 | ORM / DB | Prisma → PostgreSQL (Supabase-hosted; pooled URL at runtime, direct URL for migrations) |
 | Auth | NextAuth (Credentials provider, JWT sessions), bcryptjs |
 | Validation | Zod |
-| Hosting | Vercel (cron via `vercel.json`) |
+| Hosting | Railway (`ample-solace`: production = revosportal.com/main, Dev = dev.revosportal.com/dev); nightly reconcile cron via GitHub Actions (`.github/workflows/reconcile-cron.yml`) |
 | External APIs | LunarPay (payments) + Fortis Elements (card tokenization), LookinBody / InBody Web API |
 
 ## 3. Repository map

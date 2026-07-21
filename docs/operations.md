@@ -55,21 +55,23 @@ Default seeded credentials come from `SUPER_ADMIN_EMAIL` /
 
 ## Scheduled jobs
 
-`vercel.json` schedules the nightly reconciliation:
-
-```json
-{ "crons": [ { "path": "/api/cron/reconcile-subscriptions", "schedule": "0 8 * * *" } ] }
-```
+The app runs on **Railway**, which ignores `vercel.json` crons (that file is
+legacy). The nightly reconciliation is scheduled by GitHub Actions —
+`.github/workflows/reconcile-cron.yml` calls
+`GET https://revosportal.com/api/cron/reconcile-subscriptions` at 08:00 UTC
+using the `CRON_SECRET` repository secret (must match the Railway env var).
 
 The route requires `Authorization: Bearer $CRON_SECRET`; if `CRON_SECRET` is
 unset it returns 503 (disabled) rather than exposing an unauthenticated write.
 See [`payments.md`](./payments.md#reconciliation) for what it does.
 
-## Deploy (Vercel)
+## Deploy (Railway)
 
+- Project `ample-solace`: `production` env deploys branch `main` and serves
+  revosportal.com; `Dev` deploys branch `dev` and serves dev.revosportal.com.
 - `next build` runs `prisma generate` first (see `package.json`).
-- Set all env vars in the Vercel project. Use the Supabase **pooler** URL for
-  `DATABASE_URL` and the **direct** URL for `DIRECT_URL`.
+- Set all env vars in the Railway environment. Use the Supabase **pooler**
+  URL for `DATABASE_URL`.
 - Register webhook endpoints in LunarPay and LookinBody pointing at
   `/api/webhooks/lunarpay` and `/api/webhooks/inbody` (or the `/webhooks/*`
   aliases).

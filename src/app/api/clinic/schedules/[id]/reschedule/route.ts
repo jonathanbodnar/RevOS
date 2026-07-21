@@ -91,12 +91,31 @@ export async function POST(
       payments: parsed.data.payments,
     });
 
+    // Preserve settled history in the snapshot: keep the old schedule's
+    // already-resolved items (paid/failed) and append the recreated pending
+    // items as LunarPay returned them (they carry the new LP item ids the
+    // webhook uses for matching). Storing only the request payload would
+    // erase per-item history and strip the ids.
+    let settled: unknown[] = [];
+    try {
+      const prev = JSON.parse(schedule.paymentsJson ?? "[]");
+      if (Array.isArray(prev)) {
+        settled = prev.filter(
+          (p: { status?: string }) =>
+            p.status === "paid" || p.status === "failed",
+        );
+      }
+    } catch {
+      // ignore an unreadable legacy snapshot
+    }
+    const mergedPayments = [...settled, ...(lp.data.payments ?? [])];
+
     const updated = await prisma.paymentSchedule.update({
       where: { id: schedule.id },
       data: {
         lunarpayScheduleId: lp.data.id,
         status: lp.data.status,
-        paymentsJson: JSON.stringify(parsed.data.payments),
+        paymentsJson: JSON.stringify(mergedPayments),
       },
     });
 

@@ -80,6 +80,7 @@ type WebhookEventData = {
   subscription_id?: number | null;
   schedule_id?: number | null;
   payment_schedule_id?: number | null;
+  scheduled_payment_id?: number | null;
   transaction_id?: number | null;
   customer_id?: number | null;
   customer_email?: string | null;
@@ -89,6 +90,8 @@ type WebhookEventData = {
   error?: string | null;
   consecutive_failures?: number | null;
   auto_cancelled?: boolean | null;
+  refunded_amount_cents?: number | null;
+  full_refund?: boolean | null;
   created_at?: string | null;
   paid_at?: string | null;
   transaction_date?: string | null;
@@ -205,6 +208,10 @@ export async function POST(req: Request) {
         await handlePaymentFailed(event, payload);
         break;
 
+      case "payment.refunded":
+        await handlePaymentRefunded(payload);
+        break;
+
       case "subscription.cancelled":
         await handleSubscriptionCancelled(payload);
         break;
@@ -311,6 +318,78 @@ function utcDayBounds(date: Date): { gte: Date; lte: Date } {
   };
 }
 
+/**
+ * Locate the schedule item a succeeded installment webhook refers to, so the
+ * mirrored charge can carry the date the payment was SCHEDULED for and the
+ * snapshot's per-item status stays truthful.
+ *
+ * Match order: LunarPay's scheduled_payment_id (snapshot items keep their LP
+ * ids) → same-amount item due on the transaction's UTC day → the only
+ * remaining same-amount candidate (preferring non-failed). When several
+ * equal-amount items remain ambiguous, match NOTHING rather than guess — a
+ * wrong "(scheduled …)" stamp on a charge is permanent.
+ *
+ * `alreadyPaid` means the matched item was mirrored before (e.g. by the
+ * nightly reconciler) — callers must not add its amount to the schedule's
+ * paid total a second time.
+ */
+function resolveScheduleItem(
+  paymentsJson: string | null,
+  data: WebhookEventData,
+  amountCents: number,
+  occurredAt: Date,
+): {
+  scheduledFor: string | null;
+  alreadyPaid: boolean;
+  updatedPaymentsJson: string | null;
+} {
+  const none = { scheduledFor: null, alreadyPaid: false, updatedPaymentsJson: null };
+  if (!paymentsJson) return none;
+  let items: { id?: number; amount?: number; date?: string; status?: string }[];
+  try {
+    const parsed = JSON.parse(paymentsJson);
+    if (!Array.isArray(parsed)) return none;
+    items = parsed;
+  } catch {
+    return none;
+  }
+  let item =
+    data.scheduled_payment_id != null
+      ? items.find((p) => p.id === data.scheduled_payment_id)
+      : undefined;
+  if (!item) {
+    const day = occurredAt.toISOString().slice(0, 10);
+    const candidates = items.filter(
+      (p) =>
+        Math.round(Number(p.amount)) === amountCents &&
+        p.status !== "paid" &&
+        p.status !== "cancelled",
+    );
+    const sameDay = candidates.filter(
+      (p) => typeof p.date === "string" && p.date.slice(0, 10) === day,
+    );
+    const nonFailed = candidates.filter((p) => p.status !== "failed");
+    item =
+      sameDay[0] ??
+      (nonFailed.length === 1
+        ? nonFailed[0]
+        : candidates.length === 1
+          ? candidates[0]
+          : undefined);
+  }
+  if (!item || typeof item.date !== "string") return none;
+  const scheduledFor = item.date.slice(0, 10);
+  if (item.status === "paid") {
+    return { scheduledFor, alreadyPaid: true, updatedPaymentsJson: null };
+  }
+  item.status = "paid";
+  return {
+    scheduledFor,
+    alreadyPaid: false,
+    updatedPaymentsJson: JSON.stringify(items),
+  };
+}
+
 async function handlePaymentSucceeded(event: string, payload: WebhookEnvelope) {
   const data = payload.data ?? {};
   const ctx = await resolveContext(data);
@@ -328,6 +407,14 @@ async function handlePaymentSucceeded(event: string, payload: WebhookEnvelope) {
   const pmType = data.payment_method ?? null;
   const kind = eventKind(ctx, event);
   const occurredAt = webhookTransactionDate(data, payload);
+  // First pass only stamps the description; the authoritative snapshot/paid
+  // update happens later inside a locked transaction on fresh state.
+  const schedItem = ctx.schedule
+    ? resolveScheduleItem(ctx.schedule.paymentsJson, data, amountCents, occurredAt)
+    : { scheduledFor: null, alreadyPaid: false, updatedPaymentsJson: null };
+  const description = schedItem.scheduledFor
+    ? `${kind} (scheduled ${schedItem.scheduledFor}) (auto)`
+    : `${kind} (auto)`;
   let newlySettled = false;
 
   if (txId && amountCents > 0) {
@@ -344,7 +431,7 @@ async function handlePaymentSucceeded(event: string, payload: WebhookEnvelope) {
           amountCents,
           status: existing.status === "refunded" ? "refunded" : "paid",
           paymentMethodType: pmType ?? existing.paymentMethodType,
-          description: existing.description || `${kind} (auto)`,
+          description: existing.description || description,
         },
       });
     } else {
@@ -357,7 +444,7 @@ async function handlePaymentSucceeded(event: string, payload: WebhookEnvelope) {
           amountCents,
           status: "paid",
           paymentMethodType: pmType,
-          description: `${kind} (auto)`,
+          description,
           createdAt: occurredAt,
         },
       });
@@ -406,16 +493,40 @@ async function handlePaymentSucceeded(event: string, payload: WebhookEnvelope) {
     });
   }
 
-  // Track installment progress; mark completed once fully paid.
+  // Track installment progress; mark completed once fully paid. Also persist
+  // the matched item's paid status so the profile/report per-item lists stay
+  // truthful instead of showing every item as still pending.
+  //
+  // Runs on FRESH row state under a row lock: concurrent deliveries for
+  // equal-amount items must not lose each other's snapshot writes, and an
+  // item the reconciler already mirrored (alreadyPaid) must not increment
+  // paidAmountCents a second time.
   if (ctx.schedule && newlySettled) {
-    const paid = ctx.schedule.paidAmountCents + amountCents;
-    await prisma.paymentSchedule.update({
-      where: { id: ctx.schedule.id },
-      data: {
-        paidAmountCents: paid,
-        status:
-          paid >= ctx.schedule.totalAmountCents ? "completed" : ctx.schedule.status,
-      },
+    const scheduleId = ctx.schedule.id;
+    await prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT id FROM "PaymentSchedule" WHERE id = ${scheduleId} FOR UPDATE`;
+      const fresh = await tx.paymentSchedule.findUnique({
+        where: { id: scheduleId },
+      });
+      if (!fresh) return;
+      const freshItem = resolveScheduleItem(
+        fresh.paymentsJson,
+        data,
+        amountCents,
+        occurredAt,
+      );
+      const paid =
+        fresh.paidAmountCents + (freshItem.alreadyPaid ? 0 : amountCents);
+      await tx.paymentSchedule.update({
+        where: { id: scheduleId },
+        data: {
+          paidAmountCents: paid,
+          status: paid >= fresh.totalAmountCents ? "completed" : fresh.status,
+          ...(freshItem.updatedPaymentsJson
+            ? { paymentsJson: freshItem.updatedPaymentsJson }
+            : {}),
+        },
+      });
     });
   }
 
@@ -442,6 +553,11 @@ async function handlePaymentFailed(event: string, payload: WebhookEnvelope) {
   const reason = String(data.error ?? event).slice(0, 200);
   const txId = data.transaction_id != null ? String(data.transaction_id) : null;
 
+  // Fallback id must be DETERMINISTIC so a re-delivered event dedupes instead
+  // of minting a duplicate failed row (Date.now() produced duplicates).
+  const occurredDay = webhookTransactionDate(data, payload)
+    .toISOString()
+    .slice(0, 10);
   await recordFailedCharge({
     clinicId: ctx.clinicId,
     customerId: ctx.customer.id,
@@ -452,7 +568,7 @@ async function handlePaymentFailed(event: string, payload: WebhookEnvelope) {
     description: `${kind} (auto)`,
     externalId:
       txId ??
-      `${event}:${data.subscription_id ?? data.payment_schedule_id ?? ctx.customer.id}:${Date.now()}`,
+      `${event}:${data.subscription_id ?? data.payment_schedule_id ?? ctx.customer.id}:${occurredDay}`,
   });
 
   // The sender auto-cancels a subscription after consecutive failures.
@@ -475,6 +591,66 @@ async function handlePaymentFailed(event: string, payload: WebhookEnvelope) {
       amountCents: data.amount_cents ?? 0,
       consecutiveFailures: data.consecutive_failures ?? null,
       autoCancelled: !!data.auto_cancelled,
+    },
+  });
+}
+
+/**
+ * Refund issued on the LunarPay side (dashboard or another API caller).
+ * Mirrors the refund onto the local charge. RevOS-initiated refunds already
+ * wrote refundedCents synchronously, so this is idempotent: it only raises
+ * refundedCents, never lowers it.
+ */
+async function handlePaymentRefunded(payload: WebhookEnvelope) {
+  const data = payload.data ?? {};
+  if (data.transaction_id == null) return;
+
+  const charge = await prisma.charge.findUnique({
+    where: { lunarpayChargeId: String(data.transaction_id) },
+  });
+  if (!charge) {
+    console.warn(
+      "[webhook/lunarpay] payment.refunded for unknown charge",
+      data.transaction_id,
+    );
+    return;
+  }
+
+  const refundedCents = Math.max(
+    0,
+    Math.round(Number(data.refunded_amount_cents ?? 0)),
+  );
+  // RevOS-initiated refunds already recorded refundedCents synchronously and
+  // then receive this same event back — adding would double-count. Take the
+  // MAX instead: exact for full refunds and for the echo of our own refund;
+  // a second LunarPay-side partial of the same size is the one case this
+  // under-counts, which beats falsely marking charges fully refunded.
+  const newRefunded = data.full_refund
+    ? charge.amountCents
+    : Math.min(charge.amountCents, Math.max(charge.refundedCents, refundedCents));
+  if (newRefunded <= charge.refundedCents) {
+    return; // nothing new (duplicate delivery or our own refund echoed back)
+  }
+
+  await prisma.charge.update({
+    where: { id: charge.id },
+    data: {
+      refundedCents: Math.max(charge.refundedCents, newRefunded),
+      status: newRefunded >= charge.amountCents ? "refunded" : charge.status,
+    },
+  });
+
+  await logAudit({
+    actorId: null,
+    actorRole: "WEBHOOK",
+    clinicId: charge.clinicId,
+    action: "charge.refunded.webhook",
+    targetType: "Charge",
+    targetId: charge.id,
+    metadata: {
+      transactionId: String(data.transaction_id),
+      refundedCents,
+      fullRefund: !!data.full_refund,
     },
   });
 }
