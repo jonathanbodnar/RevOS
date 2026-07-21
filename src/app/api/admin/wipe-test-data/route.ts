@@ -19,6 +19,16 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
+  // Destructive mass-delete — disabled unless explicitly enabled in the
+  // environment, so it can never fire against a production database by
+  // accident. Set ALLOW_TEST_DATA_WIPE=true only on throwaway/dev instances.
+  if (process.env.ALLOW_TEST_DATA_WIPE !== "true") {
+    return NextResponse.json(
+      { error: "Data wipe is disabled on this environment." },
+      { status: 403 },
+    );
+  }
+
   const body = (await req.json().catch(() => ({}))) as { confirm?: string };
   if (body.confirm !== "WIPE") {
     return NextResponse.json(

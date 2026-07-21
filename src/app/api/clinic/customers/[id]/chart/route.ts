@@ -4,6 +4,7 @@ import { prisma } from "@/lib/prisma";
 import { requireClinicApi } from "@/lib/api-guard";
 import { requireStringParams } from "@/lib/route-params";
 import { logAudit } from "@/lib/audit";
+import { customerScopeWhere } from "@/lib/roles";
 
 /**
  * Program chart — the weekly adherence grid on a customer profile.
@@ -49,7 +50,7 @@ export async function PUT(
   }
 
   const customer = await prisma.customer.findFirst({
-    where: { id, clinicId },
+    where: { id, ...customerScopeWhere(session.user, clinicId) },
     select: { id: true, clinicId: true },
   });
   if (!customer) {

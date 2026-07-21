@@ -1,7 +1,9 @@
+import { requireSuperAdmin } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
 import { formatDate } from "@/lib/format";
 
 export default async function AuditPage() {
+  await requireSuperAdmin();
   const logs = await prisma.auditLog.findMany({
     orderBy: { createdAt: "desc" },
     take: 200,

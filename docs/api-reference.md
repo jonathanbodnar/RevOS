@@ -150,8 +150,6 @@ Guard legend:
 | --- | --- | --- | --- |
 | GET/POST | `/api/auth/[...nextauth]` | NextAuth | Sign-in / session endpoints. |
 | GET | `/api/health` | None | Liveness check. |
-| POST | `/api/health/login-check` | **None ⚠️** | Debug credential check. **REMOVE BEFORE PRODUCTION.** |
-| GET/POST | `/api/debug/lunarpay-intentions` | **None ⚠️** | Read-only LunarPay intention diagnostic. Debug-only. |
 
 ⚠️ The two flagged endpoints are unauthenticated by design for debugging and
 must be removed before going live (see [`operations.md`](./operations.md)).

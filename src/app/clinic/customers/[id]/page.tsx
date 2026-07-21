@@ -1,7 +1,10 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { requireClinicContext, isSuperAdmin, getSession } from "@/lib/session";
+import { requireClinicContext, isSuperAdmin } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
+import { customerScopeWhere } from "@/lib/roles";
+import { logAudit } from "@/lib/audit";
+import { AssignProviders } from "./assign-providers";
 import { formatMoneyCents, formatDate } from "@/lib/format";
 import { PaymentMethods } from "./payment-methods";
 import { NewChargeForm } from "./new-charge";
@@ -37,12 +40,13 @@ export default async function CustomerDetailPage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
-  const { clinicId } = await requireClinicContext();
-  const session = await getSession();
+  const { session } = await requireClinicContext();
+  const clinicId = session.user.effectiveClinicId as string;
   const canPerformSensitiveActions = isSuperAdmin(session);
 
+  // Providers can only open their assigned patients.
   const customer = await prisma.customer.findFirst({
-    where: { id, clinicId },
+    where: { id, ...customerScopeWhere(session.user, clinicId) },
     include: {
       clinic: { select: { name: true } },
       paymentMethods: {
@@ -55,9 +59,32 @@ export default async function CustomerDetailPage({
       careCredits: { orderBy: { collectedOn: "desc" } },
       inbodyTests: { orderBy: [{ testedAt: "desc" }, { createdAt: "desc" }], take: 20 },
       chartWeeks: true,
+      providerAssignments: { select: { providerId: true } },
     },
   });
   if (!customer) notFound();
+
+  // HIPAA read-access logging: record who opened this patient's chart. Never
+  // throws (logAudit swallows errors).
+  const isProviderRole = session.user.originalRole === "PROVIDER";
+  await logAudit({
+    actorId: session.user.id,
+    actorRole: session.user.originalRole,
+    clinicId,
+    action: "customer.view",
+    targetType: "Customer",
+    targetId: customer.id,
+  });
+
+  // Providers available to assign (clinic admins / super admin only).
+  const clinicProviders = isProviderRole
+    ? []
+    : await prisma.user.findMany({
+        where: { role: "PROVIDER", clinicId, isActive: true },
+        orderBy: { name: "asc" },
+        select: { id: true, name: true, email: true },
+      });
+  const assignedProviderIds = customer.providerAssignments.map((a) => a.providerId);
 
   // Other patients in this clinic — used as reassign targets for saved cards
   // (super-admin only). Kept lightweight (id + label).
@@ -585,6 +612,17 @@ export default async function CustomerDetailPage({
         </div>
 
         <div className="space-y-6">
+          {!isProviderRole && (
+            <AssignProviders
+              customerId={customer.id}
+              providers={clinicProviders.map((p) => ({
+                id: p.id,
+                label:
+                  p.name || p.email || p.id,
+              }))}
+              assignedIds={assignedProviderIds}
+            />
+          )}
           {canPerformSensitiveActions && (
             <CustomerAttribution
               customerId={customer.id}

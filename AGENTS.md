@@ -146,9 +146,10 @@ Full env reference and deploy notes: [`docs/operations.md`](./docs/operations.md
 ## 8. Safety notes for agents
 
 - `.env` holds live secrets and is git-ignored — never print, commit, or echo it.
-- Two endpoints are **intentionally unauthenticated and must be removed before
-  production**: `/api/health/login-check` and `/api/debug/lunarpay-intentions`.
-  Treat them as debug-only.
+- The former unauthenticated debug endpoints (`/api/health/login-check`,
+  `/api/debug/lunarpay-intentions`) have been **removed**. `/api/health` remains
+  as a liveness probe that leaks nothing. Don't reintroduce unauthenticated
+  routes that touch the DB or secrets.
 - The database is a shared Postgres. Prefer `db:push` against a dev database;
   never run destructive migrations against prod. IDEs must not connect to prod
   (see `FUTURE_SCOPE.md` §9.5).

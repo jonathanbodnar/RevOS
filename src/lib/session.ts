@@ -18,6 +18,14 @@ export async function requireSuperAdmin() {
   return session;
 }
 
+/** Admin area: super admin OR billing department (billing gets a reduced nav). */
+export async function requireAdmin() {
+  const session = await requireSession();
+  const role = session.user.originalRole;
+  if (role !== "SUPER_ADMIN" && role !== "BILLING_DEPT") redirect("/");
+  return session;
+}
+
 /**
  * Require a session with clinic context — either a clinic-admin, or a
  * super-admin who is currently impersonating a clinic.
@@ -37,4 +45,15 @@ export function isSuperAdmin(
   session: { user: { originalRole: string } } | null,
 ) {
   return session?.user?.originalRole === "SUPER_ADMIN";
+}
+
+/**
+ * Clinic context that EXCLUDES providers — for billing/admin surfaces inside a
+ * clinic (transactions, subscriptions, team, settings) that providers must not
+ * see. Providers are bounced to their overview.
+ */
+export async function requireClinicAdminContext() {
+  const ctx = await requireClinicContext();
+  if (ctx.session.user.originalRole === "PROVIDER") redirect("/clinic");
+  return ctx;
 }

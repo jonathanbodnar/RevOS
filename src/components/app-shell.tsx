@@ -21,7 +21,7 @@ export function AppShell({
     user: {
       email: string;
       name?: string | null;
-      originalRole: "SUPER_ADMIN" | "CLINIC_ADMIN";
+      originalRole: "SUPER_ADMIN" | "CLINIC_ADMIN" | "PROVIDER" | "BILLING_DEPT";
     };
   };
   clinicName?: string;

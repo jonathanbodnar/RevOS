@@ -1,8 +1,10 @@
+import { requireSuperAdmin } from "@/lib/session";
 import { GlobalCustomerSearch } from "./customers-search";
 
 export const dynamic = "force-dynamic";
 
-export default function AdminCustomersPage() {
+export default async function AdminCustomersPage() {
+  await requireSuperAdmin();
   return (
     <div className="space-y-4">
       <div>

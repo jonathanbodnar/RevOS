@@ -53,14 +53,13 @@ async function request<T>(
   if (!res.ok) {
     const j = json as { error?: string; message?: string; errors?: unknown };
     const msg = j?.error || j?.message || `LunarPay ${res.status}`;
-    // CRITICAL: log every failed LunarPay call with the request body so we
-    // can diagnose 400 validation errors (wrong field name, dollars vs cents
-    // mismatch, etc.). Sensitive fields like card numbers never flow through
-    // this layer — only ids and amounts.
+    // Log failed calls to diagnose 400s, but redact PII: customer create/
+    // update bodies carry name/email/phone/address. Card numbers never reach
+    // this layer. Keep only non-PHI keys (ids, amounts, flags).
     // eslint-disable-next-line no-console
     console.error(
       `[lunarpay] ${method} ${path} → ${res.status} (${elapsedMs}ms)`,
-      { request: body, response: json },
+      { request: redactPii(body), response: json },
     );
     throw new LunarPayError(msg, res.status, json);
   }
@@ -77,6 +76,30 @@ function safeJson(text: string): unknown {
   } catch {
     return { raw: text };
   }
+}
+
+// Strip PII fields from a request body before it reaches logs.
+const PII_KEYS = new Set([
+  "firstName",
+  "lastName",
+  "email",
+  "phone",
+  "nameHolder",
+  "address",
+  "city",
+  "state",
+  "zip",
+  "country",
+  "customer_email",
+  "customer_name",
+]);
+function redactPii(body: unknown): unknown {
+  if (!body || typeof body !== "object") return body;
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(body as Record<string, unknown>)) {
+    out[k] = PII_KEYS.has(k) ? "[redacted]" : v;
+  }
+  return out;
 }
 
 // ---------- Types (trimmed; based on LunarPay API docs) ----------

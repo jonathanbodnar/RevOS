@@ -1,10 +1,10 @@
-import { requireClinicContext } from "@/lib/session";
+import { requireClinicAdminContext } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
 import { TeamClient } from "./team-client";
 import { formatDate } from "@/lib/format";
 
 export default async function TeamPage() {
-  const { clinicId, session } = await requireClinicContext();
+  const { clinicId, session } = await requireClinicAdminContext();
 
   const members = await prisma.user.findMany({
     where: { clinicId, role: "CLINIC_ADMIN" },

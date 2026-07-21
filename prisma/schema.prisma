@@ -13,6 +13,12 @@ datasource db {
 enum Role {
   SUPER_ADMIN
   CLINIC_ADMIN
+  // Clinical staff: scoped to their clinic AND only their assigned customers.
+  // Charting + InBody + payment links + saving cards; no refunds/deletes.
+  PROVIDER
+  // Cross-clinic billing team: reporting, payouts, advanced costs. No clinic
+  // or user management, no impersonation.
+  BILLING_DEPT
 }
 
 model User {
@@ -27,7 +33,27 @@ model User {
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
+  providerAssignments CustomerProviderAssignment[] @relation("ProviderAssignments")
+  learningProgress    LearningProgress[]
+  chatLogs            ChatLog[]
+
   @@index([clinicId])
+}
+
+// Which customers a PROVIDER may access. Absence of a row = no access.
+model CustomerProviderAssignment {
+  id           String   @id @default(cuid())
+  providerId   String
+  provider     User     @relation("ProviderAssignments", fields: [providerId], references: [id], onDelete: Cascade)
+  customerId   String
+  customer     Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  clinicId     String?
+  assignedById String?
+  createdAt    DateTime @default(now())
+
+  @@unique([providerId, customerId])
+  @@index([customerId])
+  @@index([providerId])
 }
 
 model Clinic {
@@ -66,6 +92,8 @@ model Clinic {
   payouts          ClinicPayout[]
   inbodyTests      InBodyTest[]
   chartWeeks       ChartWeek[]
+  kpis             KPI[]
+  kpiFlags         KPIFlag[]
 }
 
 // Sales implementors. Customers are attributed to an implementor either via
@@ -117,15 +145,17 @@ model Customer {
   implementor   Implementor? @relation(fields: [implementorId], references: [id], onDelete: SetNull)
   paymentNotes  String?
 
-  paymentMethods   PaymentMethod[]
-  charges          Charge[]
-  subscriptions    Subscription[]
-  schedules        PaymentSchedule[]
-  checkoutSessions CheckoutSession[]
-  advancedCosts    AdvancedCost[]
-  careCredits      CareCredit[]
-  inbodyTests      InBodyTest[]
-  chartWeeks       ChartWeek[]
+  paymentMethods      PaymentMethod[]
+  charges             Charge[]
+  subscriptions       Subscription[]
+  schedules           PaymentSchedule[]
+  checkoutSessions    CheckoutSession[]
+  advancedCosts       AdvancedCost[]
+  careCredits         CareCredit[]
+  inbodyTests         InBodyTest[]
+  chartWeeks          ChartWeek[]
+  providerAssignments CustomerProviderAssignment[]
+  kpiFlags            KPIFlag[]
 
   @@index([clinicId])
   @@index([email])
@@ -463,4 +493,129 @@ model InBodyTest {
   @@index([phoneNormalized])
   @@index([testedAt])
   @@index([resultStatus])
+}
+
+// ── KPI engine (Phase 4) ────────────────────────────────────────────────────
+// Super-admin-defined KPI. clinicId null = global (applies to every clinic);
+// set = clinic-specific. A nightly job evaluates each active KPI per customer
+// and raises KPIFlags.
+model KPI {
+  id          String  @id @default(cuid())
+  name        String
+  description String?
+  // What to measure. Extensible string enum so new metrics don't need a
+  // migration: e.g. "body_fat_pct_change", "weight_change_kg",
+  // "visit_adherence_pct", "no_scan_weeks", "days_since_last_charge".
+  metric      String
+  // Comparison + threshold: flag when metric <comparison> threshold.
+  // comparison ∈ gt | gte | lt | lte
+  comparison  String
+  threshold   Float
+  // Rolling window (days) the metric is computed over. 0 = whole program.
+  windowDays  Int     @default(0)
+  severity    String  @default("warn") // info | warn | critical
+  isActive    Boolean @default(true)
+
+  clinicId String?
+  clinic   Clinic? @relation(fields: [clinicId], references: [id], onDelete: Cascade)
+
+  createdById String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  flags KPIFlag[]
+
+  @@index([clinicId])
+  @@index([isActive])
+}
+
+model KPIFlag {
+  id         String   @id @default(cuid())
+  kpiId      String
+  kpi        KPI      @relation(fields: [kpiId], references: [id], onDelete: Cascade)
+  clinicId   String?
+  clinic     Clinic?  @relation(fields: [clinicId], references: [id], onDelete: SetNull)
+  customerId String
+  customer   Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  // Value that tripped the threshold + a human-readable detail.
+  value    Float?
+  detail   String?
+  severity String  @default("warn")
+  status   String  @default("open") // open | resolved | dismissed
+
+  // Idempotency: one open flag per (kpi, customer, evalKey) where evalKey is a
+  // window stamp the evaluator computes, so re-runs don't duplicate.
+  evalKey String
+
+  resolvedById String?
+  resolvedAt   DateTime?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  @@unique([kpiId, customerId, evalKey])
+  @@index([clinicId])
+  @@index([customerId])
+  @@index([status])
+}
+
+// ── eLearning (Phase 5) ─────────────────────────────────────────────────────
+model LearningModule {
+  id          String    @id @default(cuid())
+  slug        String    @unique
+  title       String
+  summary     String?
+  // Rich-text body stored as HTML (sanitized on write).
+  bodyHtml    String?
+  videoUrl    String?
+  // Ordering + grouping.
+  category    String?
+  position    Int       @default(0)
+  // Who may see it: CLINIC_ADMIN | PROVIDER | BOTH
+  audience    String    @default("BOTH")
+  publishedAt DateTime?
+  createdById String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  progress LearningProgress[]
+
+  @@index([category])
+  @@index([publishedAt])
+}
+
+model LearningProgress {
+  id          String         @id @default(cuid())
+  userId      String
+  user        User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  moduleId    String
+  module      LearningModule @relation(fields: [moduleId], references: [id], onDelete: Cascade)
+  status      String         @default("in_progress") // in_progress | completed
+  completedAt DateTime?
+  updatedAt   DateTime       @updatedAt
+
+  @@unique([userId, moduleId])
+  @@index([moduleId])
+}
+
+// ── Internal chat assistant (Phase 6) ───────────────────────────────────────
+// Every assistant interaction is logged (compliance requirement). Prompts are
+// PHI-scrubbed before any third-party model call; this stores the exchange for
+// audit, not the raw model I/O.
+model ChatLog {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  clinicId  String?
+  question  String
+  answer    String?
+  // "elearning" (RAG over modules) | "data" (customer-aware tool use)
+  mode      String   @default("elearning")
+  // Non-PHI metadata: tools invoked, token counts, whether PHI was accessed.
+  metadata  String?
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+  @@index([clinicId])
+  @@index([createdAt])
 }

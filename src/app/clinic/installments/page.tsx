@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { requireClinicContext, isSuperAdmin, getSession } from "@/lib/session";
+import { requireClinicAdminContext, isSuperAdmin, getSession } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
 import { formatMoneyCents, formatDate } from "@/lib/format";
 import { CancelScheduleButton } from "../customers/[id]/cancel-schedule";
@@ -15,7 +15,7 @@ import { DownloadCsvButton } from "@/components/download-csv-button";
 export const dynamic = "force-dynamic";
 
 export default async function InstallmentsPage() {
-  const { clinicId } = await requireClinicContext();
+  const { clinicId } = await requireClinicAdminContext();
   const session = await getSession();
   const canCancel = isSuperAdmin(session);
 

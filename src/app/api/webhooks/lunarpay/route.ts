@@ -161,12 +161,27 @@ function safeEqual(a: string, b: string): boolean {
 
 // ---------- Route ----------
 
+/** Non-PHI identifiers safe to log (never names/emails/phones). */
+function webhookRefIds(data: WebhookEventData) {
+  return {
+    subscription_id: data.subscription_id,
+    payment_schedule_id: data.payment_schedule_id,
+    transaction_id: data.transaction_id,
+    customer_id: data.customer_id,
+  };
+}
+
 export async function POST(req: Request) {
   const rawBody = await req.text();
   const secret = process.env.LUNARPAY_WEBHOOK_SECRET;
 
-  // Verify the signature when a secret is configured.
-  if (secret) {
+  // Fail closed: an unset secret must reject, not accept unsigned posts — this
+  // endpoint can create charges and cancel subscriptions.
+  if (!secret) {
+    console.error("[webhook/lunarpay] LUNARPAY_WEBHOOK_SECRET unset — rejecting");
+    return NextResponse.json({ error: "Webhook not configured" }, { status: 503 });
+  }
+  {
     const sigHeader = req.headers.get("x-lunarpay-signature") ?? "";
     const timestamp = req.headers.get("x-lunarpay-timestamp") ?? "";
     const expected =
@@ -394,7 +409,10 @@ async function handlePaymentSucceeded(event: string, payload: WebhookEnvelope) {
   const data = payload.data ?? {};
   const ctx = await resolveContext(data);
   if (!ctx.customer) {
-    console.warn(`[webhook/lunarpay] ${event} could not map to a customer`, data);
+    console.warn(
+      `[webhook/lunarpay] ${event} could not map to a customer`,
+      webhookRefIds(data),
+    );
     return;
   }
 
@@ -545,7 +563,10 @@ async function handlePaymentFailed(event: string, payload: WebhookEnvelope) {
   const data = payload.data ?? {};
   const ctx = await resolveContext(data);
   if (!ctx.customer) {
-    console.warn(`[webhook/lunarpay] ${event} could not map to a customer`, data);
+    console.warn(
+      `[webhook/lunarpay] ${event} could not map to a customer`,
+      webhookRefIds(data),
+    );
     return;
   }
 

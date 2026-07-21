@@ -16,13 +16,13 @@ declare module "next-auth" {
       id: string;
       email: string;
       name?: string | null;
-      role: "SUPER_ADMIN" | "CLINIC_ADMIN";
+      role: "SUPER_ADMIN" | "CLINIC_ADMIN" | "PROVIDER" | "BILLING_DEPT";
       clinicId: string | null;
       // When a super-admin is impersonating, effectiveClinicId is set and
       // originalRole === "SUPER_ADMIN".
       effectiveClinicId: string | null;
       impersonating: boolean;
-      originalRole: "SUPER_ADMIN" | "CLINIC_ADMIN";
+      originalRole: "SUPER_ADMIN" | "CLINIC_ADMIN" | "PROVIDER" | "BILLING_DEPT";
     };
   }
 }
@@ -30,14 +30,16 @@ declare module "next-auth" {
 declare module "next-auth/jwt" {
   interface JWT {
     uid?: string;
-    role?: "SUPER_ADMIN" | "CLINIC_ADMIN";
+    role?: "SUPER_ADMIN" | "CLINIC_ADMIN" | "PROVIDER" | "BILLING_DEPT";
     clinicId?: string | null;
     impersonatingClinicId?: string | null;
   }
 }
 
 export const authOptions: NextAuthOptions = {
-  session: { strategy: "jwt" },
+  // 8-hour sessions (was the 30-day default) with a daily rolling refresh —
+  // a stolen token expires the same workday rather than a month later.
+  session: { strategy: "jwt", maxAge: 8 * 60 * 60, updateAge: 24 * 60 * 60 },
   pages: { signIn: "/login" },
   providers: [
     CredentialsProvider({
@@ -58,7 +60,7 @@ export const authOptions: NextAuthOptions = {
           id: user.id,
           email: user.email,
           name: user.name ?? undefined,
-          role: user.role as "SUPER_ADMIN" | "CLINIC_ADMIN",
+          role: user.role as "SUPER_ADMIN" | "CLINIC_ADMIN" | "PROVIDER" | "BILLING_DEPT",
           clinicId: user.clinicId,
         } as never;
       },
@@ -69,7 +71,7 @@ export const authOptions: NextAuthOptions = {
       if (user) {
         const u = user as unknown as {
           id: string;
-          role: "SUPER_ADMIN" | "CLINIC_ADMIN";
+          role: "SUPER_ADMIN" | "CLINIC_ADMIN" | "PROVIDER" | "BILLING_DEPT";
           clinicId: string | null;
         };
         token.uid = u.id;
@@ -88,7 +90,7 @@ export const authOptions: NextAuthOptions = {
       return token;
     },
     async session({ session, token }): Promise<Session> {
-      const role = (token.role as "SUPER_ADMIN" | "CLINIC_ADMIN") || "CLINIC_ADMIN";
+      const role = (token.role as "SUPER_ADMIN" | "CLINIC_ADMIN" | "PROVIDER" | "BILLING_DEPT") || "CLINIC_ADMIN";
       const ownClinicId = (token.clinicId as string | null) ?? null;
       const impersonating =
         role === "SUPER_ADMIN" && !!token.impersonatingClinicId;

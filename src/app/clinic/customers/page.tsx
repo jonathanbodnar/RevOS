@@ -4,6 +4,7 @@ import { prisma } from "@/lib/prisma";
 import { formatDate } from "@/lib/format";
 import { toCsv } from "@/lib/csv";
 import { DownloadCsvButton } from "@/components/download-csv-button";
+import { customerScopeWhere } from "@/lib/roles";
 
 export const dynamic = "force-dynamic";
 
@@ -12,15 +13,17 @@ export default async function CustomersPage({
 }: {
   searchParams: Promise<{ q?: string; showInactive?: string }>;
 }) {
-  const { clinicId } = await requireClinicContext();
+  const { session, clinicId } = await requireClinicContext();
   const sp = await searchParams;
   const q = (sp.q || "").trim();
   const showInactive = sp.showInactive === "1";
 
   const digits = q.replace(/\D+/g, "");
+  // Providers only see their assigned patients; clinic admins see the clinic.
+  const scope = customerScopeWhere(session.user, clinicId);
   const customers = await prisma.customer.findMany({
     where: {
-      clinicId,
+      ...scope,
       ...(showInactive ? {} : { isActive: true }),
       ...(q
         ? {
@@ -89,9 +92,11 @@ export default async function CustomersPage({
             {showInactive ? "Hide inactive" : "Show inactive"}
           </Link>
           <DownloadCsvButton csv={csv} filename="customers.csv" />
-          <Link href="/clinic/customers/new" className="btn-primary">
-            + Add customer
-          </Link>
+          {session.user.originalRole !== "PROVIDER" && (
+            <Link href="/clinic/customers/new" className="btn-primary">
+              + Add customer
+            </Link>
+          )}
         </div>
       </div>
       <div className="card overflow-hidden">

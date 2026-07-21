@@ -9,7 +9,7 @@ export const dynamic = "force-dynamic";
 
 async function guard() {
   const session = await getSession();
-  if (session?.user?.originalRole !== "SUPER_ADMIN") return null;
+  if (session?.user?.originalRole !== "SUPER_ADMIN" && session?.user?.originalRole !== "BILLING_DEPT") return null;
   return session;
 }
 

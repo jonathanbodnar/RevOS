@@ -8,7 +8,7 @@ export async function DELETE(
   ctx: { params: Promise<{ id: string }> },
 ) {
   const session = await getSession();
-  if (session?.user?.originalRole !== "SUPER_ADMIN") {
+  if (session?.user?.originalRole !== "SUPER_ADMIN" && session?.user?.originalRole !== "BILLING_DEPT") {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
   const { id } = await ctx.params;

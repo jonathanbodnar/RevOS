@@ -1,9 +1,9 @@
-import { requireClinicContext } from "@/lib/session";
+import { requireClinicAdminContext } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
 import { SettingsClient } from "./settings-client";
 
 export default async function SettingsPage() {
-  const { clinicId } = await requireClinicContext();
+  const { clinicId } = await requireClinicAdminContext();
   const clinic = await prisma.clinic.findUnique({
     where: { id: clinicId },
     select: { id: true, name: true, logoUrl: true },

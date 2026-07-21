@@ -1,9 +1,11 @@
+import { requireSuperAdmin } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
 import { ImplementorsClient } from "./implementors-client";
 
 export const dynamic = "force-dynamic";
 
 export default async function ImplementorsPage() {
+  await requireSuperAdmin();
   const implementors = await prisma.implementor.findMany({
     orderBy: [{ isActive: "desc" }, { name: "asc" }],
     include: { _count: { select: { customers: true } } },

@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { requireClinicContext, isSuperAdmin, getSession } from "@/lib/session";
+import { requireClinicAdminContext, isSuperAdmin, getSession } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
 import { formatMoneyCents, formatDate } from "@/lib/format";
 import { RefundButton } from "../customers/[id]/refund-button";
@@ -7,7 +7,7 @@ import { toCsv, csvMoney } from "@/lib/csv";
 import { DownloadCsvButton } from "@/components/download-csv-button";
 
 export default async function ChargesPage() {
-  const { clinicId } = await requireClinicContext();
+  const { clinicId } = await requireClinicAdminContext();
   const session = await getSession();
   const canRefund = isSuperAdmin(session);
 

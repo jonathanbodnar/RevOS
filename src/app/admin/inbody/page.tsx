@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/prisma";
+import { requireSuperAdmin } from "@/lib/session";
 import { inbodyCanFetch, inbodyConfigured } from "@/lib/inbody";
 import { InBodyClient } from "./inbody-client";
 
@@ -9,6 +10,7 @@ export default async function InBodyAdminPage({
 }: {
   searchParams: Promise<{ filter?: string }>;
 }) {
+  await requireSuperAdmin();
   const { filter } = await searchParams;
   const onlyUnmatched = filter === "unmatched";
 

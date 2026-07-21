@@ -21,7 +21,12 @@ export const runtime = "nodejs";
  */
 export async function POST(req: NextRequest) {
   const secret = process.env.INBODY_WEBHOOK_SECRET;
-  if (secret) {
+  // Fail closed: without a configured secret, reject rather than ingest
+  // unauthenticated PHI.
+  if (!secret) {
+    return NextResponse.json({ error: "Webhook not configured" }, { status: 503 });
+  }
+  {
     const expected = Buffer.from(secret);
     let ok = false;
     req.headers.forEach((value) => {
@@ -57,8 +62,9 @@ export async function POST(req: NextRequest) {
   try {
     const test = await ingestInBodyNotification(payload);
     // eslint-disable-next-line no-console
+    // No PHI in logs — the customer link is enough to trace, phone is not.
     console.info(
-      `[inbody] ingested test ${test.id} phone=${test.phoneNormalized ?? "?"} match=${test.matchStatus} result=${test.resultStatus}`,
+      `[inbody] ingested test ${test.id} customer=${test.customerId ?? "unmatched"} match=${test.matchStatus} result=${test.resultStatus}`,
     );
     return NextResponse.json({ success: true, id: test.id, matched: Boolean(test.customerId) });
   } catch (err) {

@@ -1,3 +1,4 @@
+import { requireSuperAdmin } from "@/lib/session";
 import Link from "next/link";
 import { prisma } from "@/lib/prisma";
 import { formatDate } from "@/lib/format";
@@ -5,6 +6,7 @@ import { ImpersonateButton } from "./impersonate-button";
 import { DeleteClinicButton } from "./delete-clinic-button";
 
 export default async function ClinicsListPage() {
+  await requireSuperAdmin();
   const clinics = await prisma.clinic.findMany({
     orderBy: { createdAt: "desc" },
     include: {
