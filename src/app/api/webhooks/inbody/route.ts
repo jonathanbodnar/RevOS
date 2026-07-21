@@ -63,9 +63,12 @@ export async function POST(req: NextRequest) {
   // (a datetime plus an equipment serial or user id). Reject clearly-malformed
   // notifications with a 200 so LookinBody stops retrying, but don't ingest.
   const hasDatetimes = !!String(payload.TestDatetimes ?? "").trim();
+  // Ingest pairs by phone (TelHP) and can fetch with phone OR user id, so any
+  // of serial / user id / phone is a valid identifier.
   const hasIdentifier =
     !!String(payload.EquipSerial ?? "").trim() ||
-    !!String(payload.UserID ?? "").trim();
+    !!String(payload.UserID ?? "").trim() ||
+    !!String(payload.TelHP ?? "").trim();
   if (!hasDatetimes || !hasIdentifier) {
     return NextResponse.json({ success: false, reason: "missing identifiers" });
   }
@@ -81,9 +84,11 @@ export async function POST(req: NextRequest) {
   } catch (err) {
     // eslint-disable-next-line no-console
     console.error("[inbody] webhook ingest failed", err);
-    // Webhooks return 200 even on internal error so the sender stops retrying
-    // (idempotency is on the dedupe key). See AGENTS.md webhook convention.
-    return NextResponse.json({ success: false, error: "ingest failed" });
+    // Unexpected/transient failure (e.g. a DB blip before the row is written):
+    // return 500 so LookinBody REDELIVERS — ingest is idempotent on the dedupe
+    // key, so a retry is always safe. Clearly-malformed payloads are already
+    // rejected with a 200 before the try block, so they don't reach here.
+    return NextResponse.json({ error: "ingest failed" }, { status: 500 });
   }
 }
 

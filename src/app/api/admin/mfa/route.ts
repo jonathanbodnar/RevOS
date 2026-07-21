@@ -26,10 +26,12 @@ export async function POST() {
   const session = await requireSuperAdmin();
   if (!session) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   const secret = generateSecret();
-  // Store the pending (encrypted) secret; mfaEnabled stays false until verified.
+  // Write ONLY the pending secret — never touch a live mfaSecret/mfaEnabled.
+  // Starting or abandoning enrollment therefore can't disable an active factor
+  // (which would otherwise be a code-free MFA-downgrade path).
   await prisma.user.update({
     where: { id: session.user.id },
-    data: { mfaSecret: encryptField(secret), mfaEnabled: false },
+    data: { mfaPendingSecret: encryptField(secret) },
   });
   return NextResponse.json({
     data: { secret, otpauthUri: otpauthUri(secret, session.user.email) },
@@ -46,19 +48,24 @@ export async function PUT(req: Request) {
     return NextResponse.json({ error: "Enter the 6-digit code." }, { status: 400 });
   }
   const user = await prisma.user.findUnique({ where: { id: session.user.id } });
-  const secret = decryptField(user?.mfaSecret);
-  if (!secret) {
+  const pending = decryptField(user?.mfaPendingSecret);
+  if (!pending) {
     return NextResponse.json(
       { error: "Start enrollment first." },
       { status: 400 },
     );
   }
-  if (!verifyTotp(secret, parsed.data.code)) {
+  if (!verifyTotp(pending, parsed.data.code)) {
     return NextResponse.json({ error: "That code didn't match. Try again." }, { status: 400 });
   }
+  // Promote the verified pending secret to the live factor.
   await prisma.user.update({
     where: { id: session.user.id },
-    data: { mfaEnabled: true },
+    data: {
+      mfaSecret: user!.mfaPendingSecret,
+      mfaEnabled: true,
+      mfaPendingSecret: null,
+    },
   });
   await logAudit({
     actorId: session.user.id,
@@ -88,7 +95,7 @@ export async function DELETE(req: Request) {
   }
   await prisma.user.update({
     where: { id: session.user.id },
-    data: { mfaEnabled: false, mfaSecret: null },
+    data: { mfaEnabled: false, mfaSecret: null, mfaPendingSecret: null },
   });
   await logAudit({
     actorId: session.user.id,

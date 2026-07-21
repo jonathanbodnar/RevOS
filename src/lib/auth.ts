@@ -7,9 +7,11 @@ import { securityAlert } from "./security-alert";
 import { decryptField } from "./encryption";
 import { verifyTotp } from "./totp";
 
-// In-process failed-login throttle. Per-instance (not shared across Railway
-// replicas) — a first line of defense against password guessing, not a
-// distributed limiter.
+// In-process failed-login counter, used only to ALERT on likely brute force —
+// NOT to hard-lock the account. A hard per-email lock would let anyone who
+// knows an admin's email deny them access, so instead correct credentials
+// always authenticate and we merely alert on-call at the threshold. bcrypt's
+// per-attempt cost is the throttle.
 const LOGIN_FAILS = new Map<string, { n: number; resetAt: number }>();
 const MAX_LOGIN_FAILS = 8;
 const LOGIN_WINDOW_MS = 15 * 60 * 1000;
@@ -23,10 +25,6 @@ function recordLoginFail(email: string): number {
   }
   cur.n += 1;
   return cur.n;
-}
-function loginBlocked(email: string): boolean {
-  const cur = LOGIN_FAILS.get(email);
-  return !!cur && Date.now() <= cur.resetAt && cur.n >= MAX_LOGIN_FAILS;
 }
 
 /**
@@ -78,18 +76,15 @@ export const authOptions: NextAuthOptions = {
       async authorize(credentials) {
         if (!credentials?.email || !credentials?.password) return null;
         const email = credentials.email.toLowerCase().trim();
-        // Throttle: after too many failures, reject without even checking.
-        if (loginBlocked(email)) return null;
         const user = await prisma.user.findUnique({ where: { email } });
-        if (!user || !user.isActive) {
-          recordLoginFail(email);
-          return null;
-        }
+        // Don't count unknown/inactive emails — that would let an attacker
+        // trip alerts (and, previously, lock out) arbitrary addresses.
+        if (!user || !user.isActive) return null;
         const ok = await bcrypt.compare(credentials.password, user.passwordHash);
         if (!ok) {
           const n = recordLoginFail(email);
           if (n === MAX_LOGIN_FAILS) {
-            // First time we hit the threshold — alert on-call.
+            // Hit the threshold — alert on-call (correct creds still work).
             void securityAlert("auth.repeated_failures", {
               email,
               failures: n,

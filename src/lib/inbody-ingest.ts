@@ -52,9 +52,14 @@ function inRange(v: number | null, min: number, max: number): number | null {
   return v != null && Number.isFinite(v) && v >= min && v <= max ? v : null;
 }
 const KG = (v: number | null) => inRange(v, 0.1, 500);
+// Body-fat % is a true 0–100 proportion.
 const PCT = (v: number | null) => inRange(v, 0, 100);
+// Segmental-lean is "percent of ideal" — muscular patients routinely exceed
+// 100% (110–130% is normal), so use a generous upper bound and only reject
+// clearly-impossible values.
+const PSLM = (v: number | null) => inRange(v, 0, 500);
 
-function metricColumns(m: InBodyMetrics) {
+export function metricColumns(m: InBodyMetrics) {
   return {
     weightKg: KG(m.weightKg),
     totalBodyWaterKg: KG(m.totalBodyWaterKg),
@@ -68,11 +73,11 @@ function metricColumns(m: InBodyMetrics) {
     segLeanTrunkKg: KG(m.segLeanTrunkKg),
     segLeanRightLegKg: KG(m.segLeanRightLegKg),
     segLeanLeftLegKg: KG(m.segLeanLeftLegKg),
-    segLeanRightArmPct: PCT(m.segLeanRightArmPct),
-    segLeanLeftArmPct: PCT(m.segLeanLeftArmPct),
-    segLeanTrunkPct: PCT(m.segLeanTrunkPct),
-    segLeanRightLegPct: PCT(m.segLeanRightLegPct),
-    segLeanLeftLegPct: PCT(m.segLeanLeftLegPct),
+    segLeanRightArmPct: PSLM(m.segLeanRightArmPct),
+    segLeanLeftArmPct: PSLM(m.segLeanLeftArmPct),
+    segLeanTrunkPct: PSLM(m.segLeanTrunkPct),
+    segLeanRightLegPct: PSLM(m.segLeanRightLegPct),
+    segLeanLeftLegPct: PSLM(m.segLeanLeftLegPct),
   };
 }
 
