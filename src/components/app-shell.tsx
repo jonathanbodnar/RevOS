@@ -1,6 +1,7 @@
 import Image from "next/image";
 import { SignOutButton } from "./sign-out";
 import { SidebarNav, type SidebarNavItem } from "./sidebar-nav";
+import { ChatDock } from "./chat-dock";
 
 export function AppShell({
   title,
@@ -98,6 +99,7 @@ export function AppShell({
         </header>
         <div className="flex-1 px-10 pb-12">{children}</div>
       </main>
+      <ChatDock />
     </div>
   );
 }

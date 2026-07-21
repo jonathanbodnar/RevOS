@@ -5,6 +5,7 @@ import { requireClinicApi } from "@/lib/api-guard";
 import { requireStringParams } from "@/lib/route-params";
 import { logAudit } from "@/lib/audit";
 import { customerScopeWhere } from "@/lib/roles";
+import { encryptField, decryptField } from "@/lib/encryption";
 
 /**
  * Program chart — the weekly adherence grid on a customer profile.
@@ -83,6 +84,9 @@ export async function PUT(
   // Normalize blank/whitespace notes to null so they never count as "has a
   // note" downstream.
   const cleanNotes = notes !== undefined ? notes.trim() || null : undefined;
+  // Clinical notes are PHI — encrypt at rest (no-op passthrough if no key set).
+  const storedNotes =
+    cleanNotes !== undefined ? encryptField(cleanNotes) : undefined;
   const row = await prisma.chartWeek.upsert({
     where: { customerId_weekNumber: { customerId: customer.id, weekNumber } },
     create: {
@@ -91,13 +95,13 @@ export async function PUT(
       weekNumber,
       scheduled: scheduled ?? false,
       completed: completed ?? false,
-      progressNotes: cleanNotes ?? null,
+      progressNotes: storedNotes ?? null,
       updatedById: session.user.id,
     },
     update: {
       ...(scheduled !== undefined ? { scheduled } : {}),
       ...(completed !== undefined ? { completed } : {}),
-      ...(cleanNotes !== undefined ? { progressNotes: cleanNotes } : {}),
+      ...(storedNotes !== undefined ? { progressNotes: storedNotes } : {}),
       updatedById: session.user.id,
     },
   });
@@ -123,7 +127,7 @@ export async function PUT(
       weekNumber: row.weekNumber,
       scheduled: row.scheduled,
       completed: row.completed,
-      notes: row.progressNotes,
+      notes: decryptField(row.progressNotes),
     },
   });
 }

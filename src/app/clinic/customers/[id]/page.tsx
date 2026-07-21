@@ -4,6 +4,7 @@ import { requireClinicContext, isSuperAdmin } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
 import { customerScopeWhere } from "@/lib/roles";
 import { logAudit } from "@/lib/audit";
+import { decryptField } from "@/lib/encryption";
 import { AssignProviders } from "./assign-providers";
 import { formatMoneyCents, formatDate } from "@/lib/format";
 import { PaymentMethods } from "./payment-methods";
@@ -242,7 +243,7 @@ export default async function CustomerDetailPage({
       rangeLabel,
       scheduled: row?.scheduled ?? false,
       completed: row?.completed ?? false,
-      notes: row?.progressNotes ?? "",
+      notes: decryptField(row?.progressNotes) ?? "",
       isCurrent: chartAnchor != null && wk === currentWeek,
       isFuture: chartAnchor != null && wk > currentWeek,
       scan,
