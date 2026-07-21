@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireClinicApi } from "@/lib/api-guard";
+import { customerScopeWhere } from "@/lib/roles";
 
 export const dynamic = "force-dynamic";
 
@@ -16,11 +17,11 @@ export async function POST(
 ) {
   const guard = await requireClinicApi();
   if ("error" in guard) return guard.error;
-  const { clinicId } = guard;
+  const { session, clinicId } = guard;
   const { id } = await ctx.params;
 
   const customer = await prisma.customer.findFirst({
-    where: { id, clinicId },
+    where: { id, ...customerScopeWhere(session.user, clinicId) },
   });
   if (!customer) {
     return NextResponse.json({ error: "Customer not found" }, { status: 404 });

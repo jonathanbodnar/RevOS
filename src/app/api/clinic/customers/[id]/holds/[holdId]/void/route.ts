@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { requireClinicApi } from "@/lib/api-guard";
+import { requireClinicApi, denyProvider } from "@/lib/api-guard";
 import { lunarpay, LunarPayError } from "@/lib/lunarpay";
 import { logAudit } from "@/lib/audit";
 
@@ -14,6 +14,8 @@ export async function POST(
   const guard = await requireClinicApi();
   if ("error" in guard) return guard.error;
   const { session, clinicId } = guard;
+  const denied = denyProvider(session);
+  if (denied) return denied;
   const { id, holdId } = await ctx.params;
 
   const charge = await prisma.charge.findFirst({

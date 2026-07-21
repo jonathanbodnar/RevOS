@@ -23,12 +23,19 @@ const MARKER = "enc:v1:";
 
 function getKey(): Buffer | null {
   const raw = process.env.FIELD_ENCRYPTION_KEY;
-  if (!raw) return null;
+  if (!raw) return null; // encryption disabled — passthrough
   const buf =
     /^[0-9a-fA-F]{64}$/.test(raw)
       ? Buffer.from(raw, "hex")
       : Buffer.from(raw, "base64");
-  return buf.length === 32 ? buf : null;
+  // A configured-but-malformed key must FAIL LOUD, not silently store
+  // plaintext (fail-open). Only an ABSENT key means "encryption off".
+  if (buf.length !== 32) {
+    throw new Error(
+      "FIELD_ENCRYPTION_KEY must decode to 32 bytes (hex or base64). Refusing to store PHI unencrypted.",
+    );
+  }
+  return buf;
 }
 
 /** Encrypt a value for storage. No-op when no key is configured. */

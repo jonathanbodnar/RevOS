@@ -1,5 +1,6 @@
 import { notFound } from "next/navigation";
 import { prisma } from "@/lib/prisma";
+import { requireSuperAdmin } from "@/lib/session";
 import { EditClinicClient } from "./edit-clinic-client";
 
 export default async function EditClinicPage({
@@ -7,6 +8,7 @@ export default async function EditClinicPage({
 }: {
   params: Promise<{ id: string }>;
 }) {
+  await requireSuperAdmin();
   const { id } = await params;
   const clinic = await prisma.clinic.findUnique({
     where: { id },

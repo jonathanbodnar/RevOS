@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { requireClinicContext } from "@/lib/session";
+import { requireClinicAdminContext } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
 import { formatMoneyCents, formatDate } from "@/lib/format";
 import { CopyButton } from "@/components/copy-button";
@@ -61,7 +61,7 @@ export default async function PaymentLinkDetailPage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
-  const { clinicId } = await requireClinicContext();
+  const { clinicId } = await requireClinicAdminContext();
 
   const link = await prisma.checkoutSession.findFirst({
     where: { id, clinicId },

@@ -599,9 +599,10 @@ model LearningProgress {
 }
 
 // ── Internal chat assistant (Phase 6) ───────────────────────────────────────
-// Every assistant interaction is logged (compliance requirement). Prompts are
-// PHI-scrubbed before any third-party model call; this stores the exchange for
-// audit, not the raw model I/O.
+// Every assistant interaction is logged (compliance requirement). The
+// question/answer are ENCRYPTED at rest. The retrieved training context sent
+// to any model backend is non-PHI; the user's free-typed question is not
+// scrubbed, so the model backend must be BAA-covered before it's enabled.
 model ChatLog {
   id        String   @id @default(cuid())
   userId    String

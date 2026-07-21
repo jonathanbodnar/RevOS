@@ -127,7 +127,9 @@ export async function evaluateKpis(
           clinicId: true,
           chartWeeks: { select: { scheduled: true, completed: true } },
           charges: {
-            where: { status: { in: ["paid", "refunded", "pending"] } },
+            // "days since last charge" means last PAID charge (money actually
+            // collected) — a refunded/pending row must not hide churn.
+            where: { status: "paid" },
             orderBy: { createdAt: "desc" },
             take: 1,
             select: { createdAt: true },

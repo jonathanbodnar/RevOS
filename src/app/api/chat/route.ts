@@ -2,24 +2,42 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { getSession } from "@/lib/session";
+import { encryptField } from "@/lib/encryption";
 
 export const dynamic = "force-dynamic";
 
 /**
  * Internal assistant.
  *
- * Two modes, both PHI-safe:
  *  - "elearning": keyword search over the user's visible training modules.
- *    When ANTHROPIC_API_KEY is set, the retrieved (non-PHI) module text is
- *    summarized into a direct answer; otherwise the matching modules are
- *    returned as links. No customer data is ever involved here.
- *  - "data": a whitelist of AGGREGATE, non-PHI answers scoped to the user's
- *    clinic (counts only — never an individual patient's details). This is the
- *    safe subset; richer customer-aware tool use stays gated behind a BAA'd
- *    model backend and PHI tokenization (not enabled here).
+ *    When ANTHROPIC_API_KEY is set, the retrieved (non-PHI) module text plus
+ *    the user's QUESTION are sent to the model; otherwise matching modules are
+ *    returned as links. The RETRIEVED context is non-PHI (super-admin-authored
+ *    modules). The user's free-typed question, however, is NOT scrubbed — the
+ *    UI warns staff not to enter patient identifiers. Only enable the model
+ *    backend under a BAA.
+ *  - "data": a whitelist of AGGREGATE, clinic-scoped answers (counts only —
+ *    never an individual patient's details). No model call. Richer customer-
+ *    aware tool use stays gated behind a BAA'd backend + PHI tokenization
+ *    (not enabled here).
  *
- * Every exchange is logged to ChatLog (question + answer + non-PHI metadata).
+ * Every exchange is logged to ChatLog with the question/answer ENCRYPTED at
+ * rest (in case a user types something sensitive) plus non-PHI metadata.
  */
+
+// Minimal in-process rate limit (per instance) to stop runaway/abuse. For a
+// hardened cross-instance limit, move this to a shared store.
+const RATE = new Map<string, { n: number; resetAt: number }>();
+function rateLimited(userId: string): boolean {
+  const now = Date.now();
+  const win = RATE.get(userId);
+  if (!win || now > win.resetAt) {
+    RATE.set(userId, { n: 1, resetAt: now + 60_000 });
+    return false;
+  }
+  win.n += 1;
+  return win.n > 20; // 20 requests / minute / user
+}
 const Body = z.object({
   question: z.string().trim().min(1).max(1000),
   mode: z.enum(["elearning", "data"]).default("elearning"),
@@ -34,6 +52,12 @@ export async function POST(req: Request) {
   const session = await getSession();
   if (!session?.user) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+  if (rateLimited(session.user.id)) {
+    return NextResponse.json(
+      { error: "Too many requests — try again in a minute." },
+      { status: 429 },
+    );
   }
   const parsed = Body.safeParse(await req.json().catch(() => ({})));
   if (!parsed.success) {
@@ -65,8 +89,9 @@ export async function POST(req: Request) {
       data: {
         userId: session.user.id,
         clinicId: clinicId ?? null,
-        question,
-        answer,
+        // Encrypted at rest — a user could type something sensitive.
+        question: encryptField(question) ?? question,
+        answer: encryptField(answer),
         mode,
         metadata: JSON.stringify({
           usedLlm,

@@ -14,13 +14,12 @@ export default async function ClinicLayout({
   const clinic = await prisma.clinic.findUnique({ where: { id: clinicId } });
   const isProvider = session.user.originalRole === "PROVIDER";
 
-  // Providers get a clinical-only workspace: their assigned patients, payment
-  // links, and training. No billing tables, team, or settings.
+  // Providers get a clinical-only workspace: their assigned patients and
+  // training. No billing tables, clinic-wide payment links, team, or settings.
   const nav = isProvider
     ? [
         { href: "/clinic", label: "Overview", icon: "home" as const },
         { href: "/clinic/customers", label: "My patients", icon: "users" as const },
-        { href: "/clinic/invoices", label: "Payment links", icon: "link" as const },
         { href: "/clinic/learn", label: "Training", icon: "book" as const },
       ]
     : [

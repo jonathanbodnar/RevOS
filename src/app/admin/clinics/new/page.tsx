@@ -1,6 +1,8 @@
+import { requireSuperAdmin } from "@/lib/session";
 import { NewClinicForm } from "./form";
 
-export default function NewClinicPage() {
+export default async function NewClinicPage() {
+  await requireSuperAdmin();
   return (
     <div className="max-w-2xl">
       <div className="card-pad">

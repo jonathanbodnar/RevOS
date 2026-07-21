@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
-import { requireClinicApi } from "@/lib/api-guard";
+import { requireClinicApi, denyProvider } from "@/lib/api-guard";
 import { lunarpay, LunarPayError } from "@/lib/lunarpay";
 import { logAudit } from "@/lib/audit";
 import { parseMoneyInputToCents } from "@/lib/format";
@@ -95,6 +95,8 @@ export async function POST(
   const guard = await requireClinicApi();
   if ("error" in guard) return guard.error;
   const { session, clinicId } = guard;
+  const denied = denyProvider(session);
+  if (denied) return denied;
   const { id } = await ctx.params;
 
   const parsed = Body.safeParse(await req.json().catch(() => ({})));

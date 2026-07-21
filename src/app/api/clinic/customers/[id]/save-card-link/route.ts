@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { randomBytes } from "node:crypto";
 import { prisma } from "@/lib/prisma";
 import { requireClinicApi } from "@/lib/api-guard";
+import { customerScopeWhere } from "@/lib/roles";
 import { requireStringParams } from "@/lib/route-params";
 import { logAudit } from "@/lib/audit";
 
@@ -32,7 +33,7 @@ export async function POST(
   const { id } = params.value;
 
   const customer = await prisma.customer.findFirst({
-    where: { id, clinicId },
+    where: { id, ...customerScopeWhere(session.user, clinicId) },
   });
   if (!customer || !customer.lunarpayCustomerId) {
     return NextResponse.json(
@@ -111,7 +112,7 @@ export async function DELETE(
   const { id } = params.value;
 
   const customer = await prisma.customer.findFirst({
-    where: { id, clinicId },
+    where: { id, ...customerScopeWhere(session.user, clinicId) },
   });
   if (!customer) {
     return NextResponse.json({ error: "Customer not found" }, { status: 404 });

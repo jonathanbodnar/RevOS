@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { requireClinicApi } from "@/lib/api-guard";
+import { customerScopeWhere } from "@/lib/roles";
 import { lunarpay, LunarPayError } from "@/lib/lunarpay";
 import { logAudit } from "@/lib/audit";
 import { parseMoneyInputToCents } from "@/lib/format";
@@ -30,7 +31,7 @@ export async function POST(
   }
 
   const customer = await prisma.customer.findFirst({
-    where: { id, clinicId },
+    where: { id, ...customerScopeWhere(session.user, clinicId) },
     include: { clinic: true },
   });
   if (!customer) {

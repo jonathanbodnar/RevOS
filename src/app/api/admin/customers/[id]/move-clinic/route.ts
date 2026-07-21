@@ -78,6 +78,12 @@ export async function POST(
     await tx.advancedCost.updateMany({ where, data });
     await tx.inBodyTest.updateMany({ where, data });
     await tx.chartWeek.updateMany({ where, data });
+    // KPI flags carry their own clinicId — repoint so they don't linger in the
+    // old clinic's at-risk dashboard.
+    await tx.kPIFlag.updateMany({ where, data });
+    // Provider assignments reference the OLD clinic's providers, who have no
+    // access to the new clinic — drop them so the patient must be reassigned.
+    await tx.customerProviderAssignment.deleteMany({ where });
   });
 
   await logAudit({

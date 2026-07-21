@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireClinicApi, requireSuperAdminClinicApi } from "@/lib/api-guard";
+import { customerScopeWhere } from "@/lib/roles";
 import { requireStringParams } from "@/lib/route-params";
 import { lunarpay, LunarPayError } from "@/lib/lunarpay";
 import { logAudit } from "@/lib/audit";
@@ -18,7 +19,7 @@ export async function PATCH(
   const { id, pmId } = params.value;
 
   const customer = await prisma.customer.findFirst({
-    where: { id, clinicId },
+    where: { id, ...customerScopeWhere(session.user, clinicId) },
   });
   if (!customer) {
     return NextResponse.json({ error: "Customer not found" }, { status: 404 });

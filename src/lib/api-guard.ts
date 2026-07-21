@@ -2,6 +2,23 @@ import { NextResponse } from "next/server";
 import { getSession } from "./session";
 
 /**
+ * Deny providers a billing action. Providers are scoped to charting/InBody/
+ * cards for their assigned patients — never charges, holds, subscriptions, or
+ * clinic-wide billing. Returns a 403 response to short-circuit, or null.
+ */
+export function denyProvider(session: {
+  user: { originalRole: string };
+}): NextResponse | null {
+  if (session.user.originalRole === "PROVIDER") {
+    return NextResponse.json(
+      { error: "Providers can't perform billing actions." },
+      { status: 403 },
+    );
+  }
+  return null;
+}
+
+/**
  * Require an authenticated session with clinic context. Returns a tuple of
  * `[session, clinicId]` on success, or a NextResponse to short-circuit.
  */
