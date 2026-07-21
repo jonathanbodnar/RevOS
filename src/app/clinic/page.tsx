@@ -1,30 +1,47 @@
 import Link from "next/link";
 import { requireClinicContext } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
+import { customerScopeWhere } from "@/lib/roles";
 import { formatMoneyCents, formatDate } from "@/lib/format";
 
 export default async function ClinicOverviewPage() {
-  const { clinicId } = await requireClinicContext();
+  const { session, clinicId } = await requireClinicContext();
+
+  // A PROVIDER may only see their assigned patients. Scope EVERY tile and the
+  // recent-transactions list — not just the customer list page — or the overview
+  // leaks unassigned patients' names and amounts. Non-providers see the whole
+  // clinic. `customerScopeWhere` handles Customer queries; charge/subscription
+  // queries filter through the `customer` relation.
+  const customerWhere = customerScopeWhere(session.user, clinicId);
+  const billingWhere =
+    session.user.originalRole === "PROVIDER"
+      ? {
+          clinicId,
+          customer: {
+            providerAssignments: { some: { providerId: session.user.id } },
+          },
+        }
+      : { clinicId };
 
   const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
   const [customers, charges, activeSubs, recentCharges, failed] = await Promise.all([
-    prisma.customer.count({ where: { clinicId } }),
+    prisma.customer.count({ where: customerWhere }),
     prisma.charge.aggregate({
-      where: { clinicId, status: { in: ["paid", "pending", "refunded"] } },
+      where: { ...billingWhere, status: { in: ["paid", "pending", "refunded"] } },
       _sum: { amountCents: true, refundedCents: true },
       _count: true,
     }),
     prisma.subscription.count({
-      where: { clinicId, status: "active" },
+      where: { ...billingWhere, status: "active" },
     }),
     prisma.charge.findMany({
-      where: { clinicId },
+      where: billingWhere,
       orderBy: { createdAt: "desc" },
       take: 5,
       include: { customer: true },
     }),
     prisma.charge.count({
-      where: { clinicId, status: "failed", createdAt: { gte: thirtyDaysAgo } },
+      where: { ...billingWhere, status: "failed", createdAt: { gte: thirtyDaysAgo } },
     }),
   ]);
 
