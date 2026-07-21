@@ -23,3 +23,12 @@ jobs:
           echo "$resp"
           # Fail the run if the endpoint reported an error so we get notified.
           echo "$resp" | grep -q '"ok":true'
+
+      - name: Evaluate KPIs
+        run: |
+          set -euo pipefail
+          resp=$(curl -fsS --max-time 300 \
+            -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
+            "https://revosportal.com/api/cron/evaluate-kpis")
+          echo "$resp"
+          echo "$resp" | grep -q '"ok":true'

@@ -26,6 +26,7 @@ export default async function ClinicLayout({
     : [
         { href: "/clinic", label: "Overview", icon: "home" as const },
         { href: "/clinic/customers", label: "Customers", icon: "users" as const },
+        { href: "/clinic/reports", label: "At-risk patients", icon: "target" as const },
         { href: "/clinic/charges", label: "Transactions", icon: "receipt" as const },
         { href: "/clinic/subscriptions", label: "Subscriptions", icon: "refresh" as const },
         { href: "/clinic/installments", label: "Installments", icon: "calendar" as const },
