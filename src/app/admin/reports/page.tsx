@@ -106,6 +106,103 @@ export default async function ReportsPage({
   const failedCount = failedAgg._count ?? 0;
   const failedAmountCents = failedAgg._sum.amountCents ?? 0;
 
+  // Scope filter shared by the patient-level metrics (clinic + implementor,
+  // independent of the period window).
+  const scopeCustomerWhere = {
+    clinicId: clinicId ? clinicId : { not: null },
+    ...(implementorId ? { implementorId } : {}),
+  };
+
+  // Patient-level metrics: active patients, patients sold per week, and time
+  // on program all need charge history OUTSIDE the selected period (a patient
+  // sold in March is still week 18 on program in July), so pull a minimal
+  // all-time charge list for the scope.
+  const [activePatientCount, allTimeCharges, allTimeCareCredits] =
+    await Promise.all([
+      prisma.customer.count({
+        where: { ...scopeCustomerWhere, isActive: true },
+      }),
+      prisma.charge.findMany({
+        where: {
+          status: { in: ["paid", "refunded"] },
+          customer: scopeCustomerWhere,
+        },
+        select: {
+          customerId: true,
+          createdAt: true,
+          description: true,
+          amountCents: true,
+          refundedCents: true,
+        },
+        orderBy: { createdAt: "asc" },
+      }),
+      // Care credits are sales too (financed externally, no Charge row).
+      prisma.careCredit.findMany({
+        where: { customer: scopeCustomerWhere },
+        select: { customerId: true, collectedOn: true },
+      }),
+    ]);
+
+  // First non-recurring collection = the sale that put the patient on program.
+  // Fully-refunded charges kept no money, so they anchor nothing (matching how
+  // every revenue metric nets them to zero).
+  const RECURRING_RE = /subscription renewal/i;
+  const firstSaleByCustomer = new Map<string, Date>();
+  const firstAnyByCustomer = new Map<string, Date>();
+  const lastPaidByCustomer = new Map<string, Date>();
+  for (const ch of allTimeCharges) {
+    if (netChargeAmountCents(ch.amountCents, ch.refundedCents) <= 0) continue;
+    if (!firstAnyByCustomer.has(ch.customerId)) {
+      firstAnyByCustomer.set(ch.customerId, ch.createdAt);
+    }
+    if (
+      !RECURRING_RE.test(ch.description || "") &&
+      !firstSaleByCustomer.has(ch.customerId)
+    ) {
+      firstSaleByCustomer.set(ch.customerId, ch.createdAt);
+    }
+    lastPaidByCustomer.set(ch.customerId, ch.createdAt);
+  }
+  for (const cc of allTimeCareCredits) {
+    const first = firstSaleByCustomer.get(cc.customerId);
+    if (!first || cc.collectedOn < first) {
+      firstSaleByCustomer.set(cc.customerId, cc.collectedOn);
+    }
+    const firstAny = firstAnyByCustomer.get(cc.customerId);
+    if (!firstAny || cc.collectedOn < firstAny) {
+      firstAnyByCustomer.set(cc.customerId, cc.collectedOn);
+    }
+    const last = lastPaidByCustomer.get(cc.customerId);
+    if (!last || cc.collectedOn > last) {
+      lastPaidByCustomer.set(cc.customerId, cc.collectedOn);
+    }
+  }
+  const saleDates = new Map<string, Date>();
+  for (const [cid, d] of firstAnyByCustomer) {
+    saleDates.set(cid, firstSaleByCustomer.get(cid) ?? d);
+  }
+
+  // Patients sold in the selected period, averaged per week. The denominator
+  // window must match the bounds the numerator applied — a half-open custom
+  // range falls back to first-sale/now on the missing side only.
+  const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
+  const allSaleDates = [...saleDates.values()];
+  const soldInPeriod = allSaleDates.filter(
+    (d) =>
+      (!period.start || d >= period.start) && (!period.end || d <= period.end),
+  ).length;
+  const spanStart =
+    period.start ??
+    (allSaleDates.length > 0
+      ? new Date(Math.min(...allSaleDates.map((d) => d.getTime())))
+      : null);
+  const spanEnd = period.end ?? now;
+  const periodSpanMs = spanStart
+    ? Math.max(0, spanEnd.getTime() - spanStart.getTime())
+    : 0;
+  const periodWeeks = Math.max(1, periodSpanMs / WEEK_MS);
+  const avgSoldPerWeek = soldInPeriod / periodWeeks;
+
   // Customers in scope, with their period-bounded charges, active subs, costs.
   const customers = await prisma.customer.findMany({
     where: {
@@ -170,13 +267,24 @@ export default async function ReportsPage({
       clinicCollectedShare: number;
       careCreditRevosTake: number;
       payouts: number;
+      // True down payments only (not installments/renewals) — for the
+      // per-clinic average down payment.
+      downGross: number;
+      downCount: number;
     }
   >();
   const ledgerFor = (cid: string | null, name: string) => {
     if (!cid) return null;
     let row = clinicLedger.get(cid);
     if (!row) {
-      row = { name, clinicCollectedShare: 0, careCreditRevosTake: 0, payouts: 0 };
+      row = {
+        name,
+        clinicCollectedShare: 0,
+        careCreditRevosTake: 0,
+        payouts: 0,
+        downGross: 0,
+        downCount: 0,
+      };
       clinicLedger.set(cid, row);
     }
     return row;
@@ -187,19 +295,36 @@ export default async function ReportsPage({
     name: string;
     clinic: string;
     implementor: string | null;
-    downPayments: { amount: number; date: Date; kind: "down" | "installment" | "other" }[];
+    downPayments: {
+      amount: number;
+      date: Date;
+      kind: "down" | "installment" | "other";
+      // The date the payment was originally scheduled for, when the charge
+      // came from a payment schedule (parsed from the description marker).
+      scheduledFor: string | null;
+    }[];
     subs: { amount: number; freq: string; next: Date | null; pending: boolean }[];
     scheduled: {
       status: string;
+      // Single-payment schedules are one-time scheduled charges, not
+      // installment plans — labeled differently in UI/CSV.
+      oneTime: boolean;
       payments: { amount: number; date: string; status?: string }[];
     }[];
     careCredits: { amount: number; date: Date; note: string | null }[];
     refunds: number;
     notes: string | null;
+    // Weeks on program: week 1 starts at the first (non-recurring) charge.
+    programWeeks: number | null;
+    programActive: boolean;
     revosProfit: number;
     clinicProfit: number;
   };
   const rows: Row[] = [];
+
+  // "Installment payment (scheduled 2026-08-01)" / "(reconciled 2026-08-01)"
+  // markers written by the webhook and the schedule reconciler.
+  const SCHEDULED_FOR_RE = /\((?:scheduled|reconciled) (\d{4}-\d{2}-\d{2})\)/;
 
   function chargeKind(
     description: string | null,
@@ -234,6 +359,7 @@ export default async function ReportsPage({
       amount: number;
       date: Date;
       kind: "down" | "installment" | "other";
+      scheduledFor: string | null;
     }[] = [];
 
     for (const ch of cust.charges) {
@@ -289,18 +415,30 @@ export default async function ReportsPage({
       custClinic += eco.clinicProfitCents;
       if (ledger) ledger.clinicCollectedShare += eco.clinicShareCents;
       if (netAmountCents > 0) {
+        const kind = chargeKind(ch.description);
+        if (ledger && kind === "down") {
+          ledger.downGross += netAmountCents;
+          ledger.downCount += 1;
+        }
         downPayments.push({
           amount: netAmountCents,
           date: ch.createdAt,
-          kind: chargeKind(ch.description),
+          kind,
+          scheduledFor: SCHEDULED_FOR_RE.exec(ch.description ?? "")?.[1] ?? null,
         });
       }
     }
 
-    const scheduled = cust.schedules.map((s) => ({
-      status: s.status,
-      payments: parsePaymentsJson(s.paymentsJson),
-    }));
+    const scheduled = cust.schedules.map((s) => {
+      const payments = parsePaymentsJson(s.paymentsJson);
+      // One-time = a single scheduled item that IS the whole plan. A
+      // rescheduled multi-item plan can have a 1-item snapshot but its total
+      // still covers the full package, so require the totals to agree.
+      const oneTime =
+        payments.length === 1 &&
+        s.totalAmountCents === Math.round(payments[0].amount);
+      return { status: s.status, oneTime, payments };
+    });
 
     // Subscriptions are shown for context (plan amount + next charge date), but
     // recurring REVENUE now comes from the real recurring Charge rows above —
@@ -340,6 +478,25 @@ export default async function ReportsPage({
       t.advancedCosts += ac.amountCents;
     }
 
+    // Time on program: week 1 begins at the sale (first non-recurring charge).
+    // Active patients count up to today; ended patients stop at their last
+    // collected charge. Week numbers align with "week N" InBody scans.
+    const startedOn = saleDates.get(cust.id) ?? null;
+    const programActive =
+      cust.isActive &&
+      (cust.subscriptions.length > 0 ||
+        cust.schedules.some((s) => s.status === "active"));
+    const programEnd = programActive
+      ? now
+      : (lastPaidByCustomer.get(cust.id) ?? startedOn);
+    const programWeeks =
+      startedOn && programEnd
+        ? Math.max(
+            1,
+            Math.floor((programEnd.getTime() - startedOn.getTime()) / WEEK_MS) + 1,
+          )
+        : null;
+
     rows.push({
       id: cust.id,
       name:
@@ -354,10 +511,24 @@ export default async function ReportsPage({
       careCredits,
       refunds: custRefunds,
       notes: cust.paymentNotes,
+      programWeeks,
+      programActive,
       revosProfit: custRevos,
       clinicProfit: custClinic,
     });
   }
+
+  // "Currently billing" cohort: derived from the same rows the table shows
+  // (the customers query's OR pulls in every active-sub/active-schedule
+  // patient regardless of period), so the card and the table agree.
+  const activeBillingCount = rows.filter((r) => r.programActive).length;
+  const activeDurations = rows
+    .filter((r) => r.programActive && r.programWeeks != null)
+    .map((r) => r.programWeeks as number);
+  const avgProgramWeeks =
+    activeDurations.length > 0
+      ? activeDurations.reduce((s, w) => s + w, 0) / activeDurations.length
+      : null;
 
   // Clinic-level advanced costs (no customer) in scope, plus per-customer ones.
   const clinicLevelCosts = await prisma.advancedCost.findMany({
@@ -406,6 +577,9 @@ export default async function ReportsPage({
       clinicCollectedShare: v.clinicCollectedShare,
       careCreditRevosTake: v.careCreditRevosTake,
       payouts: v.payouts,
+      downCount: v.downCount,
+      avgDownPaymentCents:
+        v.downCount > 0 ? Math.round(v.downGross / v.downCount) : null,
       balanceDue: v.clinicCollectedShare - v.careCreditRevosTake - v.payouts,
     }))
     .sort((a, b) => b.balanceDue - a.balanceDue);
@@ -447,6 +621,8 @@ export default async function ReportsPage({
       "Patient",
       "Clinic",
       "Implementor",
+      "On program (wks)",
+      "Program status",
       "Down payments",
       "Down payment dates",
       "Monthly sub",
@@ -468,7 +644,10 @@ export default async function ReportsPage({
             : d.kind === "other"
               ? "other"
               : "down";
-        return `${formatDate(d.date)} [${label}]`;
+        const schedFor = d.scheduledFor
+          ? ` scheduled for ${formatDateOnly(d.scheduledFor)}`
+          : "";
+        return `${formatDate(d.date)} [${label}${schedFor}]`;
       })
       .join("; ");
     const subStr = r.subs
@@ -487,7 +666,8 @@ export default async function ReportsPage({
               `${formatDateOnly(p.date)} ${money(p.amount)}${p.status ? ` ${p.status}` : ""}`,
           )
           .join(" | ");
-        return `${s.status}: ${dates || "no dates stored"}`;
+        const label = s.oneTime ? "one-time scheduled" : "installments";
+        return `${label} (${s.status}): ${dates || "no dates stored"}`;
       })
       .join("; ");
     const ccTotal = r.careCredits.reduce((s, c) => s + c.amount, 0);
@@ -496,6 +676,8 @@ export default async function ReportsPage({
         csvEsc(r.name),
         csvEsc(r.clinic),
         csvEsc(r.implementor ?? ""),
+        r.programWeeks != null ? String(r.programWeeks) : "",
+        r.programWeeks != null ? (r.programActive ? "active" : "ended") : "",
         money(downTotal),
         csvEsc(downDates),
         csvEsc(subStr),
@@ -513,6 +695,13 @@ export default async function ReportsPage({
   csvLines.push(`RevOS share,${money(revosShareTotal)}`);
   csvLines.push(`Clinic share,${money(clinicProfit)}`);
   csvLines.push(`RevOS net (after fees & costs),${money(revosNet)}`);
+  csvLines.push(`Active patients,${activePatientCount}`);
+  csvLines.push(`Active patients currently billing,${activeBillingCount}`);
+  csvLines.push(`Patients sold in period,${soldInPeriod}`);
+  csvLines.push(`Avg patients sold per week,${avgSoldPerWeek.toFixed(2)}`);
+  csvLines.push(
+    `Avg time on program (weeks),${avgProgramWeeks != null ? avgProgramWeeks.toFixed(1) : ""}`,
+  );
   csvLines.push(`Down payments gross,${money(t.downGross)}`);
   csvLines.push(`Recurring collected gross,${money(t.recurringMonthlyGross)}`);
   csvLines.push(`Care credit collected,${money(t.careCreditTotal)}`);
@@ -525,7 +714,9 @@ export default async function ReportsPage({
   csvLines.push(`Payouts to clinics,${money(payoutsTotal)}`);
   csvLines.push(`Balance still owed to clinics,${money(totalBalanceDue)}`);
   csvLines.push("");
-  csvLines.push("Clinic,Clinic share collected,Care credit RevOS take,Payouts,Balance due");
+  csvLines.push(
+    "Clinic,Clinic share collected,Care credit RevOS take,Payouts,Balance due,Down payments,Avg down payment",
+  );
   for (const c of clinicBalances) {
     csvLines.push(
       [
@@ -534,6 +725,8 @@ export default async function ReportsPage({
         money(c.careCreditRevosTake),
         money(c.payouts),
         money(c.balanceDue),
+        String(c.downCount),
+        c.avgDownPaymentCents != null ? money(c.avgDownPaymentCents) : "",
       ].join(","),
     );
   }
@@ -553,6 +746,21 @@ export default async function ReportsPage({
       label: "RevOS net",
       value: formatMoneyCents(revosNet),
       sub: "after fees, commissions & costs",
+    },
+    {
+      label: "Active patients",
+      value: activePatientCount.toLocaleString(),
+      sub: `${activeBillingCount} currently billing`,
+    },
+    {
+      label: "Patients sold / week",
+      value: avgSoldPerWeek.toFixed(1),
+      sub: `${soldInPeriod} sold in period`,
+    },
+    {
+      label: "Avg time on program",
+      value: avgProgramWeeks != null ? `${avgProgramWeeks.toFixed(1)} wks` : "—",
+      sub: "patients currently billing",
     },
     {
       label: "Down payments",
@@ -693,6 +901,7 @@ export default async function ReportsPage({
                   <th>Patient</th>
                   <th>Clinic</th>
                   <th>Implementor</th>
+                  <th>On program</th>
                   <th>Down payment(s)</th>
                   <th>Monthly sub</th>
                   <th>Scheduled payments</th>
@@ -706,7 +915,7 @@ export default async function ReportsPage({
               <tbody>
                 {rows.length === 0 && (
                   <tr>
-                    <td colSpan={11} className="text-center text-slate-500 py-8">
+                    <td colSpan={12} className="text-center text-slate-500 py-8">
                       No activity in this period.
                     </td>
                   </tr>
@@ -716,6 +925,20 @@ export default async function ReportsPage({
                     <td className="font-medium text-slate-900">{r.name}</td>
                     <td className="text-slate-600">{r.clinic}</td>
                     <td className="text-slate-600">{r.implementor ?? "—"}</td>
+                    <td>
+                      {r.programWeeks == null ? (
+                        <span className="text-slate-400">—</span>
+                      ) : r.programActive ? (
+                        <span className="badge-green text-[10px]">
+                          Wk {r.programWeeks}
+                        </span>
+                      ) : (
+                        <span className="text-xs text-slate-500">
+                          {r.programWeeks} wk{r.programWeeks === 1 ? "" : "s"}
+                          <span className="text-slate-400"> · ended</span>
+                        </span>
+                      )}
+                    </td>
                     <td>
                       {r.downPayments.length === 0 ? (
                         <span className="text-slate-400">—</span>
@@ -730,7 +953,9 @@ export default async function ReportsPage({
                               </span>
                               {d.kind === "installment" && (
                                 <span className="badge-indigo ml-1 text-[10px]">
-                                  scheduled
+                                  {d.scheduledFor
+                                    ? `scheduled for ${formatDateOnly(d.scheduledFor)}`
+                                    : "scheduled"}
                                 </span>
                               )}
                             </div>
@@ -788,6 +1013,11 @@ export default async function ReportsPage({
                               >
                                 {s.status}
                               </span>
+                              {s.oneTime && (
+                                <span className="badge-indigo ml-1 text-[10px]">
+                                  one-time
+                                </span>
+                              )}
                               {s.payments.length === 0 ? (
                                 <div className="text-slate-400">No dates stored</div>
                               ) : (
@@ -868,6 +1098,7 @@ export default async function ReportsPage({
                 <tr>
                   <th>Clinic</th>
                   <th className="text-right">Clinic share collected</th>
+                  <th className="text-right">Avg down payment</th>
                   <th className="text-right">Care credit (RevOS take)</th>
                   <th className="text-right">Payouts</th>
                   <th className="text-right">Balance due</th>
@@ -876,7 +1107,7 @@ export default async function ReportsPage({
               <tbody>
                 {clinicBalances.length === 0 && (
                   <tr>
-                    <td colSpan={5} className="text-center text-slate-500 py-6">
+                    <td colSpan={6} className="text-center text-slate-500 py-6">
                       No clinic activity in this period.
                     </td>
                   </tr>
@@ -886,6 +1117,19 @@ export default async function ReportsPage({
                     <td className="font-medium text-slate-900">{c.name}</td>
                     <td className="text-right text-slate-600">
                       {formatMoneyCents(c.clinicCollectedShare)}
+                    </td>
+                    <td className="text-right text-slate-600">
+                      {c.avgDownPaymentCents != null ? (
+                        <>
+                          {formatMoneyCents(c.avgDownPaymentCents)}
+                          <span className="text-slate-400 text-xs">
+                            {" "}
+                            · {c.downCount}
+                          </span>
+                        </>
+                      ) : (
+                        "—"
+                      )}
                     </td>
                     <td className="text-right text-slate-600">
                       {c.careCreditRevosTake > 0

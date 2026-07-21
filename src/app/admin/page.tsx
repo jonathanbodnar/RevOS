@@ -3,9 +3,10 @@ import { formatMoneyCents } from "@/lib/format";
 
 export default async function AdminOverviewPage() {
   const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
-  const [clinicCount, customerCount, chargeAgg, activeSubs, failed30d] = await Promise.all([
+  const [clinicCount, customerCount, activePatients, chargeAgg, activeSubs, failed30d] = await Promise.all([
     prisma.clinic.count(),
     prisma.customer.count({ where: { clinicId: { not: null } } }),
+    prisma.customer.count({ where: { clinicId: { not: null }, isActive: true } }),
     prisma.charge.aggregate({
       where: { clinicId: { not: null }, status: { in: ["paid", "pending", "refunded"] } },
       _sum: { amountCents: true, refundedCents: true },
@@ -24,6 +25,7 @@ export default async function AdminOverviewPage() {
   const stats = [
     { label: "Clinics", value: clinicCount.toLocaleString() },
     { label: "Customers", value: customerCount.toLocaleString() },
+    { label: "Active patients", value: activePatients.toLocaleString() },
     { label: "Transactions", value: (chargeAgg._count ?? 0).toLocaleString() },
     { label: "Active subscriptions", value: activeSubs.toLocaleString() },
     { label: "Gross processed", value: formatMoneyCents(gross) },

@@ -1,3 +1,4 @@
+import { timingSafeEqual } from "node:crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { ingestInBodyNotification, type InBodyWebhookPayload } from "@/lib/inbody-ingest";
 
@@ -21,9 +22,18 @@ export const runtime = "nodejs";
 export async function POST(req: NextRequest) {
   const secret = process.env.INBODY_WEBHOOK_SECRET;
   if (secret) {
+    const expected = Buffer.from(secret);
     let ok = false;
     req.headers.forEach((value) => {
-      if (value === secret) ok = true;
+      // Constant-time comparison so header probing can't brute-force the
+      // secret one byte at a time.
+      const candidate = Buffer.from(value);
+      if (
+        candidate.length === expected.length &&
+        timingSafeEqual(candidate, expected)
+      ) {
+        ok = true;
+      }
     });
     if (!ok) {
       return NextResponse.json({ error: "Invalid signature" }, { status: 401 });

@@ -18,6 +18,7 @@ import { CustomerAttribution } from "./customer-attribution";
 import { CareCredits } from "./care-credits";
 import { EditCustomerButton } from "./edit-customer";
 import { MergeCustomerButton } from "./merge-customer";
+import { MoveClinicButton } from "./move-clinic";
 import { InactiveToggleButton } from "./inactive-toggle";
 import { CustomerTabs } from "./customer-tabs";
 import { InBodyTab } from "./inbody-tab";
@@ -36,6 +37,7 @@ export default async function CustomerDetailPage({
   const customer = await prisma.customer.findFirst({
     where: { id, clinicId },
     include: {
+      clinic: { select: { name: true } },
       paymentMethods: {
         where: { isActive: true },
         orderBy: [{ isDefault: "desc" }, { createdAt: "desc" }],
@@ -72,6 +74,15 @@ export default async function CustomerDetailPage({
   const implementors = canPerformSensitiveActions
     ? await prisma.implementor.findMany({
         where: { isActive: true },
+        orderBy: { name: "asc" },
+        select: { id: true, name: true },
+      })
+    : [];
+
+  // Other clinics — move-patient targets (super-admin only).
+  const otherClinics = canPerformSensitiveActions
+    ? await prisma.clinic.findMany({
+        where: { isActive: true, id: { not: clinicId } },
         orderBy: { name: "asc" },
         select: { id: true, name: true },
       })
@@ -173,6 +184,12 @@ export default async function CustomerDetailPage({
             <MergeCustomerButton
               customerId={customer.id}
               otherCustomers={otherCustomers}
+            />
+            <MoveClinicButton
+              customerId={customer.id}
+              customerName={fullName}
+              currentClinicName={customer.clinic?.name ?? "this clinic"}
+              clinics={otherClinics}
             />
             <DeleteCustomerButton customerId={customer.id} customerName={fullName} />
           </div>
@@ -370,7 +387,7 @@ export default async function CustomerDetailPage({
           <div className="card-pad">
             <div className="flex items-baseline justify-between mb-1">
               <h3 className="text-sm font-semibold text-slate-900">
-                Installment plans
+                Installment plans &amp; scheduled payments
               </h3>
               {customer.schedules.length > 0 && (
                 <p className="text-xs text-slate-400">
@@ -425,6 +442,12 @@ export default async function CustomerDetailPage({
                       >
                         {s.status}
                       </span>
+                      {payments.length === 1 &&
+                        s.totalAmountCents === Math.round(payments[0].amount) && (
+                          <span className="badge-indigo ml-1 text-[10px]">
+                            one-time
+                          </span>
+                        )}
                     </td>
                     <td className="text-slate-600 text-xs">
                       {payments.length === 0 ? (

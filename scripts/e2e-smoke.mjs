@@ -10,6 +10,17 @@
 
 const BASE = process.env.BASE_URL || "http://localhost:3000";
 
+// Credentials come from the environment — never hardcode passwords here
+// (this file is committed; a previous literal had to be rotated).
+const ADMIN_EMAIL = process.env.SMOKE_ADMIN_EMAIL || "admin@revos.local";
+const ADMIN_PASSWORD = process.env.SMOKE_ADMIN_PASSWORD;
+if (!ADMIN_PASSWORD) {
+  console.error("Set SMOKE_ADMIN_PASSWORD (and optionally SMOKE_ADMIN_EMAIL) to run the smoke test.");
+  process.exit(1);
+}
+// Throwaway password for the clinic admin this test creates.
+const clinicAdminPassword = "Smoke-" + Math.random().toString(36).slice(2) + "!1";
+
 const jar = new Map(); // name -> value
 
 function setCookiesFromResponse(res) {
@@ -99,7 +110,7 @@ async function signOut() {
 
 async function main() {
   console.log("=== sign in super admin ===");
-  const adminSession = await signIn("admin@revos.local", "ChangeMe123!");
+  const adminSession = await signIn(ADMIN_EMAIL, ADMIN_PASSWORD);
   console.log("ok:", adminSession.user.email, "role:", adminSession.user.role);
 
   console.log("=== create clinic ===");
@@ -110,7 +121,7 @@ async function main() {
     contactEmail: "hello@sunrise.local",
     adminName: "Sunrise Admin",
     adminEmail,
-    adminPassword: "ClinicPass123!",
+    adminPassword: clinicAdminPassword,
   });
   if (create.status !== 201) {
     throw new Error(`create clinic failed: ${create.status} ${await create.text()}`);
@@ -129,7 +140,7 @@ async function main() {
   await signOut();
 
   console.log("=== sign in as new clinic admin ===");
-  const clinicSession = await signIn(adminEmail, "ClinicPass123!");
+  const clinicSession = await signIn(adminEmail, clinicAdminPassword);
   console.log("ok:", clinicSession.user.email, "role:", clinicSession.user.role);
 
   console.log("=== create customer ===");
