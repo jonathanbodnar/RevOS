@@ -88,6 +88,25 @@ function addOneFrequency(d: Date, frequency: Frequency): Date {
   return out;
 }
 
+function subtractOneFrequency(iso: string, frequency: Frequency): string {
+  // Inverse of addOneFrequency. Accepts a full ISO timestamp, returns LP format.
+  const out = new Date(iso);
+  switch (frequency) {
+    case "weekly":
+      out.setUTCDate(out.getUTCDate() - 7);
+      break;
+    case "quarterly":
+      out.setUTCMonth(out.getUTCMonth() - 3);
+      break;
+    case "yearly":
+      out.setUTCFullYear(out.getUTCFullYear() - 1);
+      break;
+    default:
+      out.setUTCMonth(out.getUTCMonth() - 1);
+  }
+  return out.toISOString().replace(".000Z", "Z");
+}
+
 export async function POST(
   req: Request,
   ctx: { params: Promise<{ id: string }> },
@@ -154,6 +173,15 @@ export async function POST(
     // is today. Future starts let LunarPay's cron handle the first cycle on the
     // scheduled date (matches master-link behavior).
     const chargeFirstNow = !isTrial && !startInFuture;
+    // LunarPay charges the first cycle at `nextPaymentOn = startOn + 1 cycle`.
+    // The clinic picks the date they want that first charge to land, so for a
+    // deferred (future) start we send startOn = (chosenDate - 1 cycle) so LP's
+    // first charge lands exactly on the chosen date. For a same-day start we
+    // charged the first cycle above, so startOn = today and LP handles the rest.
+    // (Mirrors the master payment-link flow.)
+    const lpStartOnIso = startInFuture
+      ? subtractOneFrequency(startOnIso, frequency)
+      : startOnIso;
 
     try {
       const chargeCustomerId = pm.lunarpayCustomerId ?? customer.lunarpayCustomerId;
@@ -199,13 +227,32 @@ export async function POST(
         paymentMethodId: pm.lunarpayPaymentMethodId,
         amount: totalCents,
         frequency,
-        startOn: startOnIso,
+        startOn: lpStartOnIso,
         trial: isTrial,
       });
 
-      const nextPaymentOn = lpSub.data.nextPaymentOn
+      let nextPaymentOn = lpSub.data.nextPaymentOn
         ? new Date(lpSub.data.nextPaymentOn)
-        : addOneFrequency(new Date(startOnIso), frequency);
+        : addOneFrequency(new Date(lpStartOnIso), frequency);
+
+      // Month-end guard. For a deferred start we send startOn = chosen − 1 cycle
+      // so LP's (startOn + 1 cycle) lands on the chosen date. That round-trip is
+      // off by a few days for chosen days 29–31 when the prior month is shorter
+      // (e.g. Mar 31 → startOn Mar 3 → LP → Apr 3), because month subtraction
+      // overflows. When LP's computed date misses the chosen date, PATCH
+      // nextPaymentOn to the exact chosen date. No charge happens — LP just
+      // repoints the date. Best-effort: if the PATCH fails we keep LP's date
+      // (clinic can still reschedule manually, same as before).
+      if (startInFuture && nextPaymentOn.toISOString().slice(0, 10) !== startOnIso.slice(0, 10)) {
+        try {
+          const fixed = await lunarpay.updateSubscription(lpSub.data.id, {
+            nextPaymentOn: startOnIso,
+          });
+          if (fixed.data.nextPaymentOn) nextPaymentOn = new Date(fixed.data.nextPaymentOn);
+        } catch {
+          // Non-fatal — leave nextPaymentOn as LP computed it.
+        }
+      }
 
       const subscription = await prisma.subscription.create({
         data: {
