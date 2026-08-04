@@ -32,11 +32,13 @@ export function InBodyClient({
   tests,
   webhookUrl,
   canFetch,
+  webhookSecretConfigured,
   onlyUnmatched,
 }: {
   tests: Test[];
   webhookUrl: string;
   canFetch: boolean;
+  webhookSecretConfigured: boolean;
   onlyUnmatched: boolean;
 }) {
   const router = useRouter();
@@ -135,9 +137,18 @@ export function InBodyClient({
       <div className="card-pad space-y-2">
         <div className="text-sm font-semibold text-slate-900">Webhook setup</div>
         <p className="text-xs text-slate-500">
-          In LookinBody Web → API Setup → Webhook, enter this URL. Optionally add
-          a security header whose value matches <code>INBODY_WEBHOOK_SECRET</code>.
+          In LookinBody Web → API Setup → Webhook, enter this URL <em>and</em> add a
+          custom header (any name, e.g. <code>apikey</code>) whose value equals{" "}
+          <code>INBODY_WEBHOOK_SECRET</code>. Deliveries without that header are
+          rejected. LookinBody&apos;s &quot;Send Test&quot; must return 200 for it to
+          save the webhook.
         </p>
+        {!webhookSecretConfigured && (
+          <p className="text-xs text-red-600">
+            <code>INBODY_WEBHOOK_SECRET</code> is not set — all incoming webhooks
+            are being rejected with 503 until it is configured.
+          </p>
+        )}
         <div className="flex items-center gap-2">
           <code className="flex-1 text-xs bg-slate-50 border border-slate-200 rounded px-2 py-1.5 break-all">
             {webhookUrl}

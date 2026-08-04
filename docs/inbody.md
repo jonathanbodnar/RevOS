@@ -71,9 +71,11 @@ Other functions:
 ## Webhook receiver (`api/webhooks/inbody/route.ts`)
 
 - Node runtime, force-dynamic.
-- **Verify**: if `INBODY_WEBHOOK_SECRET` set, some incoming header value must
-  equal it (else 401); if `INBODY_ACCOUNT` set, payload `Account` must match
-  (case-insensitive, else 401).
+- **Verify (fail-closed)**: `INBODY_WEBHOOK_SECRET` is **required** — when unset
+  every delivery is rejected with 503 and dropped. When set, some incoming
+  header value must equal it (else 401) — add a custom header with that value in
+  LookinBody's webhook setup. If `INBODY_ACCOUNT` is set, payload `Account`
+  must match (case-insensitive, else 401).
 - Parses JSON or form-encoded bodies; calls `ingestInBodyNotification`; returns
   200 `{success, id, matched}` (LookinBody requires a 200 body to save the
   webhook during its "Sent Test").
@@ -108,3 +110,16 @@ numbers before matching.
 InBody approved the account's data-API access on 2026-07-14. Production must
 have both `INBODY_API_KEY` and `INBODY_ACCOUNT`; after deployment, run
 **Backfill existing tests** to populate scans received before approval.
+
+**The API is IP-allowlisted per account** (diagnosed 2026-08-04, ticket
+#144939): LookinBody's setup requires registering the calling server's IP in
+their portal (apiusa.lookinbody.com → SETUP), and unregistered callers get a
+generic `401 "You do not have permission to access this service"` on every
+endpoint regardless of credentials. The production Railway service therefore
+needs **Static Outbound IPs** enabled (service Settings → Networking), and that
+IP registered in the LookinBody portal — otherwise Railway's rotating egress
+IPs will break the integration even after it works once. The current API key is
+displayed on the same portal page ("Resubmit"/"Get a New Key" rotates it —
+update `INBODY_API_KEY` if pressed). Also mind the API's 500 calls/day/endpoint
+cap (each test fetch hits 2 endpoints; exceeding returns 401 until the next
+day).
