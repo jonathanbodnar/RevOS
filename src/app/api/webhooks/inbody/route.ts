@@ -24,6 +24,10 @@ export async function POST(req: NextRequest) {
   // Fail closed: without a configured secret, reject rather than ingest
   // unauthenticated PHI.
   if (!secret) {
+    // eslint-disable-next-line no-console
+    console.error(
+      "[inbody] webhook rejected: INBODY_WEBHOOK_SECRET is not set — delivery dropped",
+    );
     return NextResponse.json({ error: "Webhook not configured" }, { status: 503 });
   }
   {
@@ -41,6 +45,10 @@ export async function POST(req: NextRequest) {
       }
     });
     if (!ok) {
+      // eslint-disable-next-line no-console
+      console.warn(
+        "[inbody] webhook rejected: no header matched INBODY_WEBHOOK_SECRET — check the custom header in LookinBody's webhook setup",
+      );
       return NextResponse.json({ error: "Invalid signature" }, { status: 401 });
     }
   }

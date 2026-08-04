@@ -70,6 +70,7 @@ export default async function InBodyAdminPage({
       <InBodyClient
         webhookUrl={`${webhookBase.replace(/\/$/, "")}/api/webhooks/inbody`}
         canFetch={canFetch}
+        webhookSecretConfigured={Boolean(process.env.INBODY_WEBHOOK_SECRET)}
         onlyUnmatched={onlyUnmatched}
         tests={tests.map((t) => ({
           id: t.id,
