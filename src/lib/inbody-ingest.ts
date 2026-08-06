@@ -1,7 +1,7 @@
 import { Prisma } from "@prisma/client";
 import { prisma } from "./prisma";
 import { normalizePhone } from "./phone";
-import { encryptField, decryptField } from "./encryption";
+import { encryptField, decryptField, isDecryptFailure } from "./encryption";
 import {
   EMPTY_METRICS,
   fetchInBodyResults,
@@ -233,7 +233,12 @@ export async function refetchInBodyTest(testId: string) {
   let metrics: InBodyMetrics = { ...EMPTY_METRICS };
   // Decrypt the stored blob so downstream logic works on plaintext; it's
   // re-encrypted at the write below.
-  let rawJson = decryptField(test.rawJson);
+  // If the stored blob can't be decrypted, treat it as absent rather than
+  // carrying the placeholder into the re-encrypt below — that would overwrite
+  // recoverable ciphertext with the literal "[unable to decrypt]". A fresh
+  // fetch may replace it; otherwise `preserveRawJson` keeps the original.
+  const rawJsonUnreadable = isDecryptFailure(decryptField(test.rawJson));
+  let rawJson = rawJsonUnreadable ? null : decryptField(test.rawJson);
   let fetchError: string | null = null;
   let resultStatus = test.resultStatus;
 
@@ -270,7 +275,11 @@ export async function refetchInBodyTest(testId: string) {
       matchStatus,
       resultStatus,
       fetchError,
-      rawJson: encryptField(rawJson),
+      // Don't clobber an unreadable-but-intact blob with null/placeholder;
+      // only write when we actually have plaintext to store.
+      ...(rawJsonUnreadable && rawJson == null
+        ? {}
+        : { rawJson: encryptField(rawJson) }),
       ...(hasAnyMetric(metrics) ? metricColumns(metrics) : {}),
     },
   });

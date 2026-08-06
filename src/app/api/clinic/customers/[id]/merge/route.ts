@@ -4,7 +4,12 @@ import { prisma } from "@/lib/prisma";
 import { requireSuperAdminClinicApi } from "@/lib/api-guard";
 import { requireStringParams } from "@/lib/route-params";
 import { logAudit } from "@/lib/audit";
-import { encryptField, decryptField } from "@/lib/encryption";
+import {
+  encryptField,
+  decryptField,
+  assertReadable,
+  DecryptionError,
+} from "@/lib/encryption";
 
 /**
  * Merge a duplicate patient profile INTO the one being viewed.
@@ -62,6 +67,34 @@ export async function POST(
     where: { customerId: primary.id, isActive: true, isDefault: true },
   });
 
+  // Notes are encrypted at rest — decrypt both, join, re-encrypt. Do this
+  // BEFORE the transaction: if either side can't be decrypted we must not
+  // mutate anything, because re-encrypting the placeholder would destroy the
+  // original ciphertext and the source profile is deleted below.
+  let mergedNotes: string;
+  try {
+    mergedNotes = [
+      assertReadable(decryptField(primary.paymentNotes), "primary payment notes"),
+      assertReadable(decryptField(source.paymentNotes), "duplicate payment notes"),
+    ]
+      .filter(Boolean)
+      .join("\n");
+  } catch (e) {
+    if (e instanceof DecryptionError) {
+      console.error("[merge] aborted — unreadable payment notes:", e);
+      return NextResponse.json(
+        {
+          error:
+            "Can't merge: one of these profiles has payment notes the server " +
+            "can't decrypt (encryption key problem). Merging would erase them. " +
+            "Restore the original FIELD_ENCRYPTION_KEY first.",
+        },
+        { status: 409 },
+      );
+    }
+    throw e;
+  }
+
   await prisma.$transaction(async (tx) => {
     // Cards: if the primary already has a default, the moved cards must not
     // also be default (only one default per profile).
@@ -99,13 +132,6 @@ export async function POST(
     });
 
     // Carry over attribution / notes / contact gaps from the duplicate.
-    // Notes are encrypted at rest — decrypt both, join, re-encrypt.
-    const mergedNotes = [
-      decryptField(primary.paymentNotes),
-      decryptField(source.paymentNotes),
-    ]
-      .filter(Boolean)
-      .join("\n");
     await tx.customer.update({
       where: { id: primary.id },
       data: {
