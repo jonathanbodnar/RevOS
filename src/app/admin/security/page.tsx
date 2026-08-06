@@ -1,25 +1,12 @@
-import { requireSuperAdmin } from "@/lib/session";
-import { prisma } from "@/lib/prisma";
-import { MfaClient } from "./mfa-client";
+import { redirect } from "next/navigation";
 
 export const dynamic = "force-dynamic";
 
+/**
+ * Two-factor setup moved to /account/security, which every role can reach —
+ * this page was super-admin-only, so nobody else could enroll at all. Kept as
+ * a redirect so existing links and bookmarks still land somewhere useful.
+ */
 export default async function SecurityPage() {
-  const session = await requireSuperAdmin();
-  const user = await prisma.user.findUnique({
-    where: { id: session.user.id },
-    select: { mfaEnabled: true },
-  });
-
-  return (
-    <div className="max-w-xl space-y-6">
-      <div>
-        <h2 className="text-xl font-semibold text-slate-900">Security</h2>
-        <p className="text-sm text-slate-500 mt-0.5">
-          Two-factor authentication for your super-admin account.
-        </p>
-      </div>
-      <MfaClient enabled={!!user?.mfaEnabled} />
-    </div>
-  );
+  redirect("/account/security");
 }

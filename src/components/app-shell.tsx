@@ -1,4 +1,5 @@
 import Image from "next/image";
+import Link from "next/link";
 import { SignOutButton } from "./sign-out";
 import { SidebarNav, type SidebarNavItem } from "./sidebar-nav";
 import { ChatDock } from "./chat-dock";
@@ -80,6 +81,14 @@ export function AppShell({
               </div>
             </div>
           </div>
+          {/* Account settings live outside the role shells so every role —
+              including providers, who get a trimmed nav — can reach them. */}
+          <Link
+            href="/account/security"
+            className="block px-2 py-1.5 mb-1 text-xs text-ink-muted hover:text-ink hover:bg-surface-muted rounded-md transition-colors"
+          >
+            Account &amp; security
+          </Link>
           <SignOutButton />
         </div>
       </aside>
