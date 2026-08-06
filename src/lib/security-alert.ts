@@ -9,7 +9,10 @@ export type SecurityEvent =
   | "auth.repeated_failures"
   | "admin.wipe_attempt"
   | "impersonation.start"
-  | "mfa.disabled";
+  | "mfa.disabled"
+  // A stored MFA secret can't be decrypted — that account cannot log in until
+  // an operator resets it. Always a server misconfiguration, never user error.
+  | "auth.mfa_secret_unreadable";
 
 export async function securityAlert(
   event: SecurityEvent,

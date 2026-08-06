@@ -4,7 +4,7 @@ import { prisma } from "@/lib/prisma";
 import { getSession } from "@/lib/session";
 import { logAudit } from "@/lib/audit";
 import { securityAlert } from "@/lib/security-alert";
-import { encryptField, decryptField } from "@/lib/encryption";
+import { encryptField, decryptSecret } from "@/lib/encryption";
 import { generateSecret, otpauthUri, verifyTotp } from "@/lib/totp";
 
 export const dynamic = "force-dynamic";
@@ -48,14 +48,29 @@ export async function PUT(req: Request) {
     return NextResponse.json({ error: "Enter the 6-digit code." }, { status: 400 });
   }
   const user = await prisma.user.findUnique({ where: { id: session.user.id } });
-  const pending = decryptField(user?.mfaPendingSecret);
-  if (!pending) {
+  if (!user?.mfaPendingSecret) {
     return NextResponse.json(
       { error: "Start enrollment first." },
       { status: 400 },
     );
   }
-  if (!verifyTotp(pending, parsed.data.code)) {
+  // A pending secret that can't be read is a key problem, not a wrong code —
+  // report it as such instead of sending the admin back to their app.
+  let ok: boolean;
+  try {
+    ok = verifyTotp(decryptSecret(user.mfaPendingSecret, "MFA secret")!, parsed.data.code);
+  } catch (e) {
+    console.error("[mfa] enrollment secret unreadable:", e);
+    return NextResponse.json(
+      {
+        error:
+          "Server can't read the enrollment secret (encryption key problem). " +
+          "Start setup again to generate a fresh one.",
+      },
+      { status: 500 },
+    );
+  }
+  if (!ok) {
     return NextResponse.json({ error: "That code didn't match. Try again." }, { status: 400 });
   }
   // Promote the verified pending secret to the live factor.
@@ -83,10 +98,28 @@ export async function DELETE(req: Request) {
   if (!session) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   const parsed = CodeBody.safeParse(await req.json().catch(() => ({})));
   const user = await prisma.user.findUnique({ where: { id: session.user.id } });
-  const secret = decryptField(user?.mfaSecret);
   // If MFA is on, require a valid code to turn it off.
   if (user?.mfaEnabled) {
-    if (!parsed.success || !secret || !verifyTotp(secret, parsed.data.code)) {
+    let valid = false;
+    try {
+      valid =
+        parsed.success &&
+        verifyTotp(decryptSecret(user.mfaSecret, "MFA secret") ?? "", parsed.data.code);
+    } catch (e) {
+      // Unreadable secret: recovery is deliberately out-of-band. Waiving the
+      // code here would make an unreadable secret an MFA-disable bypass.
+      console.error("[mfa] live secret unreadable:", e);
+      return NextResponse.json(
+        {
+          error:
+            "Server can't read your MFA secret (encryption key problem), so it " +
+            "can't verify a code. Reset it from the server with: " +
+            "npx tsx scripts/reset-admin-password.ts <email> --clear-mfa",
+        },
+        { status: 500 },
+      );
+    }
+    if (!valid) {
       return NextResponse.json(
         { error: "Enter a valid code to disable MFA." },
         { status: 400 },

@@ -10,10 +10,11 @@ no-op until its var is set — but production should set all of them.
 
 | Var | Purpose | Notes |
 | --- | --- | --- |
-| `FIELD_ENCRYPTION_KEY` | Encrypts PHI free-text at rest (progress notes, payment notes, InBody raw payloads, chat logs). | 32 bytes, hex or base64: `openssl rand -hex 32`. **Never rotate once data is encrypted** — old rows become unreadable. Store a backup copy outside Railway. |
+| `FIELD_ENCRYPTION_KEY` | Encrypts PHI free-text at rest (progress notes, payment notes, InBody raw payloads, chat logs) and the MFA secret. | 32 bytes, hex or base64: `openssl rand -hex 32`. **Never rotate without setting `FIELD_ENCRYPTION_KEY_PREVIOUS`** — old rows become unreadable. Store a backup copy outside Railway. |
+| `FIELD_ENCRYPTION_KEY_PREVIOUS` | Comma-separated key(s) rotated away from. Reads fall back to these; writes always use the primary. | Required to rotate `FIELD_ENCRYPTION_KEY` without orphaning existing rows. Keep an old key here until you have re-encrypted every row under the new one. |
 | `LUNARPAY_WEBHOOK_SECRET` / `INBODY_WEBHOOK_SECRET` | Webhook signature verification. | Endpoints now **fail closed** (503) when unset. |
 | `CRON_SECRET` | Auth for all cron routes. | Must match the GitHub Actions repo secret. |
-| `SECURITY_ALERT_WEBHOOK_URL` | Where security alerts go (Slack/on-call). | Fires on repeated login failures, impersonation start, wipe attempts, MFA disable. No PHI in the payload. |
+| `SECURITY_ALERT_WEBHOOK_URL` | Where security alerts go (Slack/on-call). | Fires on repeated login failures, impersonation start, wipe attempts, MFA disable, and an unreadable MFA secret. No PHI in the payload. |
 | `AUDIT_RETENTION_DAYS` | Purge audit logs older than N days. | HIPAA expects **≥6 years** — suggest `2555`. Unset = keep forever. |
 | `CHAT_LOG_RETENTION_DAYS` | Purge assistant chat logs older than N days. | e.g. `365`. |
 | `KPI_FLAG_RETENTION_DAYS` | Purge resolved/dismissed KPI flags older than N days. | e.g. `180`. |
@@ -24,8 +25,12 @@ no-op until its var is set — but production should set all of them.
 
 Super admins enroll under **Admin → Security**: scan the key into any
 authenticator app, verify a code, done. MFA is enforced at login **only after
-enrollment** — it cannot lock anyone out. Login also throttles after 8 failed
-attempts in 15 minutes and alerts on-call.
+enrollment**, so an unenrolled or half-enrolled admin is never locked out.
+Login also throttles after 8 failed attempts in 15 minutes and alerts on-call.
+
+The one way an *enrolled* admin can be locked out is losing the encryption key
+their secret was stored under — see [Rotating the key](#rotating-the-key) for
+the symptom and the `--clear-mfa` recovery.
 
 ## 3. Encryption at rest (built)
 
@@ -33,6 +38,28 @@ attempts in 15 minutes and alerts on-call.
 free-text columns. It's transparent: new writes encrypt, reads decrypt, and old
 plaintext rows still read (lazy migration). A configured-but-malformed key
 throws rather than silently storing plaintext.
+
+### Rotating the key
+
+Set `FIELD_ENCRYPTION_KEY` to the new key and move the old one into
+`FIELD_ENCRYPTION_KEY_PREVIOUS` (comma-separated if there is more than one).
+Reads try the primary first, then each previous key; writes always use the
+primary, so rows re-encrypt under the new key as they are updated. Drop a key
+from `_PREVIOUS` only once nothing is still encrypted under it.
+
+**Rotating without this leaves the old rows permanently unreadable.** A value
+encrypted under a discarded key still looks like valid ciphertext but fails its
+GCM authentication tag; `decryptField` then returns `DECRYPT_FAILED` rather
+than plaintext. Notably that includes `User.mfaSecret` — an admin whose secret
+was encrypted under a lost key **cannot log in**, because no authenticator code
+can ever validate. Recover with:
+
+```
+DATABASE_URL=... npx tsx scripts/reset-admin-password.ts <email> --clear-mfa
+```
+
+To find rows affected by a past rotation, look for values that begin with
+`enc:v1:` and fail to decrypt under every configured key.
 
 Still on the roadmap: encrypting **indexed identifiers** (email/phone) needs a
 searchable-encryption scheme (deterministic/blind-index), which is a separate

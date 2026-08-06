@@ -4,7 +4,7 @@ import bcrypt from "bcryptjs";
 import { prisma } from "./prisma";
 import { logAudit } from "./audit";
 import { securityAlert } from "./security-alert";
-import { decryptField } from "./encryption";
+import { decryptSecret } from "./encryption";
 import { verifyTotp } from "./totp";
 
 // In-process failed-login counter, used only to ALERT on likely brute force —
@@ -98,12 +98,21 @@ export const authOptions: NextAuthOptions = {
         // error fails closed for that MFA user, never for others.
         if (user.mfaEnabled && user.mfaSecret) {
           try {
-            const secret = decryptField(user.mfaSecret);
+            const secret = decryptSecret(user.mfaSecret, "MFA secret");
             if (!secret || !verifyTotp(secret, String(credentials.totp ?? ""))) {
               recordLoginFail(email);
               return null;
             }
-          } catch {
+          } catch (e) {
+            // An unreadable/unusable secret locks this account out until an
+            // operator resets it — still fail closed, but say so loudly rather
+            // than letting it look like the user keeps mistyping their code.
+            console.error(
+              `[auth] MFA secret for ${email} is unusable — login is blocked ` +
+                `until it is reset (scripts/reset-admin-password.ts --clear-mfa):`,
+              e,
+            );
+            void securityAlert("auth.mfa_secret_unreadable", { email });
             return null;
           }
         }
