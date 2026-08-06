@@ -45,7 +45,7 @@ Default seeded credentials come from `SUPER_ADMIN_EMAIL` /
 | `INBODY_API_KEY` | LookinBody Web API key. |
 | `INBODY_ACCOUNT` | LookinBody account name (e.g. `revosinbody2`). |
 | `INBODY_API_BASE` | InBody Web API base (`https://apiusa.lookinbody.com`). |
-| `INBODY_WEBHOOK_SECRET` | Verify inbound InBody webhook header (optional). |
+| `INBODY_WEBHOOK_SECRET` | Verify inbound InBody webhook header. **Required** — the webhook route fails closed (503, deliveries dropped) when unset. |
 | `NEXT_PUBLIC_APP_URL` | Public URL for checkout redirects + payment links. |
 | `NEXT_PUBLIC_FORTIS_ELEMENTS_URL` | Fortis Elements JS SDK URL. |
 | `SUPER_ADMIN_EMAIL` / `SUPER_ADMIN_PASSWORD` | Seed credentials. |
