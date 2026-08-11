@@ -35,12 +35,19 @@ import {
   startOfUtcDay,
 } from "@/lib/program-week";
 
+const TX_FILTERS = ["paid", "pending", "failed", "refunded"] as const;
+type TxFilter = (typeof TX_FILTERS)[number];
+
 export default async function CustomerDetailPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ id: string }>;
+  searchParams: Promise<{ tx?: string }>;
 }) {
   const { id } = await params;
+  const { tx } = await searchParams;
+  const txFilter = TX_FILTERS.includes(tx as TxFilter) ? (tx as TxFilter) : null;
   const { session } = await requireClinicContext();
   const clinicId = session.user.effectiveClinicId as string;
   const canPerformSensitiveActions = isSuperAdmin(session);
@@ -64,6 +71,14 @@ export default async function CustomerDetailPage({
     },
   });
   if (!customer) notFound();
+
+  // Transactions card rows: real charges only (holds render separately), with
+  // an optional ?tx= status filter from the card's chips.
+  const visibleCharges = customer.charges.filter(
+    (c) =>
+      !["authorized", "voided"].includes(c.status) &&
+      (!txFilter || c.status === txFilter),
+  );
 
   // HIPAA read-access logging: record who opened this patient's chart. Never
   // throws (logAudit swallows errors).
@@ -363,9 +378,28 @@ export default async function CustomerDetailPage({
           />
 
           <div className="card-pad">
-            <h3 className="text-sm font-semibold text-slate-900 mb-3">
-              Transactions
-            </h3>
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="text-sm font-semibold text-slate-900">
+                Transactions
+              </h3>
+              <div className="flex items-center gap-1.5 text-xs">
+                <Link
+                  href={`/clinic/customers/${customer.id}`}
+                  className={txFilter ? "btn-ghost px-2 py-0.5" : "btn-primary px-2 py-0.5"}
+                >
+                  All
+                </Link>
+                {TX_FILTERS.map((s) => (
+                  <Link
+                    key={s}
+                    href={`/clinic/customers/${customer.id}?tx=${s}`}
+                    className={txFilter === s ? "btn-primary px-2 py-0.5" : "btn-ghost px-2 py-0.5"}
+                  >
+                    {s[0].toUpperCase() + s.slice(1)}
+                  </Link>
+                ))}
+              </div>
+            </div>
             <table className="table">
               <thead>
                 <tr>
@@ -377,16 +411,14 @@ export default async function CustomerDetailPage({
                 </tr>
               </thead>
               <tbody>
-                {customer.charges.filter((c) => !["authorized", "voided"].includes(c.status)).length === 0 && (
+                {visibleCharges.length === 0 && (
                   <tr>
                     <td colSpan={5} className="text-center text-slate-500 py-6">
-                      No transactions yet.
+                      {txFilter ? `No ${txFilter} transactions.` : "No transactions yet."}
                     </td>
                   </tr>
                 )}
-                {customer.charges
-                  .filter((c) => !["authorized", "voided"].includes(c.status))
-                  .map((c) => (
+                {visibleCharges.map((c) => (
                   <tr key={c.id}>
                     <td>
                       <div className="font-medium">
