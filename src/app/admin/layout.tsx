@@ -23,6 +23,7 @@ export default async function AdminLayout({
     : [
         { href: "/admin", label: "Overview", icon: "home" },
         { href: "/admin/customers", label: "Patients", icon: "users" },
+        { href: "/admin/transactions", label: "Transactions", icon: "receipt" },
         { href: "/admin/reports", label: "Reports", icon: "receipt" },
         { href: "/admin/kpis", label: "KPIs", icon: "target" },
         { href: "/admin/clinics", label: "Clinics", icon: "building" },

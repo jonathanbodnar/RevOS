@@ -6,13 +6,24 @@ import { RefundButton } from "../customers/[id]/refund-button";
 import { toCsv, csvMoney } from "@/lib/csv";
 import { DownloadCsvButton } from "@/components/download-csv-button";
 
-export default async function ChargesPage() {
+const STATUS_FILTERS = ["paid", "pending", "failed", "refunded"] as const;
+type StatusFilter = (typeof STATUS_FILTERS)[number];
+
+export default async function ChargesPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ status?: string }>;
+}) {
   const { clinicId } = await requireClinicAdminContext();
   const session = await getSession();
   const canRefund = isSuperAdmin(session);
+  const { status } = await searchParams;
+  const statusFilter = STATUS_FILTERS.includes(status as StatusFilter)
+    ? (status as StatusFilter)
+    : null;
 
   const charges = await prisma.charge.findMany({
-    where: { clinicId },
+    where: { clinicId, ...(statusFilter ? { status: statusFilter } : {}) },
     orderBy: { createdAt: "desc" },
     take: 500,
     include: { customer: true },
@@ -46,11 +57,33 @@ export default async function ChargesPage() {
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
-        <p className="text-sm text-slate-500">
-          {charges.length} transaction{charges.length === 1 ? "" : "s"}
-          {charges.length >= 500 ? " (latest 500)" : ""}
-        </p>
-        <DownloadCsvButton csv={csv} filename="transactions.csv" />
+        <div className="flex items-center gap-2 text-sm">
+          <Link
+            href="/clinic/charges"
+            className={statusFilter ? "btn-ghost px-3 py-1" : "btn-primary px-3 py-1"}
+          >
+            All
+          </Link>
+          {STATUS_FILTERS.map((s) => (
+            <Link
+              key={s}
+              href={`/clinic/charges?status=${s}`}
+              className={statusFilter === s ? "btn-primary px-3 py-1" : "btn-ghost px-3 py-1"}
+            >
+              {s[0].toUpperCase() + s.slice(1)}
+            </Link>
+          ))}
+        </div>
+        <div className="flex items-center gap-3">
+          <p className="text-sm text-slate-500">
+            {charges.length} transaction{charges.length === 1 ? "" : "s"}
+            {charges.length >= 500 ? " (latest 500)" : ""}
+          </p>
+          <DownloadCsvButton
+            csv={csv}
+            filename={statusFilter ? `transactions-${statusFilter}.csv` : "transactions.csv"}
+          />
+        </div>
       </div>
       <div className="card overflow-hidden">
         <table className="table">
@@ -72,7 +105,7 @@ export default async function ChargesPage() {
                   colSpan={canRefund ? 7 : 6}
                   className="text-center text-slate-500 py-10"
                 >
-                  No transactions yet.
+                  {statusFilter ? `No ${statusFilter} transactions.` : "No transactions yet."}
                 </td>
               </tr>
             )}
