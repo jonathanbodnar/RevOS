@@ -96,7 +96,11 @@ export const EMPTY_METRICS: InBodyMetrics = {
 };
 
 function normKey(k: string): string {
-  return k.toLowerCase().replace(/[^a-z0-9]/g, "");
+  // "%" is load-bearing in InBody's full field names: "LeanMassofRightArm" (kg)
+  // and "LeanMass(%)ofRightArm" (percent of ideal) would both collapse to
+  // "leanmassofrightarm" if % were stripped, so the percent lookup would
+  // silently return the kg value.
+  return k.toLowerCase().replace(/%/g, "pct").replace(/[^a-z0-9]/g, "");
 }
 
 /** Case/format-insensitive numeric field lookup across many name variants. */
@@ -145,23 +149,29 @@ export function normalizeInBodyResult(raw: unknown): InBodyMetrics {
   return {
     weightKg: pickNum(obj, ["WT", "Weight", "weight_kg"]),
     totalBodyWaterKg: pickNum(obj, ["TBW", "TotalBodyWater", "TBWTotalBodyWater"]),
-    dryLeanMassKg: pickNum(obj, ["DLM", "DryLeanMass"]),
+    dryLeanMassKg: pickNum(obj, ["DLM", "DryLeanMass", "DLM(DryLeanMass)", "DM"]),
     skeletalMuscleMassKg: pickNum(obj, ["SMM", "SkeletalMuscleMass", "SMMSkeletalMuscleMass"]),
     bodyFatMassKg: pickNum(obj, ["BFM", "BodyFatMass", "BFMBodyFatMass"]),
     bmi: pickNum(obj, ["BMI", "BodyMassIndex", "BMIBodyMassIndex"]),
-    percentBodyFat: pickNum(obj, ["PBF", "PercentBodyFat", "BodyFatPercent"]),
+    percentBodyFat: pickNum(obj, ["PBF", "PercentBodyFat", "BodyFatPercent", "PBF(PercentBodyFat)"]),
 
-    segLeanRightArmKg: pickNum(obj, ["LeanOfRightArm", "LeanRightArm", "RightArmLean", "LMRA", "SLM_RA", "LeanMassRightArm", "SLMRA"]),
-    segLeanLeftArmKg: pickNum(obj, ["LeanOfLeftArm", "LeanLeftArm", "LeftArmLean", "LMLA", "SLM_LA", "LeanMassLeftArm", "SLMLA"]),
-    segLeanTrunkKg: pickNum(obj, ["LeanOfTrunk", "LeanTrunk", "TrunkLean", "LMTR", "SLM_TR", "LeanMassTrunk", "SLMTR"]),
-    segLeanRightLegKg: pickNum(obj, ["LeanOfRightLeg", "LeanRightLeg", "RightLegLean", "LMRL", "SLM_RL", "LeanMassRightLeg", "SLMRL"]),
-    segLeanLeftLegKg: pickNum(obj, ["LeanOfLeftLeg", "LeanLeftLeg", "LeftLegLean", "LMLL", "SLM_LL", "LeanMassLeftLeg", "SLMLL"]),
+    // Segmental lean. The "LeanMassof…"/"LRA" spellings are what InBody
+    // actually emits (verified against a real InBody380H payload); the older
+    // aliases are kept for other device/firmware variants.
+    segLeanRightArmKg: pickNum(obj, ["LeanMassofRightArm", "LRA", "LeanOfRightArm", "LeanRightArm", "RightArmLean", "LMRA", "SLM_RA", "LeanMassRightArm", "SLMRA"]),
+    segLeanLeftArmKg: pickNum(obj, ["LeanMassofLeftArm", "LLA", "LeanOfLeftArm", "LeanLeftArm", "LeftArmLean", "LMLA", "SLM_LA", "LeanMassLeftArm", "SLMLA"]),
+    segLeanTrunkKg: pickNum(obj, ["LeanMassofTrunk", "LT", "LeanOfTrunk", "LeanTrunk", "TrunkLean", "LMTR", "SLM_TR", "LeanMassTrunk", "SLMTR"]),
+    segLeanRightLegKg: pickNum(obj, ["LeanMassofRightLeg", "LRL", "LeanOfRightLeg", "LeanRightLeg", "RightLegLean", "LMRL", "SLM_RL", "LeanMassRightLeg", "SLMRL"]),
+    segLeanLeftLegKg: pickNum(obj, ["LeanMassofLeftLeg", "LLL", "LeanOfLeftLeg", "LeanLeftLeg", "LeftLegLean", "LMLL", "SLM_LL", "LeanMassLeftLeg", "SLMLL"]),
 
-    segLeanRightArmPct: pickNum(obj, ["LeanPercentOfRightArm", "RightArmLeanPercent", "PLMRA", "SLP_RA", "PSLMRA"]),
-    segLeanLeftArmPct: pickNum(obj, ["LeanPercentOfLeftArm", "LeftArmLeanPercent", "PLMLA", "SLP_LA", "PSLMLA"]),
-    segLeanTrunkPct: pickNum(obj, ["LeanPercentOfTrunk", "TrunkLeanPercent", "PLMTR", "SLP_TR", "PSLMTR"]),
-    segLeanRightLegPct: pickNum(obj, ["LeanPercentOfRightLeg", "RightLegLeanPercent", "PLMRL", "SLP_RL", "PSLMRL"]),
-    segLeanLeftLegPct: pickNum(obj, ["LeanPercentOfLeftLeg", "LeftLegLeanPercent", "PLMLL", "SLP_LL", "PSLMLL"]),
+    // Percent OF IDEAL (normal-range midpoint), so values legitimately exceed
+    // 100% — 98–135% is ordinary. Depends on normKey mapping "%" to "pct":
+    // without that, these would resolve to the kg field above.
+    segLeanRightArmPct: pickNum(obj, ["LeanMass(%)ofRightArm", "PILRA", "LeanPercentOfRightArm", "RightArmLeanPercent", "PLMRA", "SLP_RA", "PSLMRA"]),
+    segLeanLeftArmPct: pickNum(obj, ["LeanMass(%)ofLeftArm", "PILLA", "LeanPercentOfLeftArm", "LeftArmLeanPercent", "PLMLA", "SLP_LA", "PSLMLA"]),
+    segLeanTrunkPct: pickNum(obj, ["LeanMass(%)ofTrunk", "PILT", "LeanPercentOfTrunk", "TrunkLeanPercent", "PLMTR", "SLP_TR", "PSLMTR"]),
+    segLeanRightLegPct: pickNum(obj, ["LeanMass(%)ofRightLeg", "PILRL", "LeanPercentOfRightLeg", "RightLegLeanPercent", "PLMRL", "SLP_RL", "PSLMRL"]),
+    segLeanLeftLegPct: pickNum(obj, ["LeanMass(%)ofLeftLeg", "PILLL", "LeanPercentOfLeftLeg", "LeftLegLeanPercent", "PLMLL", "SLP_LL", "PSLMLL"]),
   };
 }
 
@@ -251,18 +261,75 @@ export type InBodyConnectionResult = {
   ok: boolean;
   status: number;
   body: string;
+  /** Public IP this server egresses from — must be allow-listed by InBody. */
+  egressIp?: string | null;
+  /** Non-secret fingerprint of the key in use, to compare with the portal. */
+  keyFingerprint?: string;
+  account?: string;
 };
+
+/**
+ * Identify the key without disclosing it: length plus first/last 4 characters
+ * is enough to tell "the key changed" or "the key has a stray character" apart
+ * from "the key is right", which is the whole diagnostic question.
+ */
+export function inbodyKeyFingerprint(): string {
+  if (!API_KEY) return "(unset)";
+  const len = API_KEY.length;
+  if (len <= 8) return `len=${len}`;
+  return `len=${len} ${API_KEY.slice(0, 4)}…${API_KEY.slice(-4)}`;
+}
+
+/**
+ * Best-effort public egress IP of this server.
+ *
+ * InBody allow-lists caller IPs and returns the same generic 401 for a
+ * non-listed IP as for a bad key or an exhausted daily quota — so without this,
+ * a misconfigured allowlist is indistinguishable from a wrong credential and
+ * can go unnoticed for weeks. Never throws; a null just means "couldn't tell".
+ */
+export async function detectEgressIp(): Promise<string | null> {
+  try {
+    const res = await fetch("https://api.ipify.org?format=json", {
+      cache: "no-store",
+      signal: AbortSignal.timeout(5000),
+    });
+    if (!res.ok) return null;
+    const json = (await res.json()) as { ip?: string };
+    return json.ip ?? null;
+  } catch {
+    return null;
+  }
+}
 
 /** POST /user/test — verifies Account + API-KEY credentials. */
 export async function inbodyConnectionTest(account?: string | null): Promise<InBodyConnectionResult> {
+  const diagnostics = {
+    keyFingerprint: inbodyKeyFingerprint(),
+    account: (account || ACCOUNT || "").trim() || "(unset)",
+  };
   if (!inbodyConfigured(account)) {
-    return { ok: false, status: 503, body: "INBODY_API_KEY and INBODY_ACCOUNT must both be configured." };
+    return {
+      ok: false,
+      status: 503,
+      body: "INBODY_API_KEY and INBODY_ACCOUNT must both be configured.",
+      ...diagnostics,
+    };
   }
   try {
-    const r = await post("/user/test", {}, account);
-    return { ok: r.ok, status: r.status, body: r.text.slice(0, 2000) };
+    const [r, egressIp] = await Promise.all([
+      post("/user/test", {}, account),
+      detectEgressIp(),
+    ]);
+    return { ok: r.ok, status: r.status, body: r.text.slice(0, 2000), egressIp, ...diagnostics };
   } catch (err) {
-    return { ok: false, status: 0, body: err instanceof Error ? err.message : String(err) };
+    return {
+      ok: false,
+      status: 0,
+      body: err instanceof Error ? err.message : String(err),
+      egressIp: await detectEgressIp(),
+      ...diagnostics,
+    };
   }
 }
 

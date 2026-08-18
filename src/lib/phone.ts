@@ -23,6 +23,23 @@ export function normalizePhone(input: string | null | undefined): string | null 
   return digits;
 }
 
+/**
+ * The value to persist in `Customer.phone`: bare digits when the input is a
+ * recognizable US number, otherwise the original string untouched.
+ *
+ * Storing bare digits keeps what's on file identical to what InBody sends
+ * (10 digits, no punctuation). Matching does not depend on this — it strips
+ * non-digits in SQL either way — so this is hygiene, not the thing that makes
+ * pairing work. The fallback matters: someone has typed an email address into
+ * the phone field before, and normalizing that would reduce it to a single
+ * digit and destroy a value a human still needs to fix.
+ */
+export function storablePhone(input: string | null | undefined): string | null {
+  if (input == null) return null;
+  const n = normalizePhone(input);
+  return n && n.length === 10 ? n : input;
+}
+
 /** Pretty US phone formatting for display; falls back to the raw input. */
 export function formatPhone(input: string | null | undefined): string {
   const n = normalizePhone(input);

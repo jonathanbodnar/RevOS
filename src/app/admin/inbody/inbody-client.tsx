@@ -16,9 +16,19 @@ type Test = InBodyTestRow & {
   matchStatus: string;
   resultStatus: string;
   fetchError: string | null;
+  dismissedAt: string | null;
+  dismissedReason: string | null;
   customer: { id: string; name: string } | null;
   clinicName: string | null;
 };
+
+const TABS = [
+  { id: "queue", label: "Needs mapping" },
+  { id: "needs_data", label: "Mapped, no data" },
+  { id: "mapped", label: "Mapped & syncing" },
+  { id: "dismissed", label: "Dismissed" },
+  { id: "all", label: "All" },
+] as const;
 
 type SearchResult = {
   id: string;
@@ -33,13 +43,15 @@ export function InBodyClient({
   webhookUrl,
   canFetch,
   webhookSecretConfigured,
-  onlyUnmatched,
+  tab,
+  tabCounts,
 }: {
   tests: Test[];
   webhookUrl: string;
   canFetch: boolean;
   webhookSecretConfigured: boolean;
-  onlyUnmatched: boolean;
+  tab: string;
+  tabCounts: Record<string, number>;
 }) {
   const router = useRouter();
   const [, startTransition] = useTransition();
@@ -51,6 +63,74 @@ export function InBodyClient({
   const [syncResult, setSyncResult] = useState<string | null>(null);
   const [backfilling, setBackfilling] = useState(false);
   const [backfillResult, setBackfillResult] = useState<string | null>(null);
+  const [rematching, setRematching] = useState(false);
+  const [rematchResult, setRematchResult] = useState<string | null>(null);
+  const [renormalizing, setRenormalizing] = useState(false);
+  const [renormalizeResult, setRenormalizeResult] = useState<string | null>(null);
+
+  async function rematch() {
+    setRematching(true);
+    setRematchResult(null);
+    const res = await fetch("/api/admin/inbody/rematch", { method: "POST" });
+    const d = (await res.json().catch(() => ({}))) as {
+      scanned?: number;
+      matched?: number;
+      ambiguous?: number;
+      error?: string;
+    };
+    setRematching(false);
+    setRematchResult(
+      res.ok
+        ? `Scanned ${d.scanned ?? 0}; paired ${d.matched ?? 0}${d.ambiguous ? `; ${d.ambiguous} ambiguous` : ""}.`
+        : `Error: ${d.error || "re-match failed"}`,
+    );
+    startTransition(() => router.refresh());
+  }
+
+  async function renormalize() {
+    setRenormalizing(true);
+    setRenormalizeResult(null);
+    const res = await fetch("/api/admin/inbody/renormalize", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({}),
+    });
+    const d = (await res.json().catch(() => ({}))) as {
+      scanned?: number;
+      updated?: number;
+      unreadable?: number;
+      error?: string;
+    };
+    setRenormalizing(false);
+    setRenormalizeResult(
+      res.ok
+        ? `Scanned ${d.scanned ?? 0}; updated ${d.updated ?? 0}${d.unreadable ? `; ${d.unreadable} unreadable` : ""}.`
+        : `Error: ${d.error || "re-map failed"}`,
+    );
+    startTransition(() => router.refresh());
+  }
+
+  async function toggleDismiss(t: Test) {
+    const dismissing = !t.dismissedAt;
+    let reason: string | null = null;
+    if (dismissing) {
+      reason = prompt(
+        "Remove this scan from the mapping queue?\n\nOptional: why (e.g. walk-in, not a patient / device test).",
+        "",
+      );
+      // prompt() returns null when cancelled — an empty string is a valid
+      // "dismiss with no reason", so only bail on an outright cancel.
+      if (reason === null) return;
+    }
+    setBusyId(t.id);
+    await fetch(`/api/admin/inbody/tests/${t.id}/dismiss`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ dismissed: dismissing, reason: reason || undefined }),
+    });
+    setBusyId(null);
+    startTransition(() => router.refresh());
+  }
 
   async function syncToday() {
     setSyncing(true);
@@ -81,11 +161,25 @@ export function InBodyClient({
       ok?: boolean;
       status?: number;
       body?: string;
+      egressIp?: string | null;
+      keyFingerprint?: string;
+      account?: string;
     };
+    // A 401 from InBody is the same generic message whether the caller's IP
+    // isn't allow-listed, the key is wrong, or the daily quota is spent — so
+    // show what we called with, to make those distinguishable.
+    const context = [
+      d.egressIp ? `from IP ${d.egressIp}` : null,
+      d.account ? `account ${d.account}` : null,
+      d.keyFingerprint ? `key ${d.keyFingerprint}` : null,
+    ]
+      .filter(Boolean)
+      .join(" · ");
     setConn(
-      d.ok
+      (d.ok
         ? `Success (HTTP ${d.status})`
-        : `Failed (HTTP ${d.status ?? "?"}): ${d.body || "no response"}`,
+        : `Failed (HTTP ${d.status ?? "?"}): ${d.body || "no response"}`) +
+        (context ? ` — ${context}` : ""),
     );
   }
 
@@ -182,6 +276,27 @@ export function InBodyClient({
           </button>
           {backfillResult && <span className="text-xs text-slate-600">{backfillResult}</span>}
         </div>
+        {/* Both of these are deliberately NOT gated on canFetch — they call
+            InBody zero times, which is exactly why they still work when the
+            data API is down. */}
+        <div className="flex items-center gap-3 pt-1">
+          <button className="btn-ghost text-xs px-2 py-1" onClick={rematch} disabled={rematching}>
+            {rematching ? "Re-matching…" : "Re-run phone matching"}
+          </button>
+          {rematchResult && <span className="text-xs text-slate-600">{rematchResult}</span>}
+        </div>
+        <div className="flex items-center gap-3 pt-1">
+          <button
+            className="btn-ghost text-xs px-2 py-1"
+            onClick={renormalize}
+            disabled={renormalizing}
+          >
+            {renormalizing ? "Re-mapping…" : "Re-map stored results"}
+          </button>
+          {renormalizeResult && (
+            <span className="text-xs text-slate-600">{renormalizeResult}</span>
+          )}
+        </div>
         {!canFetch && (
           <p className="text-xs text-amber-600">
             Metrics fetch requires both <code>INBODY_API_KEY</code> and{" "}
@@ -191,19 +306,17 @@ export function InBodyClient({
         )}
       </div>
 
-      <div className="flex items-center gap-2 text-sm">
-        <Link
-          href="/admin/inbody"
-          className={onlyUnmatched ? "btn-ghost px-3 py-1" : "btn-primary px-3 py-1"}
-        >
-          All
-        </Link>
-        <Link
-          href="/admin/inbody?filter=unmatched"
-          className={onlyUnmatched ? "btn-primary px-3 py-1" : "btn-ghost px-3 py-1"}
-        >
-          Unmatched
-        </Link>
+      <div className="flex flex-wrap items-center gap-2 text-sm">
+        {TABS.map((t) => (
+          <Link
+            key={t.id}
+            href={`/admin/inbody?filter=${t.id}`}
+            className={tab === t.id ? "btn-primary px-3 py-1" : "btn-ghost px-3 py-1"}
+          >
+            {t.label}
+            <span className="ml-1.5 text-xs opacity-70">{tabCounts[t.id] ?? 0}</span>
+          </Link>
+        ))}
       </div>
 
       <div className="card overflow-hidden">
@@ -236,6 +349,7 @@ export function InBodyClient({
                 onMap={() => setMapFor(t)}
                 onUnmap={() => unmap(t.id)}
                 onRefetch={() => refetch(t.id)}
+                onDismiss={() => toggleDismiss(t)}
                 canFetch={canFetch}
               />
             ))}
@@ -265,6 +379,7 @@ function FragmentRow({
   onMap,
   onUnmap,
   onRefetch,
+  onDismiss,
   canFetch,
 }: {
   t: Test;
@@ -274,6 +389,7 @@ function FragmentRow({
   onMap: () => void;
   onUnmap: () => void;
   onRefetch: () => void;
+  onDismiss: () => void;
   canFetch: boolean;
 }) {
   const core = coreMetrics(t);
@@ -307,6 +423,11 @@ function FragmentRow({
           {t.matchStatus === "ambiguous" && (
             <div className="text-xs text-amber-600 mt-0.5">multiple phone matches</div>
           )}
+          {t.dismissedAt && (
+            <div className="text-xs text-slate-400 mt-0.5">
+              dismissed{t.dismissedReason ? `: ${t.dismissedReason}` : ""}
+            </div>
+          )}
         </td>
         <td className="text-right pr-3">
           <div className="flex items-center justify-end gap-1">
@@ -327,6 +448,9 @@ function FragmentRow({
                 {busy ? "…" : "Refetch"}
               </button>
             )}
+            <button className="btn-ghost text-xs px-2 py-1" onClick={onDismiss} disabled={busy}>
+              {t.dismissedAt ? "Restore" : "Dismiss"}
+            </button>
           </div>
         </td>
       </tr>

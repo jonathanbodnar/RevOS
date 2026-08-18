@@ -5,6 +5,27 @@ import { InBodyClient } from "./inbody-client";
 
 export const dynamic = "force-dynamic";
 
+/**
+ * Queue semantics. The default view is the triage queue — tests still waiting
+ * for a human to pick a customer. Tests that are mapped and syncing are done
+ * work and stay out of it; dismissed tests are retired but recoverable.
+ */
+const TAB_WHERE = {
+  queue: { dismissedAt: null, customerId: null },
+  needs_data: { dismissedAt: null, customerId: { not: null }, resultStatus: { not: "fetched" } },
+  mapped: { dismissedAt: null, customerId: { not: null }, resultStatus: "fetched" },
+  dismissed: { dismissedAt: { not: null } },
+  all: {},
+} as const;
+
+type TabId = keyof typeof TAB_WHERE;
+
+function resolveTab(filter: string | undefined): TabId {
+  // "unmatched" is the pre-tabs bookmark for the same set.
+  if (filter === "unmatched") return "queue";
+  return filter && filter in TAB_WHERE ? (filter as TabId) : "queue";
+}
+
 export default async function InBodyAdminPage({
   searchParams,
 }: {
@@ -12,10 +33,10 @@ export default async function InBodyAdminPage({
 }) {
   await requireSuperAdmin();
   const { filter } = await searchParams;
-  const onlyUnmatched = filter === "unmatched";
+  const tab = resolveTab(filter);
 
   const tests = await prisma.inBodyTest.findMany({
-    where: onlyUnmatched ? { customerId: null } : {},
+    where: TAB_WHERE[tab],
     orderBy: [{ testedAt: "desc" }, { createdAt: "desc" }],
     take: 200,
     include: {
@@ -24,10 +45,15 @@ export default async function InBodyAdminPage({
     },
   });
 
-  const [total, unmatched] = await Promise.all([
-    prisma.inBodyTest.count(),
-    prisma.inBodyTest.count({ where: { customerId: null } }),
-  ]);
+  const [total, unmatched, queueCount, needsDataCount, mappedCount, dismissedCount] =
+    await Promise.all([
+      prisma.inBodyTest.count(),
+      prisma.inBodyTest.count({ where: { customerId: null } }),
+      prisma.inBodyTest.count({ where: TAB_WHERE.queue }),
+      prisma.inBodyTest.count({ where: TAB_WHERE.needs_data }),
+      prisma.inBodyTest.count({ where: TAB_WHERE.mapped }),
+      prisma.inBodyTest.count({ where: TAB_WHERE.dismissed }),
+    ]);
 
   const configured = inbodyConfigured();
   const canFetch = inbodyCanFetch();
@@ -71,9 +97,18 @@ export default async function InBodyAdminPage({
         webhookUrl={`${webhookBase.replace(/\/$/, "")}/api/webhooks/inbody`}
         canFetch={canFetch}
         webhookSecretConfigured={Boolean(process.env.INBODY_WEBHOOK_SECRET)}
-        onlyUnmatched={onlyUnmatched}
+        tab={tab}
+        tabCounts={{
+          queue: queueCount,
+          needs_data: needsDataCount,
+          mapped: mappedCount,
+          dismissed: dismissedCount,
+          all: total,
+        }}
         tests={tests.map((t) => ({
           id: t.id,
+          dismissedAt: t.dismissedAt ? t.dismissedAt.toISOString() : null,
+          dismissedReason: t.dismissedReason,
           testedAt: t.testedAt ? t.testedAt.toISOString() : null,
           equip: t.equip,
           phone: t.phone,
