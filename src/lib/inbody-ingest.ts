@@ -10,6 +10,7 @@ import {
   inbodyAccount,
   inbodyCanFetch,
   inbodyGetTodayMeasurements,
+  mergeMetrics,
   normalizeInBodyResult,
   parseTestDatetimes,
   type InBodyMetrics,
@@ -315,6 +316,149 @@ export async function syncInBodyMeasurementsForDate(
     }
   }
   return { found: records.length, ingested, errors };
+}
+
+/**
+ * Re-run phone auto-pairing for tests that arrived BEFORE their customer
+ * existed in RevOS.
+ *
+ * Auto-pairing otherwise runs exactly once, inline in the webhook ingest. The
+ * clinic scans a patient at check-in and creates the RevOS record ~an hour
+ * later at checkout, so the pairing lookup correctly finds nothing and the test
+ * is stranded as "unmatched" forever. This closes that gap.
+ *
+ * Makes NO InBody API calls, so it works while the data API is failing.
+ * Only ever fills in rows that are still unpaired — a manual mapping, or a
+ * dismissal, is never overwritten.
+ */
+export async function rematchInBodyTestsForCustomer(
+  customerId: string,
+): Promise<number> {
+  const customer = await prisma.customer.findUnique({
+    where: { id: customerId },
+    select: { id: true, clinicId: true, phone: true },
+  });
+  if (!customer?.clinicId) return 0;
+  const phoneNormalized = normalizePhone(customer.phone);
+  if (!phoneNormalized || phoneNormalized.length !== 10) return 0;
+
+  // Re-use the one-match rule: a second customer on the same number must stay
+  // ambiguous rather than silently attach medical data to the wrong patient.
+  const matches = await findCustomersByPhone(phoneNormalized);
+  if (matches.length !== 1 || matches[0].id !== customerId) return 0;
+
+  const { count } = await prisma.inBodyTest.updateMany({
+    where: {
+      phoneNormalized,
+      customerId: null,
+      dismissedAt: null,
+      matchStatus: { in: ["unmatched", "ambiguous"] },
+    },
+    data: { customerId, clinicId: customer.clinicId, matchStatus: "auto" },
+  });
+  return count;
+}
+
+/**
+ * Sweep every still-unpaired test and attach the ones whose phone now resolves
+ * to exactly one customer. Safety net behind `rematchInBodyTestsForCustomer`,
+ * for customers created before that hook existed (and for phone corrections).
+ * Makes no InBody API calls.
+ */
+export async function rematchAllUnmatchedInBodyTests(): Promise<{
+  scanned: number;
+  matched: number;
+  ambiguous: number;
+}> {
+  const pending = await prisma.inBodyTest.findMany({
+    where: { customerId: null, dismissedAt: null, phoneNormalized: { not: null } },
+    select: { id: true, phoneNormalized: true },
+  });
+
+  let matched = 0;
+  let ambiguous = 0;
+  // Group by phone so each distinct number costs one lookup, not one per test.
+  const byPhone = new Map<string, string[]>();
+  for (const t of pending) {
+    if (!t.phoneNormalized || t.phoneNormalized.length !== 10) continue;
+    const ids = byPhone.get(t.phoneNormalized) ?? [];
+    ids.push(t.id);
+    byPhone.set(t.phoneNormalized, ids);
+  }
+
+  for (const [phoneNormalized, ids] of byPhone) {
+    const customers = await findCustomersByPhone(phoneNormalized);
+    if (customers.length === 1) {
+      const { count } = await prisma.inBodyTest.updateMany({
+        where: { id: { in: ids }, customerId: null, dismissedAt: null },
+        data: {
+          customerId: customers[0].id,
+          clinicId: customers[0].clinicId,
+          matchStatus: "auto",
+        },
+      });
+      matched += count;
+    } else if (customers.length > 1) {
+      const { count } = await prisma.inBodyTest.updateMany({
+        where: { id: { in: ids }, customerId: null, dismissedAt: null },
+        data: { matchStatus: "ambiguous" },
+      });
+      ambiguous += count;
+    }
+  }
+
+  return { scanned: pending.length, matched, ambiguous };
+}
+
+/**
+ * Re-map metrics out of already-stored raw payloads, without calling InBody.
+ *
+ * When a field-name alias is added to `normalizeInBodyResult`, previously
+ * ingested rows keep their old (partial) columns even though the full payload
+ * is sitting in `rawJson`. This re-runs normalization over that stored JSON, so
+ * historical rows gain the newly-mapped metrics for free — no API quota, and it
+ * works while the data API is returning 401.
+ */
+export async function renormalizeStoredInBodyResults(
+  limit = 500,
+): Promise<{ scanned: number; updated: number; unreadable: number; errors: string[] }> {
+  const safeLimit = Math.max(1, Math.min(Math.trunc(limit) || 500, 2000));
+  const tests = await prisma.inBodyTest.findMany({
+    where: { rawJson: { not: null } },
+    orderBy: [{ testedAt: "desc" }, { createdAt: "desc" }],
+    select: { id: true, rawJson: true },
+    take: safeLimit,
+  });
+
+  let updated = 0;
+  let unreadable = 0;
+  const errors: string[] = [];
+
+  for (const test of tests) {
+    try {
+      const plain = decryptField(test.rawJson);
+      // Never parse (or re-encrypt) a decryption failure placeholder.
+      if (plain == null || isDecryptFailure(plain)) {
+        unreadable++;
+        continue;
+      }
+      const parsed = JSON.parse(plain) as { full?: unknown; abbrev?: unknown };
+      const merged = mergeMetrics(
+        normalizeInBodyResult(parsed?.full ?? parsed),
+        normalizeInBodyResult(parsed?.abbrev ?? null),
+      );
+      if (!hasAnyMetric(merged)) continue;
+      await prisma.inBodyTest.update({
+        where: { id: test.id },
+        data: { ...metricColumns(merged), resultStatus: "fetched" },
+      });
+      updated++;
+    } catch (err) {
+      errors.push(`${test.id}: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
+  return { scanned: tests.length, updated, unreadable, errors };
 }
 
 /** Re-fetch historical tests that still lack stored measurements. */

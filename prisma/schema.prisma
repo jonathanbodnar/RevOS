@@ -189,6 +189,13 @@ model ChartWeek {
   completed     Boolean @default(false)
   progressNotes String?
 
+  /// Calendar start (UTC midnight) this row's week represented the last time a
+  /// cell was edited, stamped from weekBounds(anchor, weekNumber). A RECORD,
+  /// not a key — weekNumber stays the key. Deliberately never rewritten when
+  /// the program anchor moves, so the gap between this and the freshly
+  /// computed range is exactly the drift the chart surfaces to the provider.
+  weekStartDate DateTime?
+
   // Who last touched this week (provider/clinic-admin user id) — the audit
   // trail proper lives in AuditLog; this is a cheap "last edited by".
   updatedById String?
@@ -326,11 +333,23 @@ model Charge {
   paymentMethodType String? // "cc" | "ach"
   description       String?
 
+  // ── Collections follow-up ──
+  // Deliberately separate from `status`: `status` is what the processor said,
+  // `followUpStatus` is where the human recovery work stands. Only meaningful
+  // on failed rows; everything else sits at the "new" default.
+  // new | contacted | promised_to_pay | payment_plan | card_updated |
+  // recovered | written_off | unreachable  ("recovered"/"written_off" close it)
+  followUpStatus String    @default("new")
+  followUpNote   String? // what was said, callback date, etc.
+  followUpAt     DateTime? // when followUpStatus last changed
+  followUpById   String? // User.id of the admin who changed it (no FK — mirrors KPIFlag.resolvedById)
+
   createdAt DateTime @default(now())
 
   @@index([clinicId])
   @@index([customerId])
   @@index([paymentLinkId])
+  @@index([status, followUpStatus])
 }
 
 model Subscription {
@@ -493,6 +512,16 @@ model InBodyTest {
   rawJson      String? // full fetched result payload
   webhookJson  String? // original webhook notification payload
 
+  // ── Triage (super-admin) ──
+  // A test that will never be mapped: a walk-in who isn't a patient, a device
+  // self-test, a demo seed. Soft flag, never a delete — the row is PHI-bearing
+  // evidence that a real scan happened, and a delete wouldn't stick anyway:
+  // ingest upserts on dedupeKey, so the next webhook re-delivery or
+  // "Pull today's data" sync would recreate it via the create branch.
+  dismissedAt     DateTime?
+  dismissedById   String? // User.id of the super admin who dismissed it
+  dismissedReason String?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -501,6 +530,8 @@ model InBodyTest {
   @@index([phoneNormalized])
   @@index([testedAt])
   @@index([resultStatus])
+  @@index([dismissedAt])
+  @@index([customerId, dismissedAt])
 }
 
 // ── KPI engine (Phase 4) ────────────────────────────────────────────────────

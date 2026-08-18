@@ -5,6 +5,8 @@ import { formatMoneyCents, formatDate } from "@/lib/format";
 import { toCsv, csvMoney } from "@/lib/csv";
 import { DownloadCsvButton } from "@/components/download-csv-button";
 import { OpenCustomerLink } from "./open-customer-link";
+import { FollowUpSelect } from "./follow-up-select";
+import { FOLLOW_UP_LABELS, isFollowUpStatus } from "@/lib/follow-up";
 
 export const dynamic = "force-dynamic";
 
@@ -21,13 +23,14 @@ type StatusFilter = (typeof STATUS_FILTERS)[number];
 export default async function AdminTransactionsPage({
   searchParams,
 }: {
-  searchParams: Promise<{ status?: string; days?: string }>;
+  searchParams: Promise<{ status?: string; days?: string; followUp?: string }>;
 }) {
   await requireSuperAdmin();
-  const { status, days } = await searchParams;
+  const { status, days, followUp } = await searchParams;
   const statusFilter = STATUS_FILTERS.includes(status as StatusFilter)
     ? (status as StatusFilter)
     : null;
+  const followUpFilter = isFollowUpStatus(followUp) ? followUp : null;
   const windowDays = days === "all" ? null : Math.min(365, Math.max(1, Number(days) || 30));
   const since = windowDays
     ? new Date(Date.now() - windowDays * 24 * 60 * 60 * 1000)
@@ -38,6 +41,7 @@ export default async function AdminTransactionsPage({
       clinicId: { not: null },
       ...(statusFilter ? { status: statusFilter } : {}),
       ...(since ? { createdAt: { gte: since } } : {}),
+      ...(followUpFilter ? { followUpStatus: followUpFilter } : {}),
     },
     orderBy: { createdAt: "desc" },
     take: 500,
@@ -47,30 +51,50 @@ export default async function AdminTransactionsPage({
     },
   });
 
+  // One real decline is often stored as two rows (payment-link mints a
+  // synthetic id, the webhook writes the real transaction id), so offer to
+  // apply an outcome across a patient's other untouched failures in one go.
+  const openFailuresByCustomer = new Map<string, number>();
+  for (const c of charges) {
+    if (c.status !== "failed" || c.followUpStatus !== "new") continue;
+    openFailuresByCustomer.set(
+      c.customerId,
+      (openFailuresByCustomer.get(c.customerId) ?? 0) + 1,
+    );
+  }
+
   const nameOf = (c: (typeof charges)[number]) =>
     [c.customer.firstName, c.customer.lastName].filter(Boolean).join(" ") ||
     c.customer.email ||
     "Customer";
 
   const csv = toCsv(
-    ["Customer", "Email", "Clinic", "Amount", "Status", "Description", "When"],
+    ["Customer", "Email", "Clinic", "Amount", "Status", "Follow-up", "Note", "Description", "When"],
     charges.map((c) => [
       nameOf(c),
       c.customer.email,
       c.clinic?.name ?? "—",
       csvMoney(c.amountCents),
       c.status,
+      c.status === "failed" ? c.followUpStatus : "",
+      c.followUpNote,
       c.description,
       c.createdAt.toISOString(),
     ]),
   );
 
-  const qs = (next: { status?: string | null; days?: string | null }) => {
+  const qs = (next: {
+    status?: string | null;
+    days?: string | null;
+    followUp?: string | null;
+  }) => {
     const p = new URLSearchParams();
     const s = next.status === undefined ? statusFilter : next.status;
     const d = next.days === undefined ? (windowDays ? String(windowDays) : "all") : next.days;
+    const f = next.followUp === undefined ? followUpFilter : next.followUp;
     if (s) p.set("status", s);
     if (d && d !== "30") p.set("days", d);
+    if (f) p.set("followUp", f);
     const q = p.toString();
     return q ? `/admin/transactions?${q}` : "/admin/transactions";
   };
@@ -128,6 +152,31 @@ export default async function AdminTransactionsPage({
         </div>
       </div>
 
+      {/* Follow-up is a property of failed payments, so only offer to filter
+          by it where it means something. */}
+      {statusFilter === "failed" && (
+        <div className="flex flex-wrap items-center gap-2 text-xs">
+          <span className="text-slate-500">Follow-up:</span>
+          <Link
+            href={qs({ followUp: null })}
+            className={followUpFilter ? "btn-ghost px-2 py-0.5" : "btn-primary px-2 py-0.5"}
+          >
+            Any
+          </Link>
+          {Object.entries(FOLLOW_UP_LABELS).map(([value, label]) => (
+            <Link
+              key={value}
+              href={qs({ followUp: value })}
+              className={
+                followUpFilter === value ? "btn-primary px-2 py-0.5" : "btn-ghost px-2 py-0.5"
+              }
+            >
+              {label}
+            </Link>
+          ))}
+        </div>
+      )}
+
       <p className="text-sm text-slate-500">
         {charges.length} transaction{charges.length === 1 ? "" : "s"}
         {charges.length >= 500 ? " (latest 500)" : ""}
@@ -141,6 +190,7 @@ export default async function AdminTransactionsPage({
               <th>Clinic</th>
               <th>Amount</th>
               <th>Status</th>
+              <th>Follow-up</th>
               <th>Description</th>
               <th>When</th>
             </tr>
@@ -148,7 +198,7 @@ export default async function AdminTransactionsPage({
           <tbody>
             {charges.length === 0 && (
               <tr>
-                <td colSpan={6} className="text-center text-slate-500 py-10">
+                <td colSpan={7} className="text-center text-slate-500 py-10">
                   No {statusFilter ?? ""} transactions in this window.
                 </td>
               </tr>
@@ -189,6 +239,22 @@ export default async function AdminTransactionsPage({
                   >
                     {c.status}
                   </span>
+                </td>
+                <td>
+                  {c.status === "failed" ? (
+                    <FollowUpSelect
+                      chargeId={c.id}
+                      value={c.followUpStatus}
+                      note={c.followUpNote}
+                      otherOpenCount={Math.max(
+                        0,
+                        (openFailuresByCustomer.get(c.customerId) ?? 0) -
+                          (c.followUpStatus === "new" ? 1 : 0),
+                      )}
+                    />
+                  ) : (
+                    <span className="text-slate-400">—</span>
+                  )}
                 </td>
                 <td className="text-slate-600">{c.description || "—"}</td>
                 <td className="text-slate-500 text-xs">{formatDate(c.createdAt)}</td>

@@ -31,6 +31,7 @@ export function ProgramChart({
   const [signed, setSigned] = useState(signedDate ?? "");
   const [savingWeek, setSavingWeek] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [savedNote, setSavedNote] = useState<string | null>(null);
 
   // Re-sync to server truth whenever the server re-renders (after a
   // router.refresh()): recomputed week ranges when the signed date changes,
@@ -57,8 +58,16 @@ export function ProgramChart({
 
   async function saveSignedDate(value: string) {
     setError(null);
+    setSavedNote(null);
     try {
       await put({ signedDate: value || null });
+      // Moving the anchor re-dates every week, so say what happened rather
+      // than leaving the grid to silently redraw.
+      setSavedNote(
+        value
+          ? "Saved — week dates updated. Week numbers stay put; the notes on each week keep their week number."
+          : "Cleared — weeks now count from the first payment.",
+      );
       // Week ranges shift with the anchor — re-read from the server.
       startTransition(() => router.refresh());
     } catch (e) {
@@ -117,7 +126,7 @@ export function ProgramChart({
         <div className="flex flex-wrap items-end justify-between gap-4">
           <div>
             <label className="label" htmlFor="signed-date">
-              Program signed date
+              Week 1 start date
             </label>
             <input
               id="signed-date"
@@ -125,7 +134,15 @@ export function ProgramChart({
               className="input w-44"
               value={signed}
               disabled={!canEdit}
-              onChange={(e) => setSigned(e.target.value)}
+              // Save on change as well as blur: picking a date from the native
+              // calendar and then clicking straight into the grid used to save
+              // only on blur, which made the control look inert.
+              onChange={(e) => {
+                setSigned(e.target.value);
+                if ((e.target.value || "") !== (signedDate ?? "")) {
+                  saveSignedDate(e.target.value);
+                }
+              }}
               onBlur={(e) => {
                 if ((e.target.value || "") !== (signedDate ?? "")) {
                   saveSignedDate(e.target.value);
@@ -133,8 +150,10 @@ export function ProgramChart({
               }}
             />
             <p className="text-xs text-slate-400 mt-1">
-              Week 1 starts here. If unset, weeks count from the first payment.
+              The program&apos;s week 1 (the signed date). If unset, weeks count
+              from the first payment.
             </p>
+            {savedNote && <p className="text-xs text-green-600 mt-1">{savedNote}</p>}
           </div>
           <div className="flex gap-5 text-sm">
             <div>

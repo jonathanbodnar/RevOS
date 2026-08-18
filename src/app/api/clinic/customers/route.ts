@@ -4,6 +4,8 @@ import { prisma } from "@/lib/prisma";
 import { requireClinicApi } from "@/lib/api-guard";
 import { lunarpay, LunarPayError } from "@/lib/lunarpay";
 import { logAudit } from "@/lib/audit";
+import { storablePhone } from "@/lib/phone";
+import { rematchInBodyTestsForCustomer } from "@/lib/inbody-ingest";
 
 const Body = z.object({
   firstName: z.string().max(80).optional().default(""),
@@ -74,7 +76,7 @@ export async function POST(req: Request) {
       firstName: d.firstName || null,
       lastName: d.lastName || null,
       email: d.email || null,
-      phone: d.phone || null,
+      phone: storablePhone(d.phone || null),
       address: d.address || null,
       city: d.city || null,
       state: d.state || null,
@@ -90,6 +92,14 @@ export async function POST(req: Request) {
     targetType: "Customer",
     targetId: customer.id,
     metadata: { lunarpayCustomerId: lpCustomerId },
+  });
+
+  // The InBody scan usually lands at check-in, ~an hour before this record is
+  // created at checkout, so pairing found nothing at ingest time. Claim those
+  // stranded scans now. Fire-and-forget: never fail a customer create over it.
+  rematchInBodyTestsForCustomer(customer.id).catch((err) => {
+    // eslint-disable-next-line no-console
+    console.error("[inbody] re-match after customer.create failed", err);
   });
 
   return NextResponse.json({ data: { id: customer.id } }, { status: 201 });

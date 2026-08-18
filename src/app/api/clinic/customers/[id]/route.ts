@@ -6,6 +6,8 @@ import { requireStringParams } from "@/lib/route-params";
 import { logAudit } from "@/lib/audit";
 import { lunarpay } from "@/lib/lunarpay";
 import { encryptField } from "@/lib/encryption";
+import { storablePhone } from "@/lib/phone";
+import { rematchInBodyTestsForCustomer } from "@/lib/inbody-ingest";
 
 const PatchBody = z.object({
   implementorId: z.string().nullable().optional(),
@@ -81,10 +83,18 @@ export async function PATCH(
       ...(d.firstName !== undefined ? { firstName: d.firstName } : {}),
       ...(d.lastName !== undefined ? { lastName: d.lastName } : {}),
       ...(d.email !== undefined ? { email: d.email } : {}),
-      ...(d.phone !== undefined ? { phone: d.phone } : {}),
+      ...(d.phone !== undefined ? { phone: storablePhone(d.phone) } : {}),
       ...(d.isActive !== undefined ? { isActive: d.isActive } : {}),
     },
   });
+
+  // A corrected phone number can claim InBody scans that never paired.
+  if (d.phone !== undefined) {
+    rematchInBodyTestsForCustomer(id).catch((err) => {
+      // eslint-disable-next-line no-console
+      console.error("[inbody] re-match after phone change failed", err);
+    });
+  }
 
   await logAudit({
     actorId: session.user.id,
