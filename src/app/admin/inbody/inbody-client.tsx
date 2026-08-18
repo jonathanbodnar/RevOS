@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState, useTransition } from "react";
 import { formatDate } from "@/lib/format";
-import { formatPhone } from "@/lib/phone";
+import { formatPhone, storablePhone } from "@/lib/phone";
 import { coreMetrics, segmentalMetrics, type InBodyTestRow } from "@/lib/inbody-display";
 
 type Test = InBodyTestRow & {
@@ -21,6 +21,42 @@ type Test = InBodyTestRow & {
   customer: { id: string; name: string } | null;
   clinicName: string | null;
 };
+
+/**
+ * Phone that copies its bare digits on click.
+ *
+ * Displayed formatted because the table is read by humans, but what lands on
+ * the clipboard is the unpunctuated number — that's the form InBody's portal
+ * and the device itself use, so it can be pasted straight across.
+ */
+function CopyPhone({ phone }: { phone: string | null }) {
+  const [copied, setCopied] = useState(false);
+
+  if (!phone) return <>—</>;
+  const bare = storablePhone(phone) ?? phone;
+
+  async function copy() {
+    try {
+      await navigator.clipboard.writeText(bare);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1200);
+    } catch {
+      // Clipboard blocked (insecure context / permissions) — leave the label
+      // alone rather than claiming a copy that didn't happen.
+    }
+  }
+
+  return (
+    <button
+      type="button"
+      onClick={copy}
+      title={`Copy ${bare}`}
+      className="hover:underline decoration-dotted underline-offset-2 tabular-nums"
+    >
+      {copied ? <span className="text-green-600">Copied</span> : formatPhone(phone)}
+    </button>
+  );
+}
 
 const TABS = [
   { id: "queue", label: "Needs mapping" },
@@ -401,7 +437,9 @@ function FragmentRow({
           {t.testedAt ? formatDate(t.testedAt) : "—"}
           {t.equip && <div className="text-slate-400">{t.equip}</div>}
         </td>
-        <td className="text-slate-600 text-xs">{formatPhone(t.phone)}</td>
+        <td className="text-slate-600 text-xs">
+          <CopyPhone phone={t.phone} />
+        </td>
         <td>
           {t.customer ? (
             <Link
@@ -593,7 +631,8 @@ function MapModal({
         <div>
           <h3 className="text-sm font-semibold text-slate-900">Map InBody test to a customer</h3>
           <p className="text-xs text-slate-500 mt-0.5">
-            Test phone: {formatPhone(test.phone)} · {test.testedAt ? formatDate(test.testedAt) : "—"}
+            Test phone: <CopyPhone phone={test.phone} /> ·{" "}
+            {test.testedAt ? formatDate(test.testedAt) : "—"}
           </p>
         </div>
         <input
