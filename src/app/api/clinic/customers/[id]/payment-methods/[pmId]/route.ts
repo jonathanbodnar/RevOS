@@ -65,10 +65,13 @@ export async function DELETE(
   if (!params.ok) return params.response;
   const { id, pmId } = params.value;
 
+  // No lunarpayCustomerId requirement here: the CARD's vault owner is what
+  // matters, and a profile that lost its own LunarPay id must still be able to
+  // drop stale cards.
   const customer = await prisma.customer.findFirst({
     where: { id, clinicId },
   });
-  if (!customer || !customer.lunarpayCustomerId) {
+  if (!customer) {
     return NextResponse.json({ error: "Customer not found" }, { status: 404 });
   }
   const pm = await prisma.paymentMethod.findFirst({
@@ -78,15 +81,35 @@ export async function DELETE(
     return NextResponse.json({ error: "Payment method not found" }, { status: 404 });
   }
 
-  try {
-    await lunarpay.deletePaymentMethod(
-      customer.lunarpayCustomerId,
-      pm.lunarpayPaymentMethodId,
-    );
-  } catch (e) {
-    const status = e instanceof LunarPayError ? e.status : 500;
-    const msg = e instanceof Error ? e.message : "Failed to remove.";
-    return NextResponse.json({ error: msg }, { status });
+  // A vaulted card lives under exactly ONE LunarPay customer, and after a
+  // profile merge that is not this profile's own vault — which is why
+  // PaymentMethod.lunarpayCustomerId records the real owner. Deleting via the
+  // customer's id 404s at LunarPay's ownership-scoped route, which is what made
+  // merged patients' cards impossible to remove.
+  const vaultOwnerId = pm.lunarpayCustomerId ?? customer.lunarpayCustomerId;
+
+  let detached: "deleted" | "already-gone" | "unlinked" = "deleted";
+  if (vaultOwnerId) {
+    try {
+      await lunarpay.deletePaymentMethod(vaultOwnerId, pm.lunarpayPaymentMethodId);
+    } catch (e) {
+      // 404 means LunarPay has no such card under that vault — already deleted
+      // there, or vaulted somewhere we can no longer address. Every charge path
+      // resolves the owner with this same expression, so the row is provably
+      // unchargeable; deactivate locally rather than stranding the user with a
+      // card they can never remove. Anything else (401/403/5xx) still fails
+      // hard: marking a card gone while it stays live at LunarPay would be
+      // worse than the bug being fixed.
+      if (e instanceof LunarPayError && e.status === 404) {
+        detached = "already-gone";
+      } else {
+        const status = e instanceof LunarPayError ? e.status : 500;
+        const msg = e instanceof Error ? e.message : "Failed to remove.";
+        return NextResponse.json({ error: msg }, { status });
+      }
+    }
+  } else {
+    detached = "unlinked";
   }
 
   await prisma.paymentMethod.update({
@@ -101,7 +124,12 @@ export async function DELETE(
     action: "payment_method.delete",
     targetType: "PaymentMethod",
     targetId: pm.id,
+    metadata: {
+      lunarpayCustomerId: vaultOwnerId,
+      lunarpayPaymentMethodId: pm.lunarpayPaymentMethodId,
+      detached,
+    },
   });
 
-  return NextResponse.json({ ok: true });
+  return NextResponse.json({ ok: true, data: { detached } });
 }

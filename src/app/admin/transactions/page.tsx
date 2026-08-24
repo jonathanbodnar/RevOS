@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { requireSuperAdmin } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
-import { formatMoneyCents, formatDate } from "@/lib/format";
+import { formatMoneyCents, formatDate, formatCardLabel } from "@/lib/format";
 import { toCsv, csvMoney } from "@/lib/csv";
 import { DownloadCsvButton } from "@/components/download-csv-button";
 import { OpenCustomerLink } from "./open-customer-link";
@@ -48,6 +48,7 @@ export default async function AdminTransactionsPage({
     include: {
       customer: { select: { id: true, firstName: true, lastName: true, email: true } },
       clinic: { select: { id: true, name: true } },
+      paymentMethod: { select: { sourceType: true, lastDigits: true } },
     },
   });
 
@@ -69,12 +70,13 @@ export default async function AdminTransactionsPage({
     "Customer";
 
   const csv = toCsv(
-    ["Customer", "Email", "Clinic", "Amount", "Status", "Follow-up", "Note", "Description", "When"],
+    ["Customer", "Email", "Clinic", "Amount", "Card", "Status", "Follow-up", "Note", "Description", "When"],
     charges.map((c) => [
       nameOf(c),
       c.customer.email,
       c.clinic?.name ?? "—",
       csvMoney(c.amountCents),
+      formatCardLabel(c.paymentMethod) ?? "",
       c.status,
       c.status === "failed" ? c.followUpStatus : "",
       c.followUpNote,
@@ -189,6 +191,7 @@ export default async function AdminTransactionsPage({
               <th>Patient</th>
               <th>Clinic</th>
               <th>Amount</th>
+              <th>Card</th>
               <th>Status</th>
               <th>Follow-up</th>
               <th>Description</th>
@@ -198,7 +201,7 @@ export default async function AdminTransactionsPage({
           <tbody>
             {charges.length === 0 && (
               <tr>
-                <td colSpan={7} className="text-center text-slate-500 py-10">
+                <td colSpan={8} className="text-center text-slate-500 py-10">
                   No {statusFilter ?? ""} transactions in this window.
                 </td>
               </tr>
@@ -225,6 +228,11 @@ export default async function AdminTransactionsPage({
                   )}
                 </td>
                 <td>{formatMoneyCents(c.amountCents)}</td>
+                <td className="text-slate-600 text-xs whitespace-nowrap">
+                  {formatCardLabel(c.paymentMethod) ?? (
+                    <span className="text-slate-400">—</span>
+                  )}
+                </td>
                 <td>
                   <span
                     className={

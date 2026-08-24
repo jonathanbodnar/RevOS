@@ -109,7 +109,10 @@ export function PaymentMethods({
       { method: "DELETE" },
     );
     if (!res.ok) {
-      alert("Failed to remove.");
+      // Show what actually went wrong — a bare "Failed to remove." hid a
+      // LunarPay "not found" for weeks.
+      const d = (await res.json().catch(() => ({}))) as { error?: string };
+      alert(d.error || "Failed to remove.");
       return;
     }
     startTransition(() => router.refresh());

@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
+import { upsertVaultedCard } from "@/lib/payment-method-dedupe";
 import { requireClinicApi } from "@/lib/api-guard";
 import { customerScopeWhere } from "@/lib/roles";
 import { lunarpay, LunarPayError } from "@/lib/lunarpay";
@@ -64,16 +65,12 @@ export async function POST(
       setDefault,
     });
 
-    if (setDefault) {
-      await prisma.paymentMethod.updateMany({
-        where: { customerId: customer.id, isDefault: true },
-        data: { isDefault: false },
-      });
-    }
-
-    const pm = await prisma.paymentMethod.create({
-      data: {
-        customerId: customer.id,
+    // Re-adding a card already on file (commonly to renew an expiry) updates
+    // that row instead of leaving two identical cards in the wallet.
+    const upserted = await upsertVaultedCard({
+      customerId: customer.id,
+      setDefault: !!lp.data.isDefault || setDefault,
+      card: {
         lunarpayPaymentMethodId: lp.data.id,
         lunarpayCustomerId: customer.lunarpayCustomerId,
         sourceType: lp.data.sourceType,
@@ -81,8 +78,10 @@ export async function POST(
         nameHolder: lp.data.nameHolder ?? null,
         expMonth: lp.data.expMonth ?? null,
         expYear: lp.data.expYear ?? null,
-        isDefault: !!lp.data.isDefault || setDefault,
       },
+    });
+    const pm = await prisma.paymentMethod.findUniqueOrThrow({
+      where: { id: upserted.id },
     });
 
     await logAudit({
