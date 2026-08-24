@@ -69,7 +69,11 @@ export async function POST(
       { status: 400 },
     );
   }
-  if (!customer.lunarpayCustomerId) {
+  // Charge the vault that actually holds this card: after a profile merge the
+  // card lives under the merged-away customer's LunarPay id, and every other
+  // money path already resolves it this way.
+  const vaultOwnerId = pm.lunarpayCustomerId ?? customer.lunarpayCustomerId;
+  if (!vaultOwnerId) {
     return NextResponse.json(
       { error: "Customer is not synced to LunarPay" },
       { status: 400 },
@@ -83,7 +87,7 @@ export async function POST(
       : `[${clinicLabel}] Hold`;
 
     const lpCharge = await lunarpay.createCharge({
-      customerId: customer.lunarpayCustomerId,
+      customerId: vaultOwnerId,
       paymentMethodId: pm.lunarpayPaymentMethodId,
       amount: cents,
       description: desc,

@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
+import { upsertVaultedCard } from "@/lib/payment-method-dedupe";
 import { lunarpay, LunarPayError } from "@/lib/lunarpay";
 import { logAudit } from "@/lib/audit";
 import { requireStringParams } from "@/lib/route-params";
@@ -57,15 +58,13 @@ export async function POST(
       setDefault: true,
     });
 
-    // Clear the current default before setting the new one.
-    await prisma.paymentMethod.updateMany({
-      where: { customerId: customer.id, isDefault: true },
-      data: { isDefault: false },
-    });
-
-    await prisma.paymentMethod.create({
-      data: {
-        customerId: customer.id,
+    // Re-saving a card the patient already has on file updates that row rather
+    // than adding a second one for the same plastic (LunarPay hands back a new
+    // id every time, so nothing upstream catches this).
+    await upsertVaultedCard({
+      customerId: customer.id,
+      setDefault: true,
+      card: {
         lunarpayPaymentMethodId: lp.data.id,
         lunarpayCustomerId: customer.lunarpayCustomerId,
         sourceType: lp.data.sourceType,
@@ -73,7 +72,6 @@ export async function POST(
         nameHolder: lp.data.nameHolder ?? null,
         expMonth: lp.data.expMonth ?? null,
         expYear: lp.data.expYear ?? null,
-        isDefault: true,
       },
     });
     await prisma.checkoutSession.update({

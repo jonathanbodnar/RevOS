@@ -1,3 +1,17 @@
+/**
+ * "Card •••• 4242" / "Bank •••• 6789" for a charge's payment method.
+ *
+ * Reads `sourceType` off the PaymentMethod rather than `Charge.paymentMethodType`
+ * — the latter is null on roughly a fifth of rows, while the former is always
+ * populated on a linked card.
+ */
+export function formatCardLabel(
+  pm: { sourceType: string; lastDigits: string | null } | null | undefined,
+): string | null {
+  if (!pm) return null;
+  return `${pm.sourceType === "ach" ? "Bank" : "Card"} •••• ${pm.lastDigits ?? "????"}`;
+}
+
 export function formatMoneyCents(cents: number): string {
   const dollars = cents / 100;
   return new Intl.NumberFormat("en-US", {

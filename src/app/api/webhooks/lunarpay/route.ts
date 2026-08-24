@@ -798,7 +798,11 @@ async function handleSessionCompleted(p: CheckoutSessionCompletedPayload) {
       data: {
         customerId: customer.id,
         lunarpayPaymentMethodId: payment_method.id,
-        lunarpayCustomerId: customer.lunarpayCustomerId,
+        // The vault the card was actually saved into. When the Customer was
+        // resolved by email rather than by LunarPay id these differ, and
+        // stamping the profile's id here would poison every charge path that
+        // trusts this column.
+        lunarpayCustomerId: lpCustomer.id,
         sourceType: payment_method.type,
         lastDigits: payment_method.last4 ?? null,
         isDefault: isFirst,

@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
+import { upsertVaultedCard } from "@/lib/payment-method-dedupe";
 import { lunarpay, LunarPayError } from "@/lib/lunarpay";
 import { logAudit } from "@/lib/audit";
 import { requireStringParams } from "@/lib/route-params";
@@ -301,16 +302,13 @@ export async function POST(
       setDefault,
     });
 
-    if (setDefault) {
-      await prisma.paymentMethod.updateMany({
-        where: { customerId: customer.id, isDefault: true },
-        data: { isDefault: false },
-      });
-    }
-
-    const pm = await prisma.paymentMethod.create({
-      data: {
-        customerId: customer.id,
+    // A patient who already saved this card (e.g. via the update-card link)
+    // and then types it again here should update that row, not gain a second
+    // one — LunarPay returns a fresh id each time, so nothing else catches it.
+    const upserted = await upsertVaultedCard({
+      customerId: customer.id,
+      setDefault: !!lpPm.data.isDefault || setDefault,
+      card: {
         lunarpayPaymentMethodId: lpPm.data.id,
         lunarpayCustomerId: lpCustomerId,
         sourceType: lpPm.data.sourceType,
@@ -318,9 +316,10 @@ export async function POST(
         nameHolder: lpPm.data.nameHolder ?? null,
         expMonth: lpPm.data.expMonth ?? null,
         expYear: lpPm.data.expYear ?? null,
-        isDefault: !!lpPm.data.isDefault || setDefault,
-        isActive: true,
       },
+    });
+    const pm = await prisma.paymentMethod.findUniqueOrThrow({
+      where: { id: upserted.id },
     });
 
     const clinicLabel = sess.clinic?.name ?? "RevOS";

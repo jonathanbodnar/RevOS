@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { requireClinicAdminContext, isSuperAdmin, getSession } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
-import { formatMoneyCents, formatDate } from "@/lib/format";
+import { formatMoneyCents, formatDate, formatCardLabel } from "@/lib/format";
 import { RefundButton } from "../customers/[id]/refund-button";
 import { toCsv, csvMoney } from "@/lib/csv";
 import { DownloadCsvButton } from "@/components/download-csv-button";
@@ -26,7 +26,10 @@ export default async function ChargesPage({
     where: { clinicId, ...(statusFilter ? { status: statusFilter } : {}) },
     orderBy: { createdAt: "desc" },
     take: 500,
-    include: { customer: true },
+    include: {
+      customer: true,
+      paymentMethod: { select: { sourceType: true, lastDigits: true } },
+    },
   });
 
   const csv = toCsv(
@@ -35,6 +38,7 @@ export default async function ChargesPage({
       "Email",
       "Amount",
       "Refunded",
+      "Card",
       "Status",
       "Description",
       "When",
@@ -47,6 +51,7 @@ export default async function ChargesPage({
       c.customer.email,
       csvMoney(c.amountCents),
       csvMoney(c.refundedCents),
+      formatCardLabel(c.paymentMethod) ?? "",
       c.status,
       c.description,
       c.createdAt.toISOString(),
@@ -92,6 +97,7 @@ export default async function ChargesPage({
               <th>Customer</th>
               <th>Amount</th>
               <th>Refunded</th>
+              <th>Card</th>
               <th>Status</th>
               <th>Description</th>
               <th>When</th>
@@ -102,7 +108,7 @@ export default async function ChargesPage({
             {charges.length === 0 && (
               <tr>
                 <td
-                  colSpan={canRefund ? 7 : 6}
+                  colSpan={canRefund ? 8 : 7}
                   className="text-center text-slate-500 py-10"
                 >
                   {statusFilter ? `No ${statusFilter} transactions.` : "No transactions yet."}
@@ -130,6 +136,11 @@ export default async function ChargesPage({
                   <td>{formatMoneyCents(c.amountCents)}</td>
                   <td>
                     {c.refundedCents ? formatMoneyCents(c.refundedCents) : "—"}
+                  </td>
+                  <td className="text-slate-600 text-xs whitespace-nowrap">
+                    {formatCardLabel(c.paymentMethod) ?? (
+                      <span className="text-slate-400">—</span>
+                    )}
                   </td>
                   <td>
                     <span

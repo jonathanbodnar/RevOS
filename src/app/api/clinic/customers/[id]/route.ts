@@ -8,6 +8,11 @@ import { lunarpay } from "@/lib/lunarpay";
 import { encryptField } from "@/lib/encryption";
 import { storablePhone } from "@/lib/phone";
 import { rematchInBodyTestsForCustomer } from "@/lib/inbody-ingest";
+import {
+  cancelBillingForCustomer,
+  pendingBillingForCustomer,
+  type CancelOutcome,
+} from "@/lib/deactivate-billing";
 
 const PatchBody = z.object({
   implementorId: z.string().nullable().optional(),
@@ -17,6 +22,10 @@ const PatchBody = z.object({
   email: z.string().email().max(255).nullable().optional(),
   phone: z.string().max(40).nullable().optional(),
   isActive: z.boolean().optional(),
+  // Opt-in, only meaningful with isActive:false. Cancelling recurring billing
+  // is irreversible at LunarPay, so it never happens as a side effect — the UI
+  // counts what would be cancelled, a human confirms, and then sets this.
+  cancelPendingPayments: z.boolean().optional(),
 });
 
 export async function PATCH(
@@ -88,6 +97,23 @@ export async function PATCH(
     },
   });
 
+  // Deactivating does not stop money on its own: LunarPay owns the schedule,
+  // and the nightly reconciler would overwrite a local-only cancel anyway. Only
+  // acts when the caller explicitly asked, since LunarPay has no un-cancel.
+  let billingCancelled: CancelOutcome | null = null;
+  if (d.isActive === false && d.cancelPendingPayments) {
+    billingCancelled = await cancelBillingForCustomer(id);
+    await logAudit({
+      actorId: session.user.id,
+      actorRole: session.user.originalRole,
+      clinicId,
+      action: "customer.deactivate.cancel_billing",
+      targetType: "Customer",
+      targetId: id,
+      metadata: billingCancelled,
+    });
+  }
+
   // A corrected phone number can claim InBody scans that never paired.
   if (d.phone !== undefined) {
     rematchInBodyTestsForCustomer(id).catch((err) => {
@@ -117,7 +143,41 @@ export async function PATCH(
     },
   });
 
-  return NextResponse.json({ data: { id: updated.id } });
+  return NextResponse.json({ data: { id: updated.id }, billingCancelled });
+}
+
+/**
+ * What recurring billing is still live for this patient. The deactivate UI
+ * calls this first so it can say "this will cancel N upcoming payments" before
+ * anyone commits to something LunarPay cannot undo.
+ */
+export async function GET(
+  _req: Request,
+  ctx: { params: Promise<{ id: string }> },
+) {
+  const guard = await requireSuperAdminClinicApi();
+  if ("error" in guard) return guard.error;
+  const { clinicId } = guard;
+
+  const params = await requireStringParams(ctx.params, ["id"] as const);
+  if (!params.ok) return params.response;
+  const { id } = params.value;
+
+  const customer = await prisma.customer.findFirst({ where: { id, clinicId } });
+  if (!customer) {
+    return NextResponse.json({ error: "Customer not found" }, { status: 404 });
+  }
+
+  const pending = await pendingBillingForCustomer(id);
+  return NextResponse.json({
+    subscriptions: pending.subscriptions.length,
+    schedules: pending.schedules.length,
+    nextPaymentOn:
+      pending.subscriptions
+        .map((s) => s.nextPaymentOn)
+        .filter((d): d is Date => Boolean(d))
+        .sort((a, b) => a.getTime() - b.getTime())[0] ?? null,
+  });
 }
 
 export async function DELETE(
