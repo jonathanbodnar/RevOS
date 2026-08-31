@@ -382,6 +382,12 @@ model Subscription {
   cancelReason         String? // manual | auto_failed | webhook
   consecutiveFailures  Int? // declines before LunarPay gave up (auto_failed)
 
+  // Set when this subscription replaces one that died. LunarPay cannot un-cancel
+  // (its cancel is a DELETE), so "restarting" always mints a new subscription —
+  // this link is what lets reporting read that as recovered revenue rather than
+  // as churn plus an unrelated new sale.
+  restartedFromId String?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -667,4 +673,14 @@ model ChatLog {
   @@index([userId])
   @@index([clinicId])
   @@index([createdAt])
+}
+
+/// One row per restart attempt, claimed before any billing call.
+/// The unique constraint — not the check-then-act reads in the route — is what
+/// actually prevents two concurrent restarts from creating two live
+/// subscriptions for the same patient. Claiming costs nothing to lose.
+model SubscriptionRestartClaim {
+  id              String   @id @default(cuid())
+  restartedFromId String   @unique
+  createdAt       DateTime @default(now())
 }

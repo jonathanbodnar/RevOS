@@ -5,6 +5,7 @@ import { formatMoneyCents, formatDate, formatCardLabel } from "@/lib/format";
 import { toCsv, csvMoney } from "@/lib/csv";
 import { DownloadCsvButton } from "@/components/download-csv-button";
 import { OpenCustomerLink } from "../transactions/open-customer-link";
+import { RestartButton } from "./restart-button";
 
 export const dynamic = "force-dynamic";
 
@@ -54,7 +55,27 @@ export default async function AdminSubscriptionsPage({
       orderBy: [{ cancelledAt: "desc" }, { nextPaymentOn: "asc" }],
       take: 500,
       include: {
-        customer: { select: { id: true, firstName: true, lastName: true, email: true } },
+        customer: {
+          select: {
+            id: true,
+            firstName: true,
+            lastName: true,
+            email: true,
+            paymentMethods: {
+              where: { isActive: true },
+              select: {
+                id: true,
+                sourceType: true,
+                lastDigits: true,
+                expMonth: true,
+                expYear: true,
+                isDefault: true,
+              },
+              orderBy: [{ isDefault: "desc" }, { createdAt: "desc" }],
+            },
+            subscriptions: { where: { status: "active" }, select: { id: true } },
+          },
+        },
         clinic: { select: { id: true, name: true } },
         paymentMethod: { select: { sourceType: true, lastDigits: true } },
       },
@@ -71,6 +92,25 @@ export default async function AdminSubscriptionsPage({
 
   const countBy = Object.fromEntries(counts.map((c) => [c.k, c.n])) as Record<TabId, number>;
   const totalMonthly = subs.reduce((sum, s) => sum + monthlyCents(s.amountCents, s.frequency), 0);
+
+  // A card is unusable once its expiry has passed — surfacing that in the
+  // dialog beats a decline at restart time.
+  const nowYm = new Date().toISOString().slice(2, 7).replace("-", ""); // "YYMM"
+  const isExpired = (m: string | null, y: string | null) => {
+    if (!m || !y) return false;
+    const ym = `${y.padStart(2, "0").slice(-2)}${m.padStart(2, "0")}`;
+    return ym < nowYm;
+  };
+  // Default the first payment to one cycle out, so a restart never lands on a
+  // date the operator did not intend.
+  const defaultStart = (frequency: string) => {
+    const d = new Date();
+    if (frequency === "weekly") d.setUTCDate(d.getUTCDate() + 7);
+    else if (frequency === "quarterly") d.setUTCMonth(d.getUTCMonth() + 3);
+    else if (frequency === "yearly") d.setUTCFullYear(d.getUTCFullYear() + 1);
+    else d.setUTCMonth(d.getUTCMonth() + 1);
+    return d.toISOString().slice(0, 10);
+  };
 
   const nameOf = (s: (typeof subs)[number]) =>
     [s.customer.firstName, s.customer.lastName].filter(Boolean).join(" ") ||
@@ -157,12 +197,13 @@ export default async function AdminSubscriptionsPage({
               <th>Card</th>
               <th>Status</th>
               <th>Next / ended</th>
+              <th className="text-right pr-3">Actions</th>
             </tr>
           </thead>
           <tbody>
             {subs.length === 0 && (
               <tr>
-                <td colSpan={6} className="text-center text-slate-500 py-10">
+                <td colSpan={7} className="text-center text-slate-500 py-10">
                   Nothing here.
                 </td>
               </tr>
@@ -227,6 +268,28 @@ export default async function AdminSubscriptionsPage({
                     : s.cancelledAt
                       ? formatDate(s.cancelledAt)
                       : "—"}
+                </td>
+                <td className="text-right pr-3">
+                  {s.status === "cancelled" &&
+                    s.customer.subscriptions.length === 0 && (
+                      <RestartButton
+                        subscriptionId={s.id}
+                        patient={nameOf(s)}
+                        amountLabel={formatMoneyCents(s.amountCents)}
+                        frequency={s.frequency}
+                        defaultStartOn={defaultStart(s.frequency)}
+                        cards={s.customer.paymentMethods.map((pm) => ({
+                          id: pm.id,
+                          label: `${pm.sourceType === "ach" ? "Bank" : "Card"} •••• ${pm.lastDigits ?? "????"}${
+                            pm.expMonth && pm.expYear
+                              ? ` exp ${pm.expMonth}/${pm.expYear}`
+                              : ""
+                          }`,
+                          isDefault: pm.isDefault,
+                          expired: isExpired(pm.expMonth, pm.expYear),
+                        }))}
+                      />
+                    )}
                 </td>
               </tr>
             ))}
