@@ -23,7 +23,11 @@ export async function POST(
     await lunarpay.cancelSubscription(sub.lunarpaySubscriptionId);
     await prisma.subscription.update({
       where: { id: sub.id },
-      data: { status: "cancelled" },
+      data: {
+        status: "cancelled",
+        cancelledAt: new Date(),
+        cancelReason: "manual",
+      },
     });
     await logAudit({
       actorId: session.user.id,
