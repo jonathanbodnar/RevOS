@@ -8,13 +8,31 @@ import { DownloadCsvButton } from "@/components/download-csv-button";
 
 export const dynamic = "force-dynamic";
 
-export default async function SubscriptionsPage() {
+const SUB_TABS = {
+  all: { label: "All", where: {} },
+  active: { label: "Active", where: { status: "active" } },
+  lost: {
+    label: "Lost to failed cards",
+    where: { status: "cancelled", cancelReason: "auto_failed" },
+  },
+  cancelled: { label: "Cancelled", where: { status: "cancelled" } },
+} as const;
+
+type SubTab = keyof typeof SUB_TABS;
+
+export default async function SubscriptionsPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ tab?: string }>;
+}) {
   const { clinicId } = await requireClinicAdminContext();
   const session = await getSession();
   const canCancel = isSuperAdmin(session);
+  const { tab: rawTab } = await searchParams;
+  const tab: SubTab = rawTab && rawTab in SUB_TABS ? (rawTab as SubTab) : "all";
 
   const subs = await prisma.subscription.findMany({
-    where: { clinicId },
+    where: { clinicId, ...SUB_TABS[tab].where },
     orderBy: { createdAt: "desc" },
     include: { customer: true },
   });
@@ -44,11 +62,24 @@ export default async function SubscriptionsPage() {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <p className="text-sm text-slate-500">
-          {subs.length} subscription{subs.length === 1 ? "" : "s"}
-        </p>
-        <DownloadCsvButton csv={csv} filename="subscriptions.csv" />
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex flex-wrap items-center gap-2 text-sm">
+          {(Object.keys(SUB_TABS) as SubTab[]).map((k) => (
+            <Link
+              key={k}
+              href={`/clinic/subscriptions?tab=${k}`}
+              className={tab === k ? "btn-primary px-3 py-1" : "btn-ghost px-3 py-1"}
+            >
+              {SUB_TABS[k].label}
+            </Link>
+          ))}
+        </div>
+        <div className="flex items-center gap-3">
+          <p className="text-sm text-slate-500">
+            {subs.length} subscription{subs.length === 1 ? "" : "s"}
+          </p>
+          <DownloadCsvButton csv={csv} filename={`subscriptions-${tab}.csv`} />
+        </div>
       </div>
       <div className="card overflow-hidden">
         <table className="table">

@@ -283,12 +283,20 @@ export async function reconcileRecurringCharges(
       if (statusChanged || nextChanged || amountChanged) {
         summary.subscriptionsAdvanced += 1;
         if (!dryRun) {
+          const becameCancelled =
+            statusChanged && data?.status === "cancelled" && !sub.cancelledAt;
           await prisma.subscription.update({
             where: { id: sub.id },
             data: {
               amountCents,
               nextPaymentOn: lpNext ?? sub.nextPaymentOn,
               status: data?.status ?? sub.status,
+              // Noticing a cancel here means no webhook told us — LunarPay
+              // ended it on their side. Stamp it so it isn't left blank and
+              // mistaken for a deliberate cancellation.
+              ...(becameCancelled
+                ? { cancelledAt: new Date(), cancelReason: "auto_failed" }
+                : {}),
             },
           });
         }

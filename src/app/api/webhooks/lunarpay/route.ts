@@ -687,7 +687,15 @@ async function handleSubscriptionCancelled(payload: WebhookEnvelope) {
 
   await prisma.subscription.update({
     where: { id: sub.id },
-    data: { status: "cancelled" },
+    data: {
+      status: "cancelled",
+      cancelledAt: new Date(),
+      // LunarPay only cancels a subscription itself after it gives up
+      // retrying a declining card — recorded so this shows up as lost
+      // revenue rather than looking like a deliberate cancellation.
+      cancelReason: "auto_failed",
+      consecutiveFailures: data.consecutive_failures ?? null,
+    },
   });
 
   await logAudit({
