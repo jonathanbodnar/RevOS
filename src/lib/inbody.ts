@@ -232,6 +232,37 @@ function authHeaders(account?: string | null): Record<string, string> {
   };
 }
 
+/**
+ * Log what we called InBody *with* the first time a 401 shows up, then stay
+ * quiet for an hour.
+ *
+ * InBody returns one generic 401 for three different causes — an IP that isn't
+ * on their allowlist, a wrong key, and an exhausted daily quota — so the error
+ * alone is undiagnosable, and this went unexplained for two months. Scans
+ * arrive daily, so emitting the egress IP and a key fingerprint on failure
+ * turns the next one into the answer without anyone having to go looking.
+ */
+let lastDiagnosticAt = 0;
+const DIAGNOSTIC_INTERVAL_MS = 60 * 60 * 1000;
+
+function reportUnauthorized(path: string, account?: string | null): void {
+  const now = Date.now();
+  if (now - lastDiagnosticAt < DIAGNOSTIC_INTERVAL_MS) return;
+  lastDiagnosticAt = now;
+  // Fire-and-forget so a diagnostic never delays or breaks ingestion.
+  void detectEgressIp()
+    .then((ip) => {
+      // eslint-disable-next-line no-console
+      console.error(
+        `[inbody] 401 on ${path} — calling as account="${(account || ACCOUNT || "").trim() || "(unset)"}" ` +
+          `key=${inbodyKeyFingerprint()} from egress IP ${ip ?? "(undetermined)"}. ` +
+          `If that IP is not registered in the LookinBody portal (SETUP → server IP), that is the cause; ` +
+          `otherwise compare the key fingerprint with the portal's.`,
+      );
+    })
+    .catch(() => null);
+}
+
 async function post(
   path: string,
   body: unknown,
@@ -253,6 +284,7 @@ async function post(
   if (!res.ok) {
     // eslint-disable-next-line no-console
     console.error(`[inbody] POST ${path} → ${res.status}`, text.slice(0, 500));
+    if (res.status === 401) reportUnauthorized(path, account);
   }
   return { ok: res.ok, status: res.status, json, text };
 }
