@@ -9,6 +9,7 @@ import {
   hasAnyMetric,
   inbodyAccount,
   inbodyCanFetch,
+  inbodyGetDateTimes,
   inbodyGetTodayMeasurements,
   mergeMetrics,
   normalizeInBodyResult,
@@ -370,7 +371,96 @@ export async function rematchInBodyTestsForCustomer(
     },
     data: { customerId, clinicId: customer.clinicId, matchStatus: "auto" },
   });
+
+  // Now that we know who this is, pull anything LookinBody has for them that
+  // never arrived by webhook, and fill in any scan still missing its metrics.
+  await backfillCustomerScansFromInBody(customerId).catch(() => null);
+  await refetchMissingScansForCustomer(customerId).catch(() => null);
+
   return count;
+}
+
+/**
+ * Fetch metrics for a customer's scans that don't have them yet. Skips the ones
+ * InBody has already said it holds no data for, so this never re-burns quota on
+ * a lookup that cannot succeed.
+ */
+export async function refetchMissingScansForCustomer(
+  customerId: string,
+): Promise<number> {
+  if (!inbodyCanFetch()) return 0;
+  const pending = await prisma.inBodyTest.findMany({
+    where: {
+      customerId,
+      resultStatus: { notIn: ["fetched", "matched_no_data"] },
+    },
+    select: { id: true },
+    take: 50,
+  });
+  let fetched = 0;
+  for (const t of pending) {
+    try {
+      const updated = await refetchInBodyTest(t.id);
+      if (updated?.resultStatus === "fetched") fetched++;
+    } catch {
+      // Keep going — one failure shouldn't strand the rest.
+    }
+  }
+  return fetched;
+}
+
+/**
+ * Pull a customer's whole InBody history straight from LookinBody.
+ *
+ * Webhooks only tell us about scans taken while the integration was healthy, so
+ * a patient can have months of history on the device that RevOS has never seen
+ * — asking for their datetimes directly is the only way to find those. Called
+ * when a customer is first paired, which is exactly the moment their back
+ * history becomes worth having.
+ *
+ * Cost is one call to list, then two per scan we don't already hold, so an
+ * already-synced patient costs a single call.
+ */
+export async function backfillCustomerScansFromInBody(
+  customerId: string,
+): Promise<{ found: number; ingested: number; error: string | null }> {
+  const customer = await prisma.customer.findUnique({
+    where: { id: customerId },
+    select: { id: true, phone: true, clinicId: true },
+  });
+  const phone = normalizePhone(customer?.phone);
+  if (!customer?.clinicId || !phone || phone.length !== 10) {
+    return { found: 0, ingested: 0, error: null };
+  }
+  if (!inbodyCanFetch()) return { found: 0, ingested: 0, error: null };
+
+  const { datetimes, error } = await inbodyGetDateTimes({ phone });
+  if (error) return { found: 0, ingested: 0, error };
+
+  // Anything already stored for this phone, so a re-run costs nothing extra.
+  const existing = await prisma.inBodyTest.findMany({
+    where: { phoneNormalized: phone },
+    select: { dedupeKey: true },
+  });
+  const seen = new Set(
+    existing.map((t) => (t.dedupeKey.split(":").at(-1) || "").replace(/\D/g, "")),
+  );
+
+  let ingested = 0;
+  for (const dt of datetimes) {
+    if (seen.has(dt.replace(/\D/g, ""))) continue;
+    try {
+      await ingestInBodyNotification({
+        Account: inbodyAccount() || undefined,
+        TelHP: customer.phone ?? phone,
+        TestDatetimes: dt,
+      });
+      ingested++;
+    } catch {
+      // One bad scan must not abandon the rest of the history.
+    }
+  }
+  return { found: datetimes.length, ingested, error: null };
 }
 
 /**
