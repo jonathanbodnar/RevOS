@@ -99,6 +99,7 @@ model Clinic {
   careCredits      CareCredit[]
   payouts          ClinicPayout[]
   inbodyTests      InBodyTest[]
+  inbodyDevices    InBodyDevice[]
   chartWeeks       ChartWeek[]
   kpis             KPI[]
   kpiFlags         KPIFlag[]
@@ -683,4 +684,22 @@ model SubscriptionRestartClaim {
   id              String   @id @default(cuid())
   restartedFromId String   @unique
   createdAt       DateTime @default(now())
+}
+
+/// A physical InBody unit, keyed by the serial the device stamps on every scan.
+/// One unit lives at one clinic, which is what lets an UNPAIRED scan still say
+/// where it came from — without this, a walk-in who never became a patient is
+/// just an orphan row with no location. Rows are created automatically the
+/// first time a serial appears; a super admin assigns the clinic.
+model InBodyDevice {
+  id         String    @id @default(cuid())
+  serial     String    @unique
+  clinicId   String?
+  clinic     Clinic?   @relation(fields: [clinicId], references: [id], onDelete: SetNull)
+  label      String?
+  lastSeenAt DateTime?
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+
+  @@index([clinicId])
 }

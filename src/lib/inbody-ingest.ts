@@ -48,6 +48,22 @@ async function findCustomersByPhone(
   `);
 }
 
+/**
+ * The clinic a physical InBody unit lives at, registering the serial the first
+ * time it's seen so a new machine shows up needing assignment rather than
+ * silently producing unattributable scans. Returns null until a super admin
+ * assigns it.
+ */
+async function clinicIdForDevice(serial: string): Promise<string | null> {
+  const device = await prisma.inBodyDevice.upsert({
+    where: { serial },
+    create: { serial, lastSeenAt: new Date() },
+    update: { lastSeenAt: new Date() },
+    select: { clinicId: true },
+  });
+  return device.clinicId;
+}
+
 // Reject physiologically-impossible values (negative, zero, or absurd) rather
 // than storing garbage that would skew charts and KPIs. Out-of-range → null.
 function inRange(v: number | null, min: number, max: number): number | null {
@@ -118,6 +134,14 @@ export async function ingestInBodyNotification(payload: InBodyWebhookPayload) {
     } else if (matches.length > 1) {
       matchStatus = "ambiguous";
     }
+  }
+
+  // ── Attribute by device when there's no patient to attribute through ──
+  // A unit sits at one clinic, so its serial says where the scan happened even
+  // when the person never became a patient. Without this an unpaired scan is a
+  // location-less orphan and staff can't tell whose walk-in it was.
+  if (!clinicId && equipSerial) {
+    clinicId = await clinicIdForDevice(equipSerial);
   }
 
   // ── Fetch the full result set (skipped gracefully if unconfigured) ──

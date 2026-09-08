@@ -2,6 +2,7 @@ import { prisma } from "@/lib/prisma";
 import { requireSuperAdmin } from "@/lib/session";
 import { inbodyCanFetch, inbodyConfigured } from "@/lib/inbody";
 import { InBodyClient } from "./inbody-client";
+import { DevicesCard } from "./devices-card";
 
 export const dynamic = "force-dynamic";
 
@@ -43,6 +44,23 @@ export default async function InBodyAdminPage({
       customer: { select: { id: true, firstName: true, lastName: true, email: true } },
       clinic: { select: { name: true } },
     },
+  });
+
+  const [devices, clinics] = await Promise.all([
+    prisma.inBodyDevice.findMany({
+      orderBy: [{ clinicId: "asc" }, { serial: "asc" }],
+      include: { clinic: { select: { name: true } } },
+    }),
+    prisma.clinic.findMany({ orderBy: { name: "asc" }, select: { id: true, name: true } }),
+  ]);
+  const deviceStats = await prisma.inBodyTest.groupBy({
+    by: ["equipSerial"],
+    _count: { _all: true },
+  });
+  const unattributedBySerial = await prisma.inBodyTest.groupBy({
+    by: ["equipSerial"],
+    where: { clinicId: null },
+    _count: { _all: true },
   });
 
   const [total, unmatched, queueCount, needsDataCount, mappedCount, dismissedCount] =
@@ -93,6 +111,21 @@ export default async function InBodyAdminPage({
         </div>
       </div>
 
+      <DevicesCard
+        clinics={clinics}
+        devices={devices.map((d) => ({
+          id: d.id,
+          serial: d.serial,
+          label: d.label,
+          clinicId: d.clinicId,
+          clinicName: d.clinic?.name ?? null,
+          lastSeenAt: d.lastSeenAt ? d.lastSeenAt.toISOString() : null,
+          scans: deviceStats.find((s) => s.equipSerial === d.serial)?._count._all ?? 0,
+          unattributed:
+            unattributedBySerial.find((s) => s.equipSerial === d.serial)?._count._all ?? 0,
+        }))}
+      />
+
       <InBodyClient
         webhookUrl={`${webhookBase.replace(/\/$/, "")}/api/webhooks/inbody`}
         canFetch={canFetch}
@@ -111,6 +144,7 @@ export default async function InBodyAdminPage({
           dismissedReason: t.dismissedReason,
           testedAt: t.testedAt ? t.testedAt.toISOString() : null,
           equip: t.equip,
+          equipSerial: t.equipSerial,
           phone: t.phone,
           account: t.account,
           matchStatus: t.matchStatus,

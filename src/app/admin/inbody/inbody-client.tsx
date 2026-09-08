@@ -11,6 +11,7 @@ type Test = InBodyTestRow & {
   id: string;
   testedAt: string | null;
   equip: string | null;
+  equipSerial: string | null;
   phone: string | null;
   account: string | null;
   matchStatus: string;
@@ -465,8 +466,13 @@ function FragmentRow({
           ) : (
             <span className="badge-yellow">unmatched</span>
           )}
+          {/* Present even on an unmatched scan: it comes from the device's
+              clinic, so staff can see whose walk-in this was. */}
           {t.clinicName && (
-            <div className="text-xs text-slate-400">{t.clinicName}</div>
+            <div className="text-xs text-slate-400">
+              {t.clinicName}
+              {!t.customer && t.equipSerial ? ` · ${t.equipSerial}` : ""}
+            </div>
           )}
         </td>
         <td className="text-slate-600 text-xs">{summary}</td>
