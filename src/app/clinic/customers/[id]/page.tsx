@@ -28,6 +28,7 @@ import { CustomerTabs } from "./customer-tabs";
 import { InBodyTab } from "./inbody-tab";
 import { ProgramChart, type ChartWeekRow } from "./program-chart";
 import { formatDateOnly, parsePaymentsJson } from "@/lib/csv";
+import { kgToLbs } from "@/lib/inbody-display";
 import {
   programWeekOf,
   weekBounds,
@@ -241,7 +242,7 @@ export default async function CustomerDetailPage({
       const s = inWeek[0];
       if (s) {
         const parts = [
-          s.weightKg != null ? `${s.weightKg.toFixed(1)} kg` : null,
+          s.weightKg != null ? `${kgToLbs(s.weightKg).toFixed(1)} lbs` : null,
           s.bmi != null ? `${s.bmi.toFixed(1)} BMI` : null,
           s.pbf != null ? `${s.pbf.toFixed(1)}% BF` : null,
         ].filter(Boolean);

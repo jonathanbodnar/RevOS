@@ -30,6 +30,8 @@ export async function POST(req: Request) {
       scanned: summary.scanned,
       fetched: summary.fetched,
       mapped: summary.mapped,
+      remaining: summary.remaining,
+      stoppedEarly: summary.stoppedEarly,
       errorCount: summary.errors.length,
     },
   });

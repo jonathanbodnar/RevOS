@@ -11,9 +11,11 @@
  *   days_since_last_charge   days since the last paid charge
  *   weeks_since_last_scan    weeks since the most recent InBody scan
  *   body_fat_pct_change      latest − earliest %body-fat within the window
- *   weight_change_kg         latest − earliest weight (kg) within the window
+ *   weight_change_kg         latest − earliest weight within the window, in LBS
+ *                            (stored kg; key keeps its historical name)
  */
 import { prisma } from "./prisma";
+import { kgToLbs } from "./inbody-display";
 
 export type Comparison = "gt" | "gte" | "lt" | "lte";
 
@@ -79,7 +81,12 @@ function computeMetric(
       // scans are newest-first: latest − earliest
       const latest = pick(inWindow[0])!;
       const earliest = pick(inWindow[inWindow.length - 1])!;
-      return latest - earliest;
+      const delta = latest - earliest;
+      // Weight is stored in kg but entered and displayed in pounds, so the
+      // delta must be converted before it meets a pounds threshold. (The
+      // metric key keeps its original "_kg" name — it is a stored value on
+      // existing KPI rows and renaming it would orphan them.)
+      return metric === "weight_change_kg" ? kgToLbs(delta) : delta;
     }
     default:
       return null;
