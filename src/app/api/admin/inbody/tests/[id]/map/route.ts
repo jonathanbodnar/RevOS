@@ -2,7 +2,11 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { requireSuperAdminApi } from "@/lib/api-guard";
 import { prisma } from "@/lib/prisma";
-import { refetchInBodyTest } from "@/lib/inbody-ingest";
+import {
+  refetchInBodyTest,
+  backfillCustomerScansFromInBody,
+  refetchMissingScansForCustomer,
+} from "@/lib/inbody-ingest";
 import { logAudit } from "@/lib/audit";
 
 export const dynamic = "force-dynamic";
@@ -67,8 +71,12 @@ export async function POST(
     },
   });
 
-  // Best-effort: try to pull the metrics now that we know the customer.
+  // Best-effort: pull this scan's metrics, then the rest of the patient's
+  // LookinBody history — mapping by hand is the same moment of "we now know
+  // who this is" as an automatic pairing.
   await refetchInBodyTest(id).catch(() => null);
+  await backfillCustomerScansFromInBody(customer.id).catch(() => null);
+  await refetchMissingScansForCustomer(customer.id).catch(() => null);
 
   await logAudit({
     actorId: guard.session.user.id ?? null,
