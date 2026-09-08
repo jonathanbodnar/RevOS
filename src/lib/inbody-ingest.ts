@@ -138,7 +138,11 @@ export async function ingestInBodyNotification(payload: InBodyWebhookPayload) {
     if (fetched.error) {
       fetchError = fetched.error;
       metrics = hasAnyMetric(webhookMetrics) ? webhookMetrics : { ...EMPTY_METRICS };
-      resultStatus = hasAnyMetric(metrics) ? "fetched" : "error";
+      resultStatus = hasAnyMetric(metrics)
+        ? "fetched"
+        : isPermanentlyUnavailable(fetched.error)
+          ? "matched_no_data"
+          : "error";
       if (fetched.raw != null) rawJson = safeStringify(fetched.raw);
     } else {
       metrics = hasAnyMetric(fetched.metrics) ? fetched.metrics : webhookMetrics;
@@ -259,7 +263,17 @@ export async function refetchInBodyTest(testId: string) {
     });
     if (fetched.error) {
       fetchError = fetched.error;
-      resultStatus = storedMetricsAvailable ? "fetched" : "error";
+      // A 400 "No matching data" is InBody's definitive answer that it holds
+      // no record for this phone + datetime — old scans purged on their side,
+      // or a device whose data never reached this account. Retrying can never
+      // succeed, so park it as matched_no_data instead of leaving it as an
+      // error that every future backfill re-attempts and every screen shows
+      // as a failure.
+      resultStatus = storedMetricsAvailable
+        ? "fetched"
+        : isPermanentlyUnavailable(fetched.error)
+          ? "matched_no_data"
+          : "error";
     } else {
       metrics = fetched.metrics;
       rawJson = fetched.raw != null ? safeStringify(fetched.raw) : rawJson;
@@ -461,22 +475,58 @@ export async function renormalizeStoredInBodyResults(
   return { scanned: tests.length, updated, unreadable, errors };
 }
 
+/**
+ * True when InBody has told us it holds no record for this lookup, as opposed
+ * to a transient failure. Their 400 carries "No matching data" (full endpoint)
+ * or "Invalid or missing parameters" (abbreviated endpoint) — both mean the
+ * phone + datetime pair does not exist on their side, so no number of retries
+ * will produce data.
+ */
+function isPermanentlyUnavailable(error: string): boolean {
+  if (!error.startsWith("InBody 400")) return false;
+  return /no matching data|invalid or missing parameters/i.test(error);
+}
+
 /** Re-fetch historical tests that still lack stored measurements. */
 export async function backfillInBodyTests(
   limit = 200,
-): Promise<{ scanned: number; fetched: number; mapped: number; errors: string[] }> {
+): Promise<{
+  scanned: number;
+  fetched: number;
+  mapped: number;
+  remaining: number;
+  stoppedEarly: boolean;
+  errors: string[];
+}> {
   const safeLimit = Math.max(1, Math.min(Math.trunc(limit) || 200, 500));
+  // "matched_no_data" is excluded deliberately: InBody has confirmed it holds
+  // nothing for those, so re-requesting them only burns the daily call quota.
+  const pending = { resultStatus: { notIn: ["fetched", "matched_no_data"] } };
   const tests = await prisma.inBodyTest.findMany({
-    where: { resultStatus: { not: "fetched" } },
+    where: pending,
     orderBy: [{ testedAt: "desc" }, { createdAt: "desc" }],
     select: { id: true },
     take: safeLimit,
   });
 
+  // Each row costs two InBody calls and roughly a second, so a few hundred
+  // rows will outlive the request. Stop while there is still time to report
+  // what was done — a run that dies mid-flight looks like a total failure to
+  // the caller even though most of its work landed.
+  const startedAt = Date.now();
+  const TIME_BUDGET_MS = 4 * 60 * 1000;
+
   let fetched = 0;
   let mapped = 0;
+  let processed = 0;
+  let stoppedEarly = false;
   const errors: string[] = [];
   for (const test of tests) {
+    if (Date.now() - startedAt > TIME_BUDGET_MS) {
+      stoppedEarly = true;
+      break;
+    }
+    processed++;
     try {
       const updated = await refetchInBodyTest(test.id);
       if (!updated) continue;
@@ -490,7 +540,8 @@ export async function backfillInBodyTests(
     }
   }
 
-  return { scanned: tests.length, fetched, mapped, errors };
+  const remaining = await prisma.inBodyTest.count({ where: pending });
+  return { scanned: processed, fetched, mapped, remaining, stoppedEarly, errors };
 }
 
 function hasStoredMetric(test: {

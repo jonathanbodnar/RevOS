@@ -8,7 +8,7 @@ const METRICS = [
   { value: "days_since_last_charge", label: "Days since last charge" },
   { value: "weeks_since_last_scan", label: "Weeks since last InBody scan" },
   { value: "body_fat_pct_change", label: "Body-fat % change" },
-  { value: "weight_change_kg", label: "Weight change (kg)" },
+  { value: "weight_change_kg", label: "Weight change (lbs)" },
 ];
 const METRIC_LABEL = Object.fromEntries(METRICS.map((m) => [m.value, m.label]));
 const COMPARISONS = [

@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from "react";
 import { formatDate } from "@/lib/format";
-import type { InBodyTestRow } from "@/lib/inbody-display";
+import { kgToLbs, type InBodyTestRow } from "@/lib/inbody-display";
 
 type ChartTest = InBodyTestRow & {
   id: string;
@@ -18,14 +18,17 @@ type MetricKey =
   | "totalBodyWaterKg"
   | "dryLeanMassKg";
 
-const METRICS: { key: MetricKey; label: string; unit: string }[] = [
-  { key: "weightKg", label: "Weight", unit: "kg" },
-  { key: "skeletalMuscleMassKg", label: "SMM", unit: "kg" },
-  { key: "bodyFatMassKg", label: "Body Fat Mass", unit: "kg" },
+// `fromKg` marks the masses stored in kilograms that are shown in pounds.
+// Converting once where the series is built keeps the axis, the delta and the
+// tooltip consistent — they all read the converted value.
+const METRICS: { key: MetricKey; label: string; unit: string; fromKg?: boolean }[] = [
+  { key: "weightKg", label: "Weight", unit: " lbs", fromKg: true },
+  { key: "skeletalMuscleMassKg", label: "SMM", unit: " lbs", fromKg: true },
+  { key: "bodyFatMassKg", label: "Body Fat Mass", unit: " lbs", fromKg: true },
   { key: "percentBodyFat", label: "PBF", unit: "%" },
   { key: "bmi", label: "BMI", unit: "" },
-  { key: "totalBodyWaterKg", label: "Total Body Water", unit: "kg" },
-  { key: "dryLeanMassKg", label: "Dry Lean Mass", unit: "kg" },
+  { key: "totalBodyWaterKg", label: "Total Body Water", unit: " lbs", fromKg: true },
+  { key: "dryLeanMassKg", label: "Dry Lean Mass", unit: " lbs", fromKg: true },
 ];
 
 // SVG geometry (viewBox units).
@@ -60,7 +63,14 @@ export function InBodyChart({ tests }: { tests: ChartTest[] }) {
   const active = availableMetrics.find((m) => m.key === metric) ?? availableMetrics[0];
 
   const points = ordered
-    .map((t, i) => ({ i, value: t[active.key] as number | null, date: t.testedAt! }))
+    .map((t, i) => {
+      const raw = t[active.key] as number | null;
+      return {
+        i,
+        value: raw === null || raw === undefined || !active.fromKg ? raw : kgToLbs(raw),
+        date: t.testedAt!,
+      };
+    })
     .filter((p): p is { i: number; value: number; date: string } => p.value !== null);
 
   if (points.length < 2) return null;

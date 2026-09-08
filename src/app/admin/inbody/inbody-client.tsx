@@ -231,14 +231,28 @@ export function InBodyClient({
       scanned?: number;
       fetched?: number;
       mapped?: number;
+      remaining?: number;
+      stoppedEarly?: boolean;
       errors?: string[];
       error?: string;
     };
     setBackfilling(false);
+    if (!res.ok) {
+      // The request can die mid-run (each row costs two InBody calls), and the
+      // rows already written stay written — so never call that a clean failure.
+      setBackfillResult(
+        `Interrupted: ${d.error || d.errors?.[0] || "the run did not finish"}. ` +
+          `Anything already fetched was saved — reload and run it again to continue.`,
+      );
+      return;
+    }
     setBackfillResult(
-      res.ok
-        ? `Scanned ${d.scanned ?? 0}; fetched ${d.fetched ?? 0}; mapped ${d.mapped ?? 0}${d.errors?.length ? `; ${d.errors.length} errors` : ""}.`
-        : `Error: ${d.error || d.errors?.[0] || "backfill failed"}`,
+      `Scanned ${d.scanned ?? 0}; fetched ${d.fetched ?? 0}; mapped ${d.mapped ?? 0}` +
+        `${d.errors?.length ? `; ${d.errors.length} errors` : ""}.` +
+        (d.remaining
+          ? ` ${d.remaining} still pending — run again to continue.`
+          : " Nothing left to backfill.") +
+        (d.stoppedEarly ? " (stopped at the time limit)" : ""),
     );
     startTransition(() => router.refresh());
   }
