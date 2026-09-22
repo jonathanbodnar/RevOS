@@ -6,7 +6,7 @@ import { customerScopeWhere } from "@/lib/roles";
 import { logAudit } from "@/lib/audit";
 import { decryptField } from "@/lib/encryption";
 import { AssignProviders } from "./assign-providers";
-import { formatMoneyCents, formatDate } from "@/lib/format";
+import { formatMoneyCents, formatDate, formatCardLabel } from "@/lib/format";
 import { PaymentMethods } from "./payment-methods";
 import { NewChargeForm } from "./new-charge";
 import { NewSubscriptionForm } from "./new-subscription";
@@ -62,7 +62,13 @@ export default async function CustomerDetailPage({
         where: { isActive: true },
         orderBy: [{ isDefault: "desc" }, { createdAt: "desc" }],
       },
-      charges: { orderBy: { createdAt: "desc" }, take: 50 },
+      charges: {
+        orderBy: { createdAt: "desc" },
+        take: 50,
+        include: {
+          paymentMethod: { select: { sourceType: true, lastDigits: true } },
+        },
+      },
       subscriptions: { orderBy: { createdAt: "desc" } },
       schedules: { orderBy: { createdAt: "desc" } },
       careCredits: { orderBy: { collectedOn: "desc" } },
@@ -401,70 +407,78 @@ export default async function CustomerDetailPage({
                 ))}
               </div>
             </div>
-            <table className="table">
-              <thead>
-                <tr>
-                  <th>Amount</th>
-                  <th>Status</th>
-                  <th>Description</th>
-                  <th>When</th>
-                  <th className="text-right pr-3">Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {visibleCharges.length === 0 && (
+            <div className="overflow-x-auto">
+              <table className="table">
+                <thead>
                   <tr>
-                    <td colSpan={5} className="text-center text-slate-500 py-6">
-                      {txFilter ? `No ${txFilter} transactions.` : "No transactions yet."}
-                    </td>
+                    <th>Amount</th>
+                    <th>Card</th>
+                    <th>Status</th>
+                    <th>Description</th>
+                    <th>When</th>
+                    <th className="text-right pr-3">Actions</th>
                   </tr>
-                )}
-                {visibleCharges.map((c) => (
-                  <tr key={c.id}>
-                    <td>
-                      <div className="font-medium">
-                        {formatMoneyCents(c.amountCents)}
-                      </div>
-                      {c.refundedCents > 0 && (
-                        <div className="text-xs text-slate-500">
-                          refunded {formatMoneyCents(c.refundedCents)}
+                </thead>
+                <tbody>
+                  {visibleCharges.length === 0 && (
+                    <tr>
+                      <td colSpan={6} className="text-center text-slate-500 py-6">
+                        {txFilter ? `No ${txFilter} transactions.` : "No transactions yet."}
+                      </td>
+                    </tr>
+                  )}
+                  {visibleCharges.map((c) => (
+                    <tr key={c.id}>
+                      <td>
+                        <div className="font-medium">
+                          {formatMoneyCents(c.amountCents)}
                         </div>
-                      )}
-                    </td>
-                    <td>
-                      <span
-                        className={
-                          c.status === "paid"
-                            ? "badge-green"
-                            : c.status === "refunded"
-                              ? "badge-slate"
-                              : c.status === "failed"
-                                ? "badge-red"
-                                : "badge-yellow"
-                        }
-                      >
-                        {c.status}
-                      </span>
-                    </td>
-                    <td className="text-slate-600">{c.description || "—"}</td>
-                    <td className="text-slate-500 text-xs">
-                      {formatDate(c.createdAt)}
-                    </td>
-                    <td className="text-right pr-3">
-                      {canPerformSensitiveActions &&
-                        c.status !== "refunded" &&
-                        c.refundedCents < c.amountCents && (
-                          <RefundButton
-                            chargeId={c.id}
-                            maxCents={c.amountCents - c.refundedCents}
-                            originalCents={c.amountCents}
-                          />
+                        {c.refundedCents > 0 && (
+                          <div className="text-xs text-slate-500">
+                            refunded {formatMoneyCents(c.refundedCents)}
+                          </div>
                         )}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+                      </td>
+                      <td className="text-slate-600 text-xs whitespace-nowrap">
+                        {formatCardLabel(c.paymentMethod) ?? (
+                          <span className="text-slate-400" title="Card details unavailable">—</span>
+                        )}
+                      </td>
+                      <td>
+                        <span
+                          className={
+                            c.status === "paid"
+                              ? "badge-green"
+                              : c.status === "refunded"
+                                ? "badge-slate"
+                                : c.status === "failed"
+                                  ? "badge-red"
+                                  : "badge-yellow"
+                          }
+                        >
+                          {c.status}
+                        </span>
+                      </td>
+                      <td className="text-slate-600">{c.description || "—"}</td>
+                      <td className="text-slate-500 text-xs">
+                        {formatDate(c.createdAt)}
+                      </td>
+                      <td className="text-right pr-3">
+                        {canPerformSensitiveActions &&
+                          c.status !== "refunded" &&
+                          c.refundedCents < c.amountCents && (
+                            <RefundButton
+                              chargeId={c.id}
+                              maxCents={c.amountCents - c.refundedCents}
+                              originalCents={c.amountCents}
+                            />
+                          )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           </div>
 
           <div className="card-pad">
