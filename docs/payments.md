@@ -15,6 +15,13 @@ before querying or changing default cards. Re-vaulting the same card updates
 its existing row and expiry; a LunarPay vault id owned by another RevOS
 customer is rejected without modifying either customer's cards.
 
+The customer profile's **Transactions** table displays the recorded payment
+method as `Card •••• 4242` (or `Bank •••• 6789` for ACH), matching the clinic
+charges and admin transactions views. It follows each charge's own
+`paymentMethod` relation, including inactive cards, rather than the customer's
+current default. A missing relation displays `—`; it does not infer a card for
+historical transactions whose payment method was not recorded.
+
 ## Card tokenization flow (Fortis Elements)
 
 Raw card data goes **browser → Fortis**, never to RevOS servers.

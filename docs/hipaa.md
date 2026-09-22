@@ -3,6 +3,31 @@
 What's built, what to configure, and what needs your action (BAAs, backups).
 Companion to the security notes in [`operations.md`](./operations.md).
 
+## Provider progress notes: current behavior
+
+Providers can save notes under **Customer → Program chart → Progress notes**
+for patients assigned to them in their clinic. Both the profile read and the
+chart write use `customerScopeWhere`; see `src/lib/roles.ts` and
+`src/app/api/clinic/customers/[id]/chart/route.ts`.
+
+New note writes use AES-256-GCM when `FIELD_ENCRYPTION_KEY` is configured.
+The production setting was confirmed present on September 22, 2026, without
+reading patient records. This does not establish that every legacy note was
+encrypted: old plaintext remains readable, and an absent key allows plaintext
+writes. The audit helper logs views/edits but does not block an operation if
+audit logging fails. Edits overwrite the week's note; the audit metadata records
+that an edit occurred, not prior note text. Immutable note revisions and
+signed/locked notes are not implemented.
+
+These controls do not by themselves establish HIPAA compliance. Confirm the
+clinic/RevOS and applicable vendor BAAs, the HIPAA hosting configuration,
+risk assessment, access controls, backup/restore procedures, retention policy,
+and operational safeguards before approving clinical use. A signed BAA is
+required for a cloud provider maintaining ePHI even if it cannot decrypt it;
+see [HHS cloud guidance](https://www.hhs.gov/hipaa/for-professionals/special-topics/health-information-technology/cloud-computing/index.html).
+Full note history/signing should also be evaluated for the intended clinical
+record workflow and applicable recordkeeping requirements.
+
 ## 1. Configuration (env vars)
 
 Set these in the Railway environment. All are optional — each feature is a
@@ -99,8 +124,8 @@ Every third party that can see PHI needs a signed BAA before go-live:
 
 | Party | What it sees | Action |
 | --- | --- | --- |
-| Supabase | Entire database | Sign BAA (Supabase offers one on paid plans). |
-| Railway | App runtime + env secrets | Confirm BAA availability; else move hosting. |
+| Supabase | Entire database | Sign the BAA and enable the HIPAA add-on/project controls; a regular paid plan alone is insufficient. See [Supabase's requirements](https://supabase.com/docs/guides/deployment/shared-responsibility-model#managing-healthcare-data). |
+| Railway | App runtime + env secrets | Execute Railway's HIPAA BAA add-on and meet its shared-responsibility requirements. See [Railway compliance](https://docs.railway.com/enterprise/compliance#hipaa-baa). |
 | LunarPay / Fortis | Patient name/email/phone + card | BAA with the merchant/processor. |
 | InBody / LookinBody | Patient phone + body metrics | BAA with the vendor. |
 | Failed-payment webhook receiver (Zapier) | Nothing by default now (ids + link only) | Keep PII off it, or sign a BAA and set `FAILED_PAYMENT_WEBHOOK_INCLUDE_PII=true`. |
