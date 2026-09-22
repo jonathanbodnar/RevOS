@@ -4,6 +4,7 @@ import { requireSuperAdminApi } from "@/lib/api-guard";
 import { prisma } from "@/lib/prisma";
 import { logAudit } from "@/lib/audit";
 import { FOLLOW_UP_STATUSES } from "@/lib/follow-up";
+import { requireStringParams } from "@/lib/route-params";
 
 export const dynamic = "force-dynamic";
 
@@ -24,7 +25,9 @@ export async function POST(
 ) {
   const guard = await requireSuperAdminApi();
   if ("error" in guard) return guard.error;
-  const { id } = await params;
+  const path = await requireStringParams(params, ["id"] as const);
+  if (!path.ok) return path.response;
+  const { id } = path.value;
 
   const parsed = Body.safeParse(await req.json().catch(() => ({})));
   if (!parsed.success) {
@@ -37,6 +40,7 @@ export async function POST(
     select: { id: true, clinicId: true, customerId: true, status: true, followUpStatus: true },
   });
   if (!charge) return NextResponse.json({ error: "Charge not found" }, { status: 404 });
+  const customerId = z.string().min(1).parse(charge.customerId);
 
   const data = {
     followUpStatus,
@@ -51,7 +55,7 @@ export async function POST(
   if (cascade) {
     const { count } = await prisma.charge.updateMany({
       where: {
-        customerId: charge.customerId,
+        customerId: { equals: customerId },
         status: "failed",
         followUpStatus: "new",
         id: { not: id },

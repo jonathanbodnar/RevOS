@@ -1,52 +1,57 @@
 /**
- * Tiny, safe Markdown → HTML renderer for eLearning content.
+ * Tiny Markdown → React renderer for eLearning content.
  *
- * We deliberately avoid a Markdown/HTML-sanitizer dependency: content is
- * escaped FIRST, then a small whitelist of inline/block patterns is applied to
- * the already-escaped text, so no author-supplied HTML can ever execute. Links
- * are restricted to http(s). Supports: # / ## / ### headings, **bold**,
+ * Author content stays in React text nodes and attributes; we never construct
+ * HTML strings. Links are restricted to http(s), and their URLs are never
+ * reparsed as formatting. Supports: # / ## / ### headings, **bold**,
  * *italic*, `code`, [text](url), - and 1. lists, and paragraphs.
  */
+import { createElement, type ReactNode } from "react";
 
-function escapeHtml(s: string): string {
-  return s
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#39;");
+function inline(text: string, allowLinks = true): ReactNode[] {
+  const pattern = /`([^`]+)`|\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)|\*\*([^*]+)\*\*|\*([^*]+)\*/g;
+  const out: ReactNode[] = [];
+  let end = 0;
+  for (const match of text.matchAll(pattern)) {
+    const start = match.index!;
+    if (start > end) out.push(text.slice(end, start));
+    const [, code, label, url, bold, italic] = match;
+    const key = start;
+    if (code !== undefined) {
+      out.push(createElement("code", { key }, code));
+    } else if (label !== undefined) {
+      out.push(allowLinks
+        ? createElement("a", { key, href: url, target: "_blank", rel: "noopener noreferrer" }, inline(label, false))
+        : match[0]);
+    } else if (bold !== undefined) {
+      out.push(createElement("strong", { key }, inline(bold, allowLinks)));
+    } else {
+      out.push(createElement("em", { key }, inline(italic, allowLinks)));
+    }
+    end = start + match[0].length;
+  }
+  if (end < text.length) out.push(text.slice(end));
+  return out;
 }
 
-function inline(escaped: string): string {
-  let s = escaped;
-  // Links [text](http(s)://url) — url already escaped; only allow http(s).
-  s = s.replace(
-    /\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g,
-    (_m, text, url) =>
-      `<a href="${url}" target="_blank" rel="noopener noreferrer">${text}</a>`,
-  );
-  s = s.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
-  s = s.replace(/\*([^*]+)\*/g, "<em>$1</em>");
-  s = s.replace(/`([^`]+)`/g, "<code>$1</code>");
-  return s;
-}
-
-export function renderMarkdownSafe(md: string): string {
-  const lines = escapeHtml(md).replace(/\r\n/g, "\n").split("\n");
-  const out: string[] = [];
+export function renderMarkdown(md: string): ReactNode[] {
+  const lines = md.replace(/\r\n/g, "\n").split("\n");
+  const out: ReactNode[] = [];
   let listType: "ul" | "ol" | null = null;
+  let listItems: ReactNode[] = [];
   let para: string[] = [];
 
   const flushPara = () => {
     if (para.length) {
-      out.push(`<p>${inline(para.join(" "))}</p>`);
+      out.push(createElement("p", { key: out.length }, inline(para.join(" "))));
       para = [];
     }
   };
   const closeList = () => {
     if (listType) {
-      out.push(`</${listType}>`);
+      out.push(createElement(listType, { key: out.length }, listItems));
       listType = null;
+      listItems = [];
     }
   };
 
@@ -60,16 +65,15 @@ export function renderMarkdownSafe(md: string): string {
       flushPara();
       closeList();
       const level = heading[1].length;
-      out.push(`<h${level}>${inline(heading[2])}</h${level}>`);
+      out.push(createElement(`h${level}`, { key: out.length }, inline(heading[2])));
     } else if (ul || ol) {
       flushPara();
       const want = ul ? "ul" : "ol";
       if (listType !== want) {
         closeList();
         listType = want;
-        out.push(`<${want}>`);
       }
-      out.push(`<li>${inline((ul ?? ol)![1])}</li>`);
+      listItems.push(createElement("li", { key: listItems.length }, inline((ul ?? ol)![1])));
     } else if (line.trim() === "") {
       flushPara();
       closeList();
@@ -80,7 +84,7 @@ export function renderMarkdownSafe(md: string): string {
   }
   flushPara();
   closeList();
-  return out.join("\n");
+  return out;
 }
 
 /** Only allow http(s) video URLs; returns null otherwise. */

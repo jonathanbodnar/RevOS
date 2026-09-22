@@ -19,6 +19,8 @@ Start with the root [`AGENTS.md`](../AGENTS.md), then dive into any node below.
    - [`inbody.md`](./inbody.md) — InBody ingestion + phone auto-pairing.
 6. [`operations.md`](./operations.md) — env, commands, cron, deploy, security.
 7. [`glossary.md`](./glossary.md) — domain vocabulary.
+8. [`security-review-2026-09.md`](./security-review-2026-09.md) — September
+   security findings, fixes, and remaining scanner/lifecycle follow-up.
 
 ## Documentation graph
 

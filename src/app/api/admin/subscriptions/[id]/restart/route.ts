@@ -283,7 +283,7 @@ export async function POST(
     // otherwise a transient LunarPay error would block this patient's restart
     // forever with no way to clear it from the UI.
     await prisma.subscriptionRestartClaim
-      .deleteMany({ where: { restartedFromId: old.id } })
+      .deleteMany({ where: { restartedFromId: { equals: id } } })
       .catch(() => null);
     const status = e instanceof LunarPayError ? e.status : 500;
     const msg = e instanceof Error ? e.message : "Restart failed.";

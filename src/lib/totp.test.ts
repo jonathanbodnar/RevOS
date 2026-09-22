@@ -5,6 +5,8 @@ import { totp, verifyTotp, isValidSecret, InvalidSecretError } from "./totp";
 // RFC 6238 test vector: ASCII secret "12345678901234567890" is base32
 // "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ". At T=59s the SHA-1 TOTP (8-digit) is
 // 94287082, so the 6-digit truncation is 287082.
+// Public fixture from https://www.rfc-editor.org/rfc/rfc6238#appendix-B,
+// never an enrolled user's credential. Keep the known-answer test deterministic.
 const SECRET = "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ";
 
 test("TOTP matches the RFC 6238 SHA-1 vector at T=59", () => {

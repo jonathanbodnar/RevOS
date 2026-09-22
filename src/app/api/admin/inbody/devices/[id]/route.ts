@@ -8,7 +8,7 @@ import { logAudit } from "@/lib/audit";
 export const dynamic = "force-dynamic";
 
 const Body = z.object({
-  clinicId: z.string().nullable(),
+  clinicId: z.string().min(1).nullable(),
   label: z.string().trim().max(80).nullable().optional(),
   // Apply the clinic to this device's existing scans that have none yet.
   applyToExisting: z.boolean().optional(),
@@ -36,6 +36,7 @@ export async function POST(
   if (!device) {
     return NextResponse.json({ error: "Device not found" }, { status: 404 });
   }
+  const serial = z.string().min(1).parse(device.serial);
   if (clinicId) {
     const clinic = await prisma.clinic.findUnique({ where: { id: clinicId } });
     if (!clinic) {
@@ -53,7 +54,7 @@ export async function POST(
   let updatedScans = 0;
   if (applyToExisting && clinicId) {
     const { count } = await prisma.inBodyTest.updateMany({
-      where: { equipSerial: device.serial, clinicId: null },
+      where: { equipSerial: { equals: serial }, clinicId: null },
       data: { clinicId },
     });
     updatedScans = count;

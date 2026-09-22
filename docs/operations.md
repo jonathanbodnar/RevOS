@@ -27,6 +27,7 @@ Default seeded credentials come from `SUPER_ADMIN_EMAIL` /
 | `npm run db:seed` | Seed super admin (`tsx prisma/seed.ts`). |
 | `npm run db:studio` | Prisma Studio. |
 | `npm run lint` | Next.js lint. |
+| `npm test` | Unit and security regression tests; route tests use isolated database/payment stubs. |
 | `node scripts/e2e-smoke.mjs` | End-to-end smoke script. |
 
 ## Environment variables (`.env.example`)
@@ -78,9 +79,9 @@ See [`payments.md`](./payments.md#reconciliation) for what it does.
 
 ## Security caveats (address before production)
 
-- **Remove debug endpoints**: `/api/health/login-check` (unauthenticated bcrypt
-  check, marked "REMOVE BEFORE PRODUCTION USE") and
-  `/api/debug/lunarpay-intentions` (explicitly no auth).
+- The unauthenticated `/api/health/login-check` and
+  `/api/debug/lunarpay-intentions` debug endpoints have been removed; keep them
+  removed.
 - Rotate `NEXTAUTH_SECRET`, `SUPER_ADMIN_PASSWORD`, and all API keys away from
   the example values.
 - Set `LUNARPAY_WEBHOOK_SECRET` and `INBODY_WEBHOOK_SECRET` so inbound webhooks
@@ -89,6 +90,10 @@ See [`payments.md`](./payments.md#reconciliation) for what it does.
   `FUTURE_SCOPE.md` §8/§9 for the HIPAA/RLS hardening roadmap.
 - Admin `/api/admin/*` routes use inline super-admin checks; prefer the
   `requireSuperAdminApi` helper for new routes for consistency.
+
+See [September 2026 security review](./security-review-2026-09.md) for the
+dependency fixes, query-validation and training-rendering changes, and the
+remaining scanner dispositions/support-lifecycle follow-up.
 
 ## Troubleshooting
 
