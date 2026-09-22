@@ -65,11 +65,13 @@ export async function POST(
 
   await prisma.$transaction(async (tx) => {
     await tx.customer.update({
-      where: { id: customer.id },
-      data: { clinicId: targetClinic.id },
+      where: { id },
+      data: { clinicId: targetClinicId },
     });
-    const where = { customerId: customer.id };
-    const data = { clinicId: targetClinic.id };
+    // Build filters only from the validated scalar inputs. The lookups above
+    // establish existence; no request or database object becomes a filter.
+    const where = { customerId: { equals: id } };
+    const data = { clinicId: targetClinicId };
     await tx.charge.updateMany({ where, data });
     await tx.subscription.updateMany({ where, data });
     await tx.paymentSchedule.updateMany({ where, data });

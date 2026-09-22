@@ -2,7 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { requireClinicContext } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
-import { renderMarkdownSafe, safeVideoUrl } from "@/lib/markdown";
+import { renderMarkdown, safeVideoUrl } from "@/lib/markdown";
 import { CompleteButton } from "./complete-button";
 
 export const dynamic = "force-dynamic";
@@ -35,7 +35,7 @@ export default async function ModulePage({
   });
   const done = progress?.status === "completed";
   const video = safeVideoUrl(mod.videoUrl);
-  const html = mod.bodyHtml ? renderMarkdownSafe(mod.bodyHtml) : "";
+  const content = mod.bodyHtml ? renderMarkdown(mod.bodyHtml) : null;
 
   return (
     <div className="max-w-3xl space-y-5">
@@ -64,11 +64,12 @@ export default async function ModulePage({
         </div>
       )}
 
-      {html ? (
+      {content?.length ? (
         <article
           className="prose prose-slate max-w-none text-sm leading-relaxed [&_h1]:text-lg [&_h2]:text-base [&_h3]:text-sm [&_h1]:font-semibold [&_h2]:font-semibold [&_h3]:font-semibold [&_ul]:list-disc [&_ul]:pl-5 [&_ol]:list-decimal [&_ol]:pl-5 [&_a]:text-brand-600 [&_a]:underline [&_p]:my-2 [&_code]:bg-slate-100 [&_code]:px-1 [&_code]:rounded"
-          dangerouslySetInnerHTML={{ __html: html }}
-        />
+        >
+          {content}
+        </article>
       ) : (
         <p className="text-sm text-slate-400">No written content for this module.</p>
       )}

@@ -15,6 +15,23 @@
  * per-customer lookup could have caught them.
  */
 import { prisma } from "./prisma";
+import { z } from "zod";
+
+// Validate at the shared boundary: callers include public checkout/save-card
+// routes, and TypeScript alone cannot reject runtime query-operator objects.
+const VaultedCardInput = z.object({
+  customerId: z.string().min(1),
+  setDefault: z.boolean(),
+  card: z.object({
+    lunarpayPaymentMethodId: z.number().int().positive(),
+    lunarpayCustomerId: z.number().int().positive().nullable(),
+    sourceType: z.string().min(1),
+    lastDigits: z.string().nullable(),
+    nameHolder: z.string().nullable(),
+    expMonth: z.string().nullable(),
+    expYear: z.string().nullable(),
+  }),
+});
 
 export type VaultedCard = {
   lunarpayPaymentMethodId: number;
@@ -37,19 +54,22 @@ export async function upsertVaultedCard(opts: {
   card: VaultedCard;
   setDefault: boolean;
 }): Promise<{ id: string; deduped: boolean }> {
-  const { customerId, card, setDefault } = opts;
+  const { customerId, card, setDefault } = VaultedCardInput.parse(opts);
 
   // Same LunarPay id => the very same vault entry (webhook replay, retry).
   const byLpId = await prisma.paymentMethod.findUnique({
     where: { lunarpayPaymentMethodId: card.lunarpayPaymentMethodId },
   });
+  if (byLpId && byLpId.customerId !== customerId) {
+    throw new Error("Payment method belongs to a different customer.");
+  }
 
   const existing =
     byLpId ??
     (card.lastDigits
       ? await prisma.paymentMethod.findFirst({
           where: {
-            customerId,
+            customerId: { equals: customerId },
             lastDigits: card.lastDigits,
             sourceType: card.sourceType,
             isActive: true,
@@ -60,7 +80,7 @@ export async function upsertVaultedCard(opts: {
 
   if (setDefault) {
     await prisma.paymentMethod.updateMany({
-      where: { customerId, isDefault: true },
+      where: { customerId: { equals: customerId }, isDefault: true },
       data: { isDefault: false },
     });
   }

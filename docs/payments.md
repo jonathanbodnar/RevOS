@@ -10,6 +10,11 @@ Core files: `src/lib/lunarpay.ts`, `src/lib/master-link.ts`,
 `src/lib/notify.ts`, `src/lib/fees.ts`, and the payment routes under
 `src/app/api/clinic/**` and `src/app/api/public/**`.
 
+`src/lib/payment-method-dedupe.ts` validates customer/card scalars at runtime
+before querying or changing default cards. Re-vaulting the same card updates
+its existing row and expiry; a LunarPay vault id owned by another RevOS
+customer is rejected without modifying either customer's cards.
+
 ## Card tokenization flow (Fortis Elements)
 
 Raw card data goes **browser → Fortis**, never to RevOS servers.

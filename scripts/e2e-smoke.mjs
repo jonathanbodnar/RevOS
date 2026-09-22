@@ -7,6 +7,7 @@
 //   6. create a customer for that clinic
 //
 // Uses stock fetch + manual cookie jar so we don't depend on extra deps.
+import { randomBytes } from "node:crypto";
 
 const BASE = process.env.BASE_URL || "http://localhost:3000";
 
@@ -19,7 +20,7 @@ if (!ADMIN_PASSWORD) {
   process.exit(1);
 }
 // Throwaway password for the clinic admin this test creates.
-const clinicAdminPassword = "Smoke-" + Math.random().toString(36).slice(2) + "!1";
+const clinicAdminPassword = "Smoke-" + randomBytes(24).toString("base64url") + "!1";
 
 const jar = new Map(); // name -> value
 
