@@ -129,6 +129,18 @@ This customer-facing fee is **RevOS revenue** (see [`reporting.md`](./reporting.
 - **Idempotency**: success handlers key `Charge` on `lunarpayChargeId = transaction_id`
   and skip duplicates; failures dedupe on `failed:<externalId>`; legacy session
   completion is idempotent on `status === "completed"`.
+- **Race with our own charges**: LunarPay fires `charge.succeeded` without
+  awaiting it, right before it answers `POST /charges`, so the webhook and the
+  route that made the charge both try to insert the same `lunarpayChargeId`
+  and either can land first. Routes that charge synchronously (checkout, admin
+  charge / subscription / hold) record through `recordLunarPayCharge()`
+  (`src/lib/charge-record.ts`), which fills in link/card/description on the
+  webhook's row instead of failing; the webhook likewise settles the route's
+  row if its own insert loses. Until 2026-09-23 checkout used a plain create:
+  when the webhook won, checkout errored after the card was charged, skipped
+  the subscription, and retries charged the patient again. If checkout fails
+  after the charge, the payer is told the payment went through (don't pay
+  again) and a `payment_link.incomplete` audit row records what they chose.
 - **Success side effects**: create mirror `Charge` (ACH → `pending`, else `paid`),
   delete any reconciliation placeholder for that cycle, advance
   `Subscription.nextPaymentOn`, update `PaymentSchedule` progress, write audit.

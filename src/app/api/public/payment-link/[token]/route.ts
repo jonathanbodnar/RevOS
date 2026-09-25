@@ -8,6 +8,8 @@ import { requireStringParams } from "@/lib/route-params";
 import { calcFee } from "@/lib/fees";
 import { resolveOrCreateImplementorByName } from "@/lib/implementor";
 import { recordFailedCharge } from "@/lib/failed-charge";
+import { recordLunarPayCharge } from "@/lib/charge-record";
+import { formatMoneyCents } from "@/lib/format";
 import {
   MASTER_SUBSCRIPTION_CENTS,
   MASTER_SUBSCRIPTION_FREQUENCY,
@@ -174,6 +176,10 @@ export async function POST(
   // Track which stage we're in so the error log tells us exactly where the
   // failure happened (LunarPay call N out of M).
   let stage = "start";
+  // Set as soon as LunarPay has charged the card. A failure in any later step
+  // must not reach the payer as a plain "try again" — every retry charges the
+  // card again.
+  let charged: { amountCents: number; customerId: string; lunarpayChargeId: string } | null = null;
   try {
     // Create-or-reuse the customer. LunarPay upserts by email (returns the
     // same customer id with created:false for a repeat email), and our
@@ -433,19 +439,22 @@ export async function POST(
             throw e;
           }
           chargedTodayBase = firstBase;
-          await prisma.charge.create({
-            data: {
-              clinicId: resolvedClinicId,
-              customerId: customer.id,
-              paymentMethodId: pm.id,
-              paymentLinkId: sess.id,
-              lunarpayChargeId: String(lpCharge.data.id),
-              fortisTransactionId: lpCharge.data.fortisTransactionId ?? null,
-              amountCents: lpCharge.data.amount,
-              status: lpCharge.data.status,
-              paymentMethodType: lpCharge.data.paymentMethod,
-              description: sess.description ?? null,
-            },
+          charged = {
+            amountCents: lpCharge.data.amount,
+            customerId: customer.id,
+            lunarpayChargeId: String(lpCharge.data.id),
+          };
+          await recordLunarPayCharge({
+            clinicId: resolvedClinicId,
+            customerId: customer.id,
+            paymentMethodId: pm.id,
+            paymentLinkId: sess.id,
+            lunarpayChargeId: String(lpCharge.data.id),
+            fortisTransactionId: lpCharge.data.fortisTransactionId ?? null,
+            amountCents: lpCharge.data.amount,
+            status: lpCharge.data.status,
+            paymentMethodType: lpCharge.data.paymentMethod,
+            description: sess.description ?? null,
           });
         }
       }
@@ -588,19 +597,22 @@ export async function POST(
         });
         throw e;
       }
-      await prisma.charge.create({
-        data: {
-          clinicId: resolvedClinicId,
-          customerId: customer.id,
-          paymentMethodId: pm.id,
-          paymentLinkId: sess.id,
-          lunarpayChargeId: String(lpCharge.data.id),
-          fortisTransactionId: lpCharge.data.fortisTransactionId ?? null,
-          amountCents: lpCharge.data.amount,
-          status: lpCharge.data.status,
-          paymentMethodType: lpCharge.data.paymentMethod,
-          description: sess.description ?? null,
-        },
+      charged = {
+        amountCents: lpCharge.data.amount,
+        customerId: customer.id,
+        lunarpayChargeId: String(lpCharge.data.id),
+      };
+      await recordLunarPayCharge({
+        clinicId: resolvedClinicId,
+        customerId: customer.id,
+        paymentMethodId: pm.id,
+        paymentLinkId: sess.id,
+        lunarpayChargeId: String(lpCharge.data.id),
+        fortisTransactionId: lpCharge.data.fortisTransactionId ?? null,
+        amountCents: lpCharge.data.amount,
+        status: lpCharge.data.status,
+        paymentMethodType: lpCharge.data.paymentMethod,
+        description: sess.description ?? null,
       });
     }
 
@@ -870,6 +882,38 @@ export async function POST(
       `[payment-link/public] FAILED at stage="${stage}" token=${token}`,
       { error: displayMsg, details, sessMode: sess.mode, sessAmountCents: sess.amountCents },
     );
+
+    if (charged) {
+      // The card WAS charged; a later step (recording it, the second-payment
+      // schedule, the subscription) failed. Say so plainly — a generic error
+      // here is what made staff retry and charge patients two and three
+      // times. The audit row carries what the payer chose so an admin can
+      // finish the setup by hand.
+      await logAudit({
+        actorId: null,
+        actorRole: "CUSTOMER",
+        clinicId: resolvedClinicId,
+        action: "payment_link.incomplete",
+        targetType: "Customer",
+        targetId: charged.customerId,
+        metadata: {
+          stage,
+          paymentLinkId: sess.id,
+          chargedCents: charged.amountCents,
+          lunarpayChargeId: charged.lunarpayChargeId,
+          master: masterCfg,
+        },
+      });
+      return NextResponse.json(
+        {
+          error: `Your payment of ${formatMoneyCents(charged.amountCents)} went through, but the rest of your plan couldn't be set up. Please don't pay again — let the clinic know so they can finish it. (stage: ${stage})`,
+          charged: true,
+          stage,
+        },
+        { status },
+      );
+    }
+
     return NextResponse.json(
       { error: `${displayMsg} (stage: ${stage})`, stage, details },
       { status },

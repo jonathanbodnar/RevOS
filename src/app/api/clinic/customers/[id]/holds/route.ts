@@ -6,6 +6,7 @@ import { lunarpay, LunarPayError } from "@/lib/lunarpay";
 import { logAudit } from "@/lib/audit";
 import { parseMoneyInputToCents } from "@/lib/format";
 import { recordFailedCharge } from "@/lib/failed-charge";
+import { recordLunarPayCharge } from "@/lib/charge-record";
 
 /**
  * Place an authorization hold on a customer's card.
@@ -94,18 +95,16 @@ export async function POST(
       capture: false,
     });
 
-    const charge = await prisma.charge.create({
-      data: {
-        clinicId,
-        customerId: id,
-        paymentMethodId: pm.id,
-        lunarpayChargeId: String(lpCharge.data.id),
-        fortisTransactionId: lpCharge.data.fortisTransactionId ?? null,
-        amountCents: cents,
-        status: "authorized",
-        paymentMethodType: "cc",
-        description: parsed.data.description ?? null,
-      },
+    const charge = await recordLunarPayCharge({
+      clinicId,
+      customerId: id,
+      paymentMethodId: pm.id,
+      lunarpayChargeId: String(lpCharge.data.id),
+      fortisTransactionId: lpCharge.data.fortisTransactionId ?? null,
+      amountCents: cents,
+      status: "authorized",
+      paymentMethodType: "cc",
+      description: parsed.data.description ?? null,
     });
 
     await logAudit({

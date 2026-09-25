@@ -4,9 +4,10 @@ import { prisma } from "@/lib/prisma";
 import { requireClinicApi, denyProvider } from "@/lib/api-guard";
 import { lunarpay, LunarPayError } from "@/lib/lunarpay";
 import { logAudit } from "@/lib/audit";
-import { parseMoneyInputToCents } from "@/lib/format";
+import { formatMoneyCents, parseMoneyInputToCents } from "@/lib/format";
 import { calcFee } from "@/lib/fees";
 import { recordFailedCharge } from "@/lib/failed-charge";
+import { recordLunarPayCharge } from "@/lib/charge-record";
 
 const Body = z.object({
   paymentMethodId: z.string().min(1),
@@ -125,39 +126,14 @@ export async function POST(
     }
   }
 
+  let lp: Awaited<ReturnType<typeof lunarpay.createCharge>>;
   try {
-    const lp = await lunarpay.createCharge({
+    lp = await lunarpay.createCharge({
       customerId: pm.lunarpayCustomerId ?? customer.lunarpayCustomerId,
       paymentMethodId: pm.lunarpayPaymentMethodId,
       amount: totalCents,
       description,
     });
-
-    const charge = await prisma.charge.create({
-      data: {
-        clinicId,
-        customerId: customer.id,
-        paymentMethodId: pm.id,
-        lunarpayChargeId: String(lp.data.id),
-        fortisTransactionId: lp.data.fortisTransactionId ?? null,
-        amountCents: lp.data.amount,
-        status: lp.data.status,
-        paymentMethodType: lp.data.paymentMethod,
-        description: parsed.data.description || null,
-      },
-    });
-
-    await logAudit({
-      actorId: session.user.id,
-      actorRole: session.user.originalRole,
-      clinicId,
-      action: "charge.create",
-      targetType: "Charge",
-      targetId: charge.id,
-      metadata: { baseCents: cents, totalCents },
-    });
-
-    return NextResponse.json({ data: { id: charge.id } }, { status: 201 });
   } catch (e) {
     const status = e instanceof LunarPayError ? e.status : 500;
     const msg = e instanceof Error ? e.message : "Charge failed.";
@@ -172,4 +148,45 @@ export async function POST(
     });
     return NextResponse.json({ error: msg }, { status });
   }
+
+  // The card is charged from here on. A failure to save it must not be
+  // recorded as a declined payment (or fire the failed-payment alert), and
+  // must not read as "try again".
+  let charge: Awaited<ReturnType<typeof recordLunarPayCharge>>;
+  try {
+    charge = await recordLunarPayCharge({
+      clinicId,
+      customerId: customer.id,
+      paymentMethodId: pm.id,
+      lunarpayChargeId: String(lp.data.id),
+      fortisTransactionId: lp.data.fortisTransactionId ?? null,
+      amountCents: lp.data.amount,
+      status: lp.data.status,
+      paymentMethodType: lp.data.paymentMethod,
+      description: parsed.data.description || null,
+    });
+  } catch (e) {
+    console.error(
+      `[charges] LunarPay charge ${lp.data.id} succeeded but could not be saved`,
+      e,
+    );
+    return NextResponse.json(
+      {
+        error: `The card was charged ${formatMoneyCents(lp.data.amount)}, but saving the charge failed. Don't charge again — contact support (LunarPay charge ${lp.data.id}).`,
+      },
+      { status: 500 },
+    );
+  }
+
+  await logAudit({
+    actorId: session.user.id,
+    actorRole: session.user.originalRole,
+    clinicId,
+    action: "charge.create",
+    targetType: "Charge",
+    targetId: charge.id,
+    metadata: { baseCents: cents, totalCents },
+  });
+
+  return NextResponse.json({ data: { id: charge.id } }, { status: 201 });
 }

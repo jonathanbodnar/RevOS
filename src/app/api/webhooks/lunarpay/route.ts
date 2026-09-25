@@ -25,6 +25,7 @@ import crypto from "crypto";
 import { prisma } from "@/lib/prisma";
 import { logAudit } from "@/lib/audit";
 import { recordFailedCharge } from "@/lib/failed-charge";
+import { isUniqueViolation } from "@/lib/charge-record";
 import { reconChargeId } from "@/lib/subscription-reconcile";
 import { SCHEDULE_RECON_ID_PREFIX } from "@/lib/payment-schedule-reconcile";
 
@@ -438,9 +439,35 @@ async function handlePaymentSucceeded(event: string, payload: WebhookEnvelope) {
   if (txId && amountCents > 0) {
     // A succeeded webhook is authoritative, including ACH settlement. Update a
     // synchronously-created pending row instead of ignoring it forever.
-    const existing = await prisma.charge.findUnique({
+    let existing = await prisma.charge.findUnique({
       where: { lunarpayChargeId: txId },
     });
+    if (!existing) {
+      try {
+        await prisma.charge.create({
+          data: {
+            clinicId: ctx.clinicId,
+            customerId: ctx.customer.id,
+            paymentMethodId: ctx.paymentMethodId,
+            lunarpayChargeId: txId,
+            amountCents,
+            status: "paid",
+            paymentMethodType: pmType,
+            description,
+            createdAt: occurredAt,
+          },
+        });
+        newlySettled = true;
+      } catch (e) {
+        // LunarPay sends charge.succeeded at the same moment it answers our
+        // POST /charges, so checkout / the admin charge can record this id
+        // between our lookup and insert. Settle that row instead.
+        if (!isUniqueViolation(e)) throw e;
+        existing = await prisma.charge.findUnique({
+          where: { lunarpayChargeId: txId },
+        });
+      }
+    }
     if (existing) {
       newlySettled = !["paid", "refunded"].includes(existing.status);
       await prisma.charge.update({
@@ -452,21 +479,6 @@ async function handlePaymentSucceeded(event: string, payload: WebhookEnvelope) {
           description: existing.description || description,
         },
       });
-    } else {
-      await prisma.charge.create({
-        data: {
-          clinicId: ctx.clinicId,
-          customerId: ctx.customer.id,
-          paymentMethodId: ctx.paymentMethodId,
-          lunarpayChargeId: txId,
-          amountCents,
-          status: "paid",
-          paymentMethodType: pmType,
-          description,
-          createdAt: occurredAt,
-        },
-      });
-      newlySettled = true;
     }
 
     // Replace a nightly placeholder with the real LunarPay transaction id.
