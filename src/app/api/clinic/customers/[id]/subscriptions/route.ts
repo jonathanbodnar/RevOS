@@ -4,9 +4,10 @@ import { prisma } from "@/lib/prisma";
 import { requireClinicApi, denyProvider } from "@/lib/api-guard";
 import { lunarpay, LunarPayError } from "@/lib/lunarpay";
 import { logAudit } from "@/lib/audit";
-import { parseMoneyInputToCents } from "@/lib/format";
+import { formatMoneyCents, parseMoneyInputToCents } from "@/lib/format";
 import { calcFee } from "@/lib/fees";
 import { recordFailedCharge } from "@/lib/failed-charge";
+import { recordLunarPayCharge } from "@/lib/charge-record";
 
 /**
  * Start a subscription for a customer.
@@ -183,6 +184,9 @@ export async function POST(
       ? subtractOneFrequency(startOnIso, frequency)
       : startOnIso;
 
+    // Set once the first cycle is charged, so a later failure isn't retried
+    // into a second charge.
+    let chargedCents = 0;
     try {
       const chargeCustomerId = pm.lunarpayCustomerId ?? customer.lunarpayCustomerId;
       if (chargeFirstNow) {
@@ -207,18 +211,17 @@ export async function POST(
           });
           throw e;
         }
-        await prisma.charge.create({
-          data: {
-            clinicId,
-            customerId: customer.id,
-            paymentMethodId: pm.id,
-            lunarpayChargeId: String(lpCharge.data.id),
-            fortisTransactionId: lpCharge.data.fortisTransactionId ?? null,
-            amountCents: lpCharge.data.amount,
-            status: lpCharge.data.status,
-            paymentMethodType: lpCharge.data.paymentMethod,
-            description: parsed.data.description || null,
-          },
+        chargedCents = lpCharge.data.amount;
+        await recordLunarPayCharge({
+          clinicId,
+          customerId: customer.id,
+          paymentMethodId: pm.id,
+          lunarpayChargeId: String(lpCharge.data.id),
+          fortisTransactionId: lpCharge.data.fortisTransactionId ?? null,
+          amountCents: lpCharge.data.amount,
+          status: lpCharge.data.status,
+          paymentMethodType: lpCharge.data.paymentMethod,
+          description: parsed.data.description || null,
         });
       }
 
@@ -294,6 +297,14 @@ export async function POST(
     } catch (e) {
       const status = e instanceof LunarPayError ? e.status : 500;
       const msg = e instanceof Error ? e.message : "Subscription failed.";
+      if (chargedCents > 0) {
+        return NextResponse.json(
+          {
+            error: `The first payment of ${formatMoneyCents(chargedCents)} was charged, but the subscription wasn't created (${msg}). Don't retry — that charges the card again. Start it with a future start date instead.`,
+          },
+          { status },
+        );
+      }
       return NextResponse.json({ error: msg }, { status });
     }
   }
