@@ -3,6 +3,7 @@ import Link from "next/link";
 import { SignOutButton } from "./sign-out";
 import { SidebarNav, type SidebarNavItem } from "./sidebar-nav";
 import { ChatDock } from "./chat-dock";
+import type { AppRole } from "@/lib/roles";
 
 export function AppShell({
   title,
@@ -23,7 +24,7 @@ export function AppShell({
     user: {
       email: string;
       name?: string | null;
-      originalRole: "SUPER_ADMIN" | "CLINIC_ADMIN" | "PROVIDER" | "BILLING_DEPT";
+      originalRole: AppRole;
     };
   };
   clinicName?: string;
@@ -57,7 +58,9 @@ export function AppShell({
             <div className="text-[11px] text-ink-subtle font-medium tracking-wide text-center mt-0.5">
               {session.user.originalRole === "SUPER_ADMIN"
                 ? "Super Admin"
-                : "Clinic"}
+                : session.user.originalRole === "CALL_AGENT"
+                  ? "Call center"
+                  : "Clinic"}
             </div>
           )}
         </div>
