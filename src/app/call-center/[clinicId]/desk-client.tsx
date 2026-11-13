@@ -73,6 +73,7 @@ type Detail = {
   lastNote: string | null;
   consent: boolean;
   source: string | null;
+  leadSource: string | null;
   sourceStatus: string | null;
   customer: { id: string; name: string } | null;
   callsLast24h: number;
@@ -1014,6 +1015,7 @@ function Card(props: {
           <p className="text-xs text-ink-subtle">
             Auto-dial consent: {c.consent ? "on file" : "none on file (call one at a time)"}
             {c.source ? ` · came from ${c.source.replace("_", " ")}` : ""}
+            {c.leadSource ? ` · lead source: ${c.leadSource}` : ""}
             {c.sourceStatus ? ` · was "${c.sourceStatus}" in their list` : ""}
           </p>
         </div>

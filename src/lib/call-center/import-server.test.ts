@@ -165,7 +165,8 @@ test("new leads: stage fields, clinic-time dates, encrypted notes, file order, i
   assert.equal(jane.importId, "import-1");
   assert.equal(jane.consentAt, null);
   assert.match(String(jane.lastNote), /^enc:v1:/);
-  assert.equal(decryptField(jane.lastNote as string), "Source: Facebook\nAsked about price");
+  assert.equal(decryptField(jane.lastNote as string), "Asked about price");
+  assert.equal(jane.leadSource, "Facebook");
   assert.deepEqual(jane.createdAt, new Date(STARTED.getTime()));
 
   assert.equal(byPhone("5550100102").nextDueDay, "2026-11-13");
@@ -181,13 +182,14 @@ test("new leads: stage fields, clinic-time dates, encrypted notes, file order, i
   assert.equal(a.outcome, "imported");
   assert.equal(a.day, "2026-11-13");
   assert.equal(a.userId, "agent-1");
-  assert.equal(decryptField(a.note as string), "Source: Facebook\nAsked about price");
+  assert.equal(decryptField(a.note as string), "Asked about price");
   assert.deepEqual(importUpdates[0], {
     rowsTotal: { increment: 5 },
     created: { increment: 5 },
     updated: { increment: 0 },
     skipped: { increment: 0 },
     invalid: { increment: 0 },
+    patients: { increment: 0 },
   });
 });
 

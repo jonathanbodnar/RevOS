@@ -194,6 +194,7 @@ export async function leadDetail(clinicId: string, leadId: string, now: Date) {
     consent: !!lead.consentAt,
     consentSource: lead.consentSource,
     source: lead.source,
+    leadSource: lead.leadSource,
     sourceStatus: lead.sourceStatus,
     customer: lead.customer ? { id: lead.customer.id, name: leadName(lead.customer) } : null,
     callsLast24h,

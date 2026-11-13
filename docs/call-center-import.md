@@ -126,9 +126,10 @@ The browser runs `src/lib/call-center/import.ts`, which is isomorphic.
   date is used as the consent date. Columns are only guessed as consent when
   their title says consent or TCPA. An SMS or email opt-in isn't permission to
   call with a dialer, so a person has to map those.
-- **Lead source.** Lead has no marketing-source field. The source is saved as
-  the first line of the note ("Source: Facebook"). `Lead.source` keeps the
-  channel: csv, xlsx, zenoti, mindbody or aesthetic_record.
+- **Lead source.** The file's marketing source ("Facebook", "Website") goes in
+  `Lead.leadSource` (filled in on existing leads only when blank) and shows on
+  the desk card. `Lead.source` keeps the channel: csv, xlsx, zenoti, mindbody
+  or aesthetic_record.
 
 The server re-checks every row with `ImportRowSchema` before writing. That
 means real calendar dates, length caps, a strict shape, and exactly 10 digits

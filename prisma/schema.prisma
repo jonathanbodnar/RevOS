@@ -779,6 +779,8 @@ model Lead {
 
   /// csv | xlsx | zenoti | mindbody | aesthetic_record | manual | inbound
   source       String?
+  /// Marketing source from the clinic's list ("Facebook", "Website", …).
+  leadSource   String?
   externalId   String?
   /// The clinic's own status text at import time (sheet or CRM).
   sourceStatus String?
@@ -996,6 +998,8 @@ model LeadImport {
   updated     Int       @default(0)
   skipped     Int       @default(0)
   invalid     Int       @default(0)
+  /// Rows that matched an existing patient.
+  patients    Int       @default(0)
   /// Column and status mapping used (no row data).
   mapping     Json?
   /// running | done | failed

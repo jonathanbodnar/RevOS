@@ -15,7 +15,7 @@
   },
   "dependencies": {
     "@prisma/client": "^5.22.0",
-    "@telnyx/webrtc": "^2.28.2",
+    "@telnyx/webrtc": "2.28.2",
     "@types/qrcode": "^1.5.6",
     "bcryptjs": "^2.4.3",
     "clsx": "^2.1.1",

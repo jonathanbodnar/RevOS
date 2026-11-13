@@ -115,10 +115,9 @@ export function initialStageFields(
   return { stage, attempts: 0, nextDueDay: null, lostReason: stage === "lost" ? LOST_REASON : null };
 }
 
-/** The note text a row adds: its lead source (when given) and its notes. */
+/** The note text a row adds (its lead source is stored in Lead.leadSource). */
 export function rowNote(row: ImportRow): string | null {
-  const parts = [row.source ? `Source: ${row.source}` : null, row.note || null].filter(Boolean) as string[];
-  return parts.length ? parts.join("\n").slice(0, MAX_NOTE_LENGTH) : null;
+  return row.note ? row.note.slice(0, MAX_NOTE_LENGTH) : null;
 }
 
 type Existing = {
@@ -135,6 +134,7 @@ type Existing = {
   consentAt: Date | null;
   /** Desk activity (anything that isn't an import); one row is enough to know. */
   activities: { id: string }[];
+  leadSource: string | null;
 };
 
 /** Patients of the clinic by normalized phone (Customer.phone may be formatted). */
@@ -197,6 +197,7 @@ export async function importRows(ctx: ImportContext, input: unknown[]): Promise<
       updated: { increment: counts.updated },
       skipped: { increment: counts.skipped },
       invalid: { increment: counts.invalid },
+      patients: { increment: counts.patients },
     },
   });
   return counts;
@@ -228,6 +229,7 @@ async function writeRows(
         lastNote: true,
         customerId: true,
         consentAt: true,
+        leadSource: true,
         activities: { where: { kind: { not: "import" } }, select: { id: true }, take: 1 },
       },
     }) as Promise<Existing[]>,
@@ -289,6 +291,7 @@ async function writeRows(
         consentAt,
         consentSource: consentAt ? ctx.consentSource : null,
         source: ctx.source,
+        leadSource: row.source ? row.source.slice(0, 120) : null,
         externalId: row.externalId ?? null,
         sourceStatus: row.status ?? null,
         importId: ctx.importId,
@@ -306,6 +309,7 @@ async function writeRows(
     if (!lead.lastName && row.lastName) data.lastName = row.lastName;
     if (!lead.email && row.email) data.email = row.email;
     if (!lead.externalId && row.externalId) data.externalId = row.externalId;
+    if (!lead.leadSource && row.source) data.leadSource = row.source.slice(0, 120);
     if (ctx.options.priorityMapped && row.priority != null && row.priority !== lead.priority) {
       data.priority = row.priority;
     }
@@ -454,13 +458,13 @@ export const ImportChunkSchema = z.strictObject({
 });
 export type ImportChunk = z.infer<typeof ImportChunkSchema>;
 
-export type ImportTotals = { rowsTotal: number; created: number; updated: number; skipped: number; invalid: number };
+export type ImportTotals = { rowsTotal: number; created: number; updated: number; skipped: number; invalid: number; patients: number };
 
 export type ChunkResponse =
   | { ok: true; importId: string; done: boolean; counts: ChunkCounts; totals: ImportTotals }
   | { ok: false; status: number; error: string; importId?: string };
 
-const TOTALS_SELECT = { rowsTotal: true, created: true, updated: true, skipped: true, invalid: true } as const;
+const TOTALS_SELECT = { rowsTotal: true, created: true, updated: true, skipped: true, invalid: true, patients: true } as const;
 
 /**
  * Handle one chunk: start or continue the LeadImport, write the rows, and on
@@ -582,6 +586,7 @@ export async function runImportChunk(args: {
       updated: 0,
       skipped: 0,
       invalid: 0,
+      patients: 0,
     };
   }
   return { ok: true, importId: imp.id, done: body.done, counts, totals };

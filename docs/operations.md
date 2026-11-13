@@ -53,6 +53,7 @@ Default seeded credentials come from `SUPER_ADMIN_EMAIL` /
 | `CRON_SECRET` | Bearer token required by the reconciliation cron (route is disabled if unset). |
 | `TELNYX_API_KEY` | Telnyx v2 API key for the call center (Mission Control → API Keys). Use a different key in Dev and production. Without it the desk logs calls only. |
 | `TELNYX_PUBLIC_KEY` | Telnyx account public key (Mission Control → Keys & Credentials). **Required** for `/api/webhooks/telnyx`, which fails closed (503) without it. |
+| `MINDBODY_API_KEY` / `MINDBODY_SOURCE_NAME` / `MINDBODY_SOURCE_PASSWORD` | RevOS's Mindbody developer account, for the clinic CRM connector. Unset = the Mindbody card says it isn't available yet. Read the 48-hour caching clause in [`call-center-import.md`](./call-center-import.md) before setting these. |
 
 `.env` is git-ignored. Never print, commit, or echo it.
 
