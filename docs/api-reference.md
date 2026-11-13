@@ -23,7 +23,7 @@ Guard legend:
 | Path | Purpose |
 | --- | --- |
 | `/admin` | Global overview / dashboard. |
-| `/admin/customers` | Cross-clinic patient search. |
+| `/admin/customers` | Cross-clinic patient search; unassigned patients get an Assign clinic picker instead of Open. |
 | `/admin/reports` | Revenue-share reporting center (filters, per-patient, clinic balances). |
 | `/admin/clinics` | List clinics (with impersonate / delete). |
 | `/admin/clinics/new` | Create a clinic + initial clinic admin. |
@@ -67,6 +67,7 @@ Guard legend:
 | PATCH / DELETE | `/api/admin/clinics/[id]` | Super admin | Update / delete a clinic. |
 | POST / DELETE | `/api/admin/clinics/[id]/logo` | Super admin | Upload / remove clinic logo. |
 | GET | `/api/admin/customers/search` | `requireSuperAdminApi` | Cross-clinic customer search. |
+| POST | `/api/admin/customers/[id]/move-clinic` | Super admin | Move a patient and their billing history to another clinic. Given the clinic the patient is already in, attaches their unassigned charges/subscriptions/schedules instead (audit `customer.attach_unassigned`). |
 | POST | `/api/admin/impersonate/start` | Super admin | Begin impersonating a clinic (audit). |
 | POST | `/api/admin/impersonate/stop` | Super admin | Stop impersonating (audit). |
 | GET / POST | `/api/admin/implementors` | Super admin | List / create implementors. |

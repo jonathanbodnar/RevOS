@@ -1,10 +1,16 @@
 import { requireSuperAdmin } from "@/lib/session";
+import { prisma } from "@/lib/prisma";
 import { GlobalCustomerSearch } from "./customers-search";
 
 export const dynamic = "force-dynamic";
 
 export default async function AdminCustomersPage() {
   await requireSuperAdmin();
+  const clinics = await prisma.clinic.findMany({
+    where: { isActive: true },
+    orderBy: { name: "asc" },
+    select: { id: true, name: true },
+  });
   return (
     <div className="space-y-4">
       <div>
@@ -14,7 +20,7 @@ export default async function AdminCustomersPage() {
           and loads the patient profile.
         </p>
       </div>
-      <GlobalCustomerSearch />
+      <GlobalCustomerSearch clinics={clinics} />
     </div>
   );
 }
