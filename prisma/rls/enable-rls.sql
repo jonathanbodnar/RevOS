@@ -33,13 +33,7 @@ BEGIN
   FOREACH t IN ARRAY ARRAY[
     'Customer','Charge','Subscription','PaymentSchedule','CheckoutSession',
     'CareCredit','AdvancedCost','ClinicPayout','InBodyTest','ChartWeek',
-    'KPIFlag','CustomerProviderAssignment','AuditLog',
-    -- Call center. The Telnyx webhook (src/lib/call-center/dialer.ts) and the
-    -- agent routes cross clinics by design; run them under
-    -- withSuperuserContext before enabling RLS on these.
-    'Lead','LeadActivity','LeadCall','DialerSession','CallRules','CallDay',
-    'ClinicPhoneNumber','CallCenterAccess','LeadImport','ClinicIntegration',
-    'ClinicConnectLink'
+    'KPIFlag','CustomerProviderAssignment','AuditLog'
   ] LOOP
     EXECUTE format('ALTER TABLE %I ENABLE ROW LEVEL SECURITY;', t);
     EXECUTE format('ALTER TABLE %I FORCE ROW LEVEL SECURITY;', t);
@@ -54,3 +48,24 @@ END $$;
 -- To roll back:
 --   DROP POLICY tenant_isolation ON "Customer";  (repeat per table)
 --   ALTER TABLE "Customer" DISABLE ROW LEVEL SECURITY;  (repeat per table)
+
+-- Call center tables (same policy). The Telnyx webhook
+-- (src/lib/call-center/dialer.ts) and the call-center routes cross clinics by
+-- design; run them under withSuperuserContext before enabling RLS on these.
+DO $$
+DECLARE t text;
+BEGIN
+  FOREACH t IN ARRAY ARRAY[
+    'Lead','LeadActivity','LeadCall','DialerSession','CallRules','CallDay',
+    'ClinicPhoneNumber','CallCenterAccess','LeadImport','ClinicIntegration',
+    'ClinicConnectLink'
+  ] LOOP
+    EXECUTE format('ALTER TABLE %I ENABLE ROW LEVEL SECURITY;', t);
+    EXECUTE format('ALTER TABLE %I FORCE ROW LEVEL SECURITY;', t);
+    EXECUTE format($f$
+      CREATE POLICY tenant_isolation ON %I
+      USING (app_is_superuser() OR "clinicId" = app_current_clinic())
+      WITH CHECK (app_is_superuser() OR "clinicId" = app_current_clinic());
+    $f$, t);
+  END LOOP;
+END $$;
