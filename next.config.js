@@ -17,7 +17,15 @@ const nextConfig = {
     serverActions: { bodySizeLimit: "2mb" },
   },
   async headers() {
-    return [{ source: "/:path*", headers: securityHeaders }];
+    return [
+      { source: "/:path*", headers: securityHeaders },
+      // The call desk's browser phone needs the microphone. Allow it for this
+      // origin on call-center pages only (a later match overrides the key).
+      {
+        source: "/call-center/:path*",
+        headers: [{ key: "Permissions-Policy", value: "camera=(), microphone=(self), geolocation=()" }],
+      },
+    ];
   },
 };
 

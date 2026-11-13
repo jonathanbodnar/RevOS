@@ -33,7 +33,13 @@ BEGIN
   FOREACH t IN ARRAY ARRAY[
     'Customer','Charge','Subscription','PaymentSchedule','CheckoutSession',
     'CareCredit','AdvancedCost','ClinicPayout','InBodyTest','ChartWeek',
-    'KPIFlag','CustomerProviderAssignment','AuditLog'
+    'KPIFlag','CustomerProviderAssignment','AuditLog',
+    -- Call center. The Telnyx webhook (src/lib/call-center/dialer.ts) and the
+    -- agent routes cross clinics by design; run them under
+    -- withSuperuserContext before enabling RLS on these.
+    'Lead','LeadActivity','LeadCall','DialerSession','CallRules','CallDay',
+    'ClinicPhoneNumber','CallCenterAccess','LeadImport','ClinicIntegration',
+    'ClinicConnectLink'
   ] LOOP
     EXECUTE format('ALTER TABLE %I ENABLE ROW LEVEL SECURITY;', t);
     EXECUTE format('ALTER TABLE %I FORCE ROW LEVEL SECURITY;', t);
