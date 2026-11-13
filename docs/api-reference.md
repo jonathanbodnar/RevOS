@@ -39,7 +39,8 @@ Guard legend:
 | `/clinic` | Clinic overview. |
 | `/clinic/customers` | Customer list. |
 | `/clinic/customers/new` | Create a customer. |
-| `/clinic/customers/[id]` | Customer detail: payment methods, charges, subs, schedules, holds, InBody, care credits, merge, edit. |
+| `/clinic/customers/[id]` | Customer detail: payment methods, charges, subs, schedules, holds, InBody, care credits, merge, edit. Tabs: Overview, Notes (dated feed), Program chart, InBody; `?tab=notes\|chart\|inbody` opens one directly. |
+| `/clinic/leaderboard` | Patients ranked by InBody improvement, first scan to latest (`?metric=`, `?showInactive=1`). Clinic admins + impersonating super admins; providers are redirected. See [`inbody.md`](./inbody.md#leaderboard). |
 | `/clinic/charges` | All transactions for the clinic. |
 | `/clinic/subscriptions` | All subscriptions. |
 | `/clinic/installments` | All payment schedules (installment plans). |
@@ -106,6 +107,8 @@ Guard legend:
 | POST | `/api/clinic/customers/[id]/holds/[holdId]/void` | `requireClinicApi` | Void a hold. |
 | POST | `/api/clinic/customers/[id]/invoices` | `requireClinicApi` | Generate a payment link for the customer. |
 | POST / DELETE | `/api/clinic/customers/[id]/save-card-link` | `requireClinicApi` | Create / disable a save-card link. |
+| POST | `/api/clinic/customers/[id]/notes` | `requireClinicApi` + `customerScopeWhere` | Add a note to the patient's Notes feed (encrypted; audit logs no text). |
+| DELETE | `/api/clinic/customers/[id]/notes/[noteId]` | `requireClinicApi` + `customerScopeWhere`; author or super admin | Remove a note from the feed (soft delete). |
 | POST | `/api/clinic/customers/[id]/care-credits` | `requireSuperAdminClinicApi` | Log a care-credit payment. |
 | DELETE | `/api/clinic/customers/[id]/care-credits/[ccId]` | `requireSuperAdminClinicApi` | Delete a care-credit entry. |
 | POST | `/api/clinic/charges/[id]/refund` | `requireSuperAdminClinicApi` | Refund a charge (full/partial). |

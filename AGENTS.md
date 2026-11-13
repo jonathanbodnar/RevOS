@@ -90,6 +90,8 @@ RevOS/
 | `reporting.ts` | Revenue-share economics (`calcFee`, `reverseFee`, per-transaction splits). |
 | `fees.ts` | Processing-fee constants + `calcFee`. |
 | `implementor.ts` | Resolve/create sales implementor by name for attribution. |
+| `customer-notes.ts` | Notes-tab feed: decrypt notes, resolve bylines, who may remove one. |
+| `leaderboard.ts` | Rank patients by InBody improvement (first scan → latest) for `/clinic/leaderboard`. |
 | `inbody.ts` / `inbody-ingest.ts` / `inbody-display.ts` | InBody API client, ingestion, display formatting. |
 | `audit.ts` | `logAudit()` — writes `AuditLog` rows; never throws. |
 | `csv.ts` / `format.ts` / `phone.ts` | CSV building, money/date formatting, phone normalization. |

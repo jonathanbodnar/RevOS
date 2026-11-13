@@ -10,9 +10,9 @@ export const dynamic = "force-dynamic";
 /**
  * Move a patient to a different clinic (super admin only).
  *
- * The customer AND every billing artifact that carries its own clinicId
- * (charges, subscriptions, schedules, checkout sessions, care credits,
- * advanced costs, InBody tests) move together, so reporting and clinic
+ * The customer AND every record that carries its own clinicId (charges,
+ * subscriptions, schedules, checkout sessions, care credits, advanced costs,
+ * InBody tests, chart weeks, notes) move together, so reporting and clinic
  * balances attribute the patient's full history to the destination clinic —
  * no split-brain rows left pointing at the old clinic.
  */
@@ -80,6 +80,7 @@ export async function POST(
     await tx.advancedCost.updateMany({ where, data });
     await tx.inBodyTest.updateMany({ where, data });
     await tx.chartWeek.updateMany({ where, data });
+    await tx.customerNote.updateMany({ where, data });
     // KPI flags carry their own clinicId — repoint so they don't linger in the
     // old clinic's at-risk dashboard.
     await tx.kPIFlag.updateMany({ where, data });

@@ -100,6 +100,27 @@ backfill, and a test table with details (via `inbody-display.ts` formatters),
 map/unmap, and refetch. Manual customer search normalizes formatted phone
 numbers before matching.
 
+## Leaderboard
+
+`/clinic/leaderboard` (clinic admins) ranks a clinic's patients by how much a
+measure improved from their **first scan to their latest** — the same "since
+first test" reading as the profile's InBody trend chart. Measures: weight lost
+(lbs), % of starting weight lost, fat mass lost, body-fat-% drop, and muscle
+(SMM) gained. Ranking lives in `src/lib/leaderboard.ts`
+(`rankImprovements`, unit-tested):
+
+- Needs ≥2 dated scans carrying the measure; dismissed scans are ignored.
+- Only patients whose latest reading is better make the board; a change that
+  rounds to 0.0 doesn't count.
+- Masses convert kg → lbs before any arithmetic; ties (at the one-decimal
+  precision shown) share a rank.
+- Active patients by default; `?showInactive=1` includes inactive ones.
+
+Each name links to the patient's profile on the InBody tab
+(`?tab=inbody`). Note the profile's trend chart only plots the newest 20 scans,
+so for a patient with more than 20 its "since first test" figure starts later
+than the leaderboard's.
+
 ## Status fields (`InBodyTest`)
 
 - `resultStatus`: `pending` | `fetched` | `matched_no_data` | `unmatched` | `error`.

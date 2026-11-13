@@ -24,6 +24,7 @@ export type IconName =
   | "activity"
   | "book"
   | "target"
+  | "trophy"
   | "message"
   | "settings";
 
@@ -168,6 +169,15 @@ export function Icon({
           <circle cx="12" cy="12" r="9" />
           <circle cx="12" cy="12" r="5" />
           <circle cx="12" cy="12" r="1" fill="currentColor" stroke="none" />
+        </svg>
+      );
+    case "trophy":
+      return (
+        <svg {...COMMON} className={className}>
+          <path d="M7 4h10v5a5 5 0 0 1-10 0V4z" />
+          <path d="M17 6h2.5A1.5 1.5 0 0 1 21 7.5V8a4 4 0 0 1-4 4" />
+          <path d="M7 6H4.5A1.5 1.5 0 0 0 3 7.5V8a4 4 0 0 0 4 4" />
+          <path d="M12 14v6M8 20h8" />
         </svg>
       );
     case "message":

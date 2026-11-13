@@ -19,6 +19,15 @@ audit logging fails. Edits overwrite the week's note; the audit metadata records
 that an edit occurred, not prior note text. Immutable note revisions and
 signed/locked notes are not implemented.
 
+The **Notes** tab on a customer profile is a separate, append-only feed
+(`CustomerNote`, `src/app/api/clinic/customers/[id]/notes/`). Same access
+rule (`customerScopeWhere`) and the same encryption at rest. A note is never
+edited, so its date is the date it was written. Only its author or a super
+admin can remove one, and removal is a soft delete (`deletedAt`,
+`deletedById`) that keeps the ciphertext. `customer_note.create` /
+`customer_note.delete` audit rows record the patient id, never the text.
+Merging duplicate profiles moves notes to the surviving profile.
+
 These controls do not by themselves establish HIPAA compliance. Confirm the
 clinic/RevOS and applicable vendor BAAs, the HIPAA hosting configuration,
 risk assessment, access controls, backup/restore procedures, retention policy,
@@ -35,7 +44,7 @@ no-op until its var is set — but production should set all of them.
 
 | Var | Purpose | Notes |
 | --- | --- | --- |
-| `FIELD_ENCRYPTION_KEY` | Encrypts PHI free-text at rest (progress notes, payment notes, InBody raw payloads, chat logs) and the MFA secret. | 32 bytes, hex or base64: `openssl rand -hex 32`. **Never rotate without setting `FIELD_ENCRYPTION_KEY_PREVIOUS`** — old rows become unreadable. Store a backup copy outside Railway. |
+| `FIELD_ENCRYPTION_KEY` | Encrypts PHI free-text at rest (progress notes, Notes-tab notes, payment notes, InBody raw payloads, chat logs) and the MFA secret. | 32 bytes, hex or base64: `openssl rand -hex 32`. **Never rotate without setting `FIELD_ENCRYPTION_KEY_PREVIOUS`** — old rows become unreadable. Store a backup copy outside Railway. |
 | `FIELD_ENCRYPTION_KEY_PREVIOUS` | Comma-separated key(s) rotated away from. Reads fall back to these; writes always use the primary. | Required to rotate `FIELD_ENCRYPTION_KEY` without orphaning existing rows. Keep an old key here until you have re-encrypted every row under the new one. |
 | `LUNARPAY_WEBHOOK_SECRET` / `INBODY_WEBHOOK_SECRET` | Webhook signature verification. | Endpoints now **fail closed** (503) when unset. |
 | `CRON_SECRET` | Auth for all cron routes. | Must match the GitHub Actions repo secret. |

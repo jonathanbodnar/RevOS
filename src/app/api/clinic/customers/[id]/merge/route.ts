@@ -17,8 +17,8 @@ import {
  * `[id]` is the PRIMARY profile we keep; `sourceCustomerId` is the duplicate
  * that gets emptied out and deleted. Every payment artifact (cards, charges,
  * subscriptions, schedules, checkout sessions, advanced costs, care credits)
- * is repointed to the primary. Saved cards keep their lunarpayCustomerId owner
- * so they remain chargeable after the move.
+ * and every Notes-tab note is repointed to the primary. Saved cards keep their
+ * lunarpayCustomerId owner so they remain chargeable after the move.
  */
 const Body = z.object({
   sourceCustomerId: z.string().min(1),
@@ -127,6 +127,12 @@ export async function POST(
       data: { customerId: primary.id },
     });
     await tx.careCredit.updateMany({
+      where: { customerId: source.id },
+      data: { customerId: primary.id },
+    });
+    // Notes are clinical record, not billing, but they cascade-delete with the
+    // duplicate below — carry them over (removed ones too) so none are lost.
+    await tx.customerNote.updateMany({
       where: { customerId: source.id },
       data: { customerId: primary.id },
     });
