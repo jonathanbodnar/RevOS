@@ -9,7 +9,7 @@
  * log each result here.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useBrowserPhone } from "@/components/call-center/use-browser-phone";
+import { usePhone, type DialerState as Dialer } from "@/components/call-center/phone-provider";
 import { formatPhone } from "@/lib/phone";
 import type { CallRulesConfig } from "@/lib/call-center/rules";
 import { checkCallingHours, hoursLabel } from "@/lib/call-center/rules";
@@ -88,33 +88,6 @@ type Desk = {
   stats: { dials: number; people: number; talked: number; booked: number; confirms: number; callbacks: number };
   newLeft: number;
 };
-type Dialer = {
-  ready: boolean;
-  setup: { configured: boolean; apiKey: boolean; webhookKey: boolean };
-  numbers: { e164: string; isDefault: boolean }[];
-  sessionHeader: string;
-  elsewhere: { clinicId: string } | null;
-  session: {
-    id: string;
-    mode: "manual" | "auto";
-    status: string;
-    lastError: string | null;
-    call: {
-      id: string;
-      status: string;
-      direction: string;
-      dialNumber: number;
-      kind: string | null;
-      startedAt: string;
-      bridgedAt: string | null;
-      endedAt: string | null;
-      hangupCause: string | null;
-      amdResult: string | null;
-      error: string | null;
-    } | null;
-    lead: { id: string; name: string; phone: string } | null;
-  } | null;
-};
 
 const pad = (n: number) => String(n).padStart(2, "0");
 const TONE: Record<string, string> = {
@@ -165,7 +138,9 @@ export function DeskClient({ clinicId, initialOpen }: { clinicId: string; initia
   const [prompt, setPrompt] = useState<{ outcome: CallOutcome; value: string; err?: string } | null>(null);
   const [toast, setToast] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const [dialer, setDialer] = useState<Dialer | null>(null);
+  const phone = usePhone();
+  const dialer = phone.dialer;
+  const loadDialer = phone.refresh;
   const [q, setQ] = useState("");
   const [results, setResults] = useState<Summary[] | null>(null);
   const noteRef = useRef<HTMLTextAreaElement | null>(null);
@@ -181,9 +156,10 @@ export function DeskClient({ clinicId, initialOpen }: { clinicId: string; initia
   }, []);
 
   const loadDesk = useCallback(
-    async (focusId?: string | null) => {
+    async (focusId?: string | null, focusKind?: "inbound") => {
       try {
-        const d = await api<Desk>(`${base}/desk${focusId ? `?focus=${encodeURIComponent(focusId)}` : ""}`);
+        const qs = focusId ? `?focus=${encodeURIComponent(focusId)}${focusKind ? `&kind=${focusKind}` : ""}` : "";
+        const d = await api<Desk>(`${base}/desk${qs}`);
         setDesk(d);
         setLoadError(null);
         const id = d.current?.leadId ?? null;
@@ -199,31 +175,12 @@ export function DeskClient({ clinicId, initialOpen }: { clinicId: string; initia
     [base],
   );
 
-  const loadDialer = useCallback(async () => {
-    try {
-      setDialer(await api<Dialer>(`${base}/dialer`));
-    } catch {
-      /* keep the last state; the next poll retries */
-    }
-  }, [base]);
-
-  const phone = useBrowserPhone(() => {
-    void loadDialer();
-  });
-
   useEffect(() => {
     void loadDesk(initialOpen ?? null);
-    void loadDialer();
-  }, [loadDesk, loadDialer, initialOpen]);
+  }, [loadDesk, initialOpen]);
 
   const session = dialer?.session ?? null;
-  const live = !!session && session.status !== "ended";
-
-  // Poll the phone line: fast while live (it's also the heartbeat), slow otherwise.
-  useEffect(() => {
-    const t = window.setInterval(() => void loadDialer(), live ? 1500 : 15000);
-    return () => window.clearInterval(t);
-  }, [live, loadDialer]);
+  const live = phone.live;
 
   // The auto dialer (or a patient calling in) picks who's on the card.
   useEffect(() => {
@@ -231,7 +188,7 @@ export function DeskClient({ clinicId, initialOpen }: { clinicId: string; initia
     if (lid && lid !== followRef.current && (session?.mode === "auto" || session?.call?.direction === "inbound")) {
       followRef.current = lid;
       setFocus({ leadId: lid });
-      void loadDesk(lid);
+      void loadDesk(lid, session?.call?.direction === "inbound" ? "inbound" : undefined);
     }
     if (!lid) followRef.current = null;
   }, [session?.lead?.id, session?.mode, session?.call?.direction, loadDesk]);
@@ -249,38 +206,12 @@ export function DeskClient({ clinicId, initialOpen }: { clinicId: string; initia
 
   // ── actions ───────────────────────────────────────────────────────────────
   async function goLive(mode: "manual" | "auto") {
-    setBusy(true);
-    try {
-      const s = await api<{ sessionId: string; dialTarget: string; header: string }>(`${base}/dialer`, {
-        method: "POST",
-        body: JSON.stringify({ action: "start", mode }),
-      });
-      const { token } = await api<{ token: string }>(`/api/call-center/phone/token`, { method: "POST" });
-      const ok = await phone.start({ token, dialTarget: s.dialTarget, header: s.header, sessionId: s.sessionId });
-      if (!ok) await api(`${base}/dialer`, { method: "POST", body: JSON.stringify({ action: "end" }) }).catch(() => {});
-    } catch (e) {
-      flash(e instanceof Error ? e.message : "Couldn't go live.");
-    } finally {
-      setBusy(false);
-      void loadDialer();
-    }
-  }
-  async function endLive() {
-    await api(`${base}/dialer`, { method: "POST", body: JSON.stringify({ action: "end" }) }).catch(() => {});
-    phone.stop();
-    void loadDialer();
+    const err = await phone.goLive(mode);
+    if (err) flash(err);
   }
   async function dialerAction(action: "auto" | "pause" | "hangup") {
-    try {
-      await api(`${base}/dialer`, { method: "POST", body: JSON.stringify({ action }) });
-    } catch (e) {
-      flash(e instanceof Error ? e.message : "That didn't work.");
-    }
-    void loadDialer();
-  }
-  async function startAuto() {
-    if (!live) return goLive("auto");
-    return dialerAction("auto");
+    const err = await phone.action(action);
+    if (err) flash(err);
   }
   async function dial() {
     if (!current) return;
@@ -477,8 +408,6 @@ export function DeskClient({ clinicId, initialOpen }: { clinicId: string; initia
 
   return (
     <div className="space-y-4">
-      <audio ref={phone.audioRef} autoPlay className="hidden" />
-
       {/* Tally + goal, like the Dial Desk header */}
       <div className="card px-5 py-4 flex flex-wrap items-center gap-x-8 gap-y-3">
         {[
@@ -510,15 +439,15 @@ export function DeskClient({ clinicId, initialOpen }: { clinicId: string; initia
 
       <PhoneBar
         dialer={dialer}
-        phoneStatus={phone.status}
-        phoneError={phone.error}
+        phoneStatus={phone.phoneStatus}
+        phoneError={phone.phoneError}
         muted={phone.muted}
-        busy={busy}
+        busy={busy || phone.busy}
         onLive={() => goLive("manual")}
-        onAuto={startAuto}
+        onAuto={() => dialerAction("auto")}
         onPause={() => dialerAction("pause")}
         onHangup={() => dialerAction("hangup")}
-        onEnd={endLive}
+        onEnd={phone.endLive}
         onMute={phone.toggleMute}
         now={now}
       />

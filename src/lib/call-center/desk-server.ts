@@ -208,6 +208,7 @@ export async function buildDesk(input: {
   userId: string;
   now: Date;
   focusLeadId?: string | null;
+  focusKind?: "inbound" | null;
 }) {
   const { clinicId, userId, now } = input;
   const { rules, day, plan, activities, newLeft } = await loadPlan(clinicId, userId, now);
@@ -216,7 +217,12 @@ export async function buildDesk(input: {
   let current: { leadId: string; kind: ItemKind; touch?: Touch } | null = null;
   if (input.focusLeadId) {
     const inPlan = plan.sections.flatMap((s) => s.items).find((i) => i.leadId === input.focusLeadId && !i.done);
-    current = inPlan ? { leadId: inPlan.leadId, kind: inPlan.kind, touch: inPlan.touch } : { leadId: input.focusLeadId, kind: "manual" };
+    current =
+      input.focusKind === "inbound"
+        ? { leadId: input.focusLeadId, kind: "inbound" }
+        : inPlan
+          ? { leadId: inPlan.leadId, kind: inPlan.kind, touch: inPlan.touch }
+          : { leadId: input.focusLeadId, kind: "manual" };
   } else {
     for (const s of plan.sections) {
       for (const it of s.items) {

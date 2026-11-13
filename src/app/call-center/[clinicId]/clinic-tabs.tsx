@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
+import { PhoneChip } from "@/components/call-center/phone-provider";
 
 const TABS = [
   { href: "", label: "Today" },
@@ -43,6 +44,7 @@ export function ClinicTabs({
         ) : (
           <div className="text-base font-semibold text-ink truncate">{clinicName}</div>
         )}
+        <PhoneChip />
       </div>
       <nav className="flex flex-wrap gap-1" aria-label="Call center">
         {TABS.map((t) => {

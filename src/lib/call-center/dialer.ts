@@ -676,7 +676,7 @@ async function onHangup(p: Payload, st: Record<string, unknown> | null) {
   const rules = await loadRules(s.clinicId);
   const lead = call.leadId ? await prisma.lead.findUnique({ where: { id: call.leadId }, select: { id: true, phone: true, stage: true, consentAt: true } }) : null;
 
-  if (lead && call.dialNumber === 1 && rules.doubleDial) {
+  if (lead && call.dialNumber === 1 && rules.doubleDial && s.mode === "auto") {
     const g = await dialGuard(lead, rules, now, true);
     if (g.ok) {
       // First dial unanswered: the immediate second dial (logged as one try).
