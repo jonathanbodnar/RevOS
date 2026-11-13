@@ -17,6 +17,8 @@ Start with the root [`AGENTS.md`](../AGENTS.md), then dive into any node below.
    - [`payments.md`](./payments.md) — LunarPay + Fortis, all payment concepts.
    - [`reporting.md`](./reporting.md) — revenue-share math + clinic-balance formula.
    - [`inbody.md`](./inbody.md) — InBody ingestion + phone auto-pairing.
+   - [`call-center.md`](./call-center.md) — the call desk, call rules, Telnyx dialer.
+   - [`call-center-import.md`](./call-center-import.md) — lead import, clinic connect link, CRM connectors.
 6. [`operations.md`](./operations.md) — env, commands, cron, deploy, security.
 7. [`glossary.md`](./glossary.md) — domain vocabulary.
 8. [`security-review-2026-09.md`](./security-review-2026-09.md) — September
@@ -36,6 +38,9 @@ graph TD
     ARCH --> PAY[payments.md]
     ARCH --> REP[reporting.md]
     ARCH --> IB[inbody.md]
+    ARCH --> CC[call-center.md]
+    CC --> CCI[call-center-import.md]
+    DM --> CC
     AUTH --> API
     DM --> PAY
     DM --> REP
