@@ -1,31 +1,64 @@
 "use client";
 
-import { useState } from "react";
+import { createContext, useCallback, useContext, useState } from "react";
 
 /**
  * Client-side tab switcher for the customer profile. All tab contents are
  * server-rendered and passed in as nodes; we just toggle visibility so state
  * is preserved and there's no refetch when switching tabs.
  */
-type TabId = "overview" | "chart" | "inbody";
+const TAB_IDS = ["overview", "notes", "chart", "inbody"] as const;
+type TabId = (typeof TAB_IDS)[number];
+
+function isTabId(v: unknown): v is TabId {
+  return TAB_IDS.includes(v as TabId);
+}
+
+// Lets a tab's content keep its badge count in step with edits made in place
+// (the notes feed after adding or removing a note) without a server refresh.
+const SetBadgeContext = createContext<(tab: TabId, count: number) => void>(
+  () => {},
+);
+
+export function useSetTabBadge() {
+  return useContext(SetBadgeContext);
+}
 
 export function CustomerTabs({
   overview,
+  notes,
   chart,
   inbody,
+  notesCount,
   inbodyCount,
+  initialTab,
 }: {
   overview: React.ReactNode;
+  notes: React.ReactNode;
   chart: React.ReactNode;
   inbody: React.ReactNode;
+  notesCount: number;
   inbodyCount: number;
+  /** Tab to open first, e.g. from a `?tab=inbody` link. Unknown values fall back to Overview. */
+  initialTab?: string;
 }) {
-  const [active, setActive] = useState<TabId>("overview");
+  const [active, setActive] = useState<TabId>(
+    isTabId(initialTab) ? initialTab : "overview",
+  );
+  const [badgeOverrides, setBadgeOverrides] = useState<
+    Partial<Record<TabId, number>>
+  >({});
+  const setBadge = useCallback((tab: TabId, count: number) => {
+    setBadgeOverrides((prev) =>
+      prev[tab] === count ? prev : { ...prev, [tab]: count },
+    );
+  }, []);
 
   const tabs: { id: TabId; label: string; badge?: number }[] = [
     { id: "overview", label: "Overview" },
+    { id: "notes", label: "Notes", badge: badgeOverrides.notes ?? notesCount },
     { id: "chart", label: "Program chart" },
-    { id: "inbody", label: "InBody", badge: inbodyCount },
+    { id: "inbody", label: "InBody", badge: badgeOverrides.inbody ?? inbodyCount },
   ];
 
   return (
@@ -51,9 +84,12 @@ export function CustomerTabs({
         ))}
       </div>
 
-      <div className={active === "overview" ? "" : "hidden"}>{overview}</div>
-      <div className={active === "chart" ? "" : "hidden"}>{chart}</div>
-      <div className={active === "inbody" ? "" : "hidden"}>{inbody}</div>
+      <SetBadgeContext.Provider value={setBadge}>
+        <div className={active === "overview" ? "" : "hidden"}>{overview}</div>
+        <div className={active === "notes" ? "" : "hidden"}>{notes}</div>
+        <div className={active === "chart" ? "" : "hidden"}>{chart}</div>
+        <div className={active === "inbody" ? "" : "hidden"}>{inbody}</div>
+      </SetBadgeContext.Provider>
     </div>
   );
 }

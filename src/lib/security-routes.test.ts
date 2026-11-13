@@ -69,7 +69,7 @@ test("moving a patient keeps all history together and clears old provider assign
       assert.deepEqual(args, { where: { customerId: { equals: "customer-1" } } });
       updated.push("assignments");
     } },
-    ...Object.fromEntries(["charge", "subscription", "paymentSchedule", "checkoutSession", "careCredit", "advancedCost", "inBodyTest", "chartWeek", "kPIFlag"].map((model) => [model, { updateMany: async (args: unknown) => {
+    ...Object.fromEntries(["charge", "subscription", "paymentSchedule", "checkoutSession", "careCredit", "advancedCost", "inBodyTest", "chartWeek", "customerNote", "kPIFlag"].map((model) => [model, { updateMany: async (args: unknown) => {
       assert.deepEqual(args, { where: { customerId: { equals: "customer-1" } }, data: { clinicId: "new-clinic" } });
       updated.push(model);
     } }])),
@@ -77,8 +77,8 @@ test("moving a patient keeps all history together and clears old provider assign
   mock.method(prisma, "$transaction", async (callback: (client: unknown) => unknown) => callback(tx));
   const result = await moveClinic(request({ clinicId: "new-clinic" }), context("customer-1"));
   assert.equal(result.status, 200);
-  assert.equal(updated.length, 10);
-  assert.ok(updated.includes("paymentSchedule") && updated.includes("advancedCost") && updated.includes("assignments"));
+  assert.equal(updated.length, 11);
+  assert.ok(updated.includes("paymentSchedule") && updated.includes("advancedCost") && updated.includes("customerNote") && updated.includes("assignments"));
 });
 
 test("body query objects cannot become clinic or payment-method filters", async () => {

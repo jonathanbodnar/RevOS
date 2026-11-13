@@ -101,6 +101,7 @@ model Clinic {
   inbodyTests      InBodyTest[]
   inbodyDevices    InBodyDevice[]
   chartWeeks       ChartWeek[]
+  customerNotes    CustomerNote[]
   kpis             KPI[]
   kpiFlags         KPIFlag[]
 }
@@ -163,6 +164,7 @@ model Customer {
   careCredits         CareCredit[]
   inbodyTests         InBodyTest[]
   chartWeeks          ChartWeek[]
+  notes               CustomerNote[]
   providerAssignments CustomerProviderAssignment[]
   kpiFlags            KPIFlag[]
 
@@ -207,6 +209,34 @@ model ChartWeek {
   @@unique([customerId, weekNumber])
   @@index([clinicId])
   @@index([customerId])
+}
+
+// One entry in the Notes tab on a customer profile — a dated feed, newest
+// first. Unlike the chart's per-week progress notes, a note is never edited:
+// the date it shows is the date it was written, and correcting one means
+// removing it and adding another. Removal is a soft delete (deletedAt) so the
+// clinical record keeps the row; removed notes just drop out of the feed.
+model CustomerNote {
+  id         String   @id @default(cuid())
+  clinicId   String?
+  clinic     Clinic?  @relation(fields: [clinicId], references: [id], onDelete: SetNull)
+  customerId String
+  customer   Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  // Free-text clinical note — PHI, encrypted at rest (encryptField).
+  body String
+
+  // User.id of the writer (no FK — mirrors ChartWeek.updatedById). Users are
+  // deactivated, never deleted, so the id stays resolvable for the byline.
+  authorId String
+
+  deletedAt   DateTime?
+  deletedById String?
+
+  createdAt DateTime @default(now())
+
+  @@index([clinicId])
+  @@index([customerId, createdAt])
 }
 
 // A Care Credit payment is money the patient paid the CLINIC directly through

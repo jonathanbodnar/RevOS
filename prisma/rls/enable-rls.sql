@@ -33,7 +33,7 @@ BEGIN
   FOREACH t IN ARRAY ARRAY[
     'Customer','Charge','Subscription','PaymentSchedule','CheckoutSession',
     'CareCredit','AdvancedCost','ClinicPayout','InBodyTest','ChartWeek',
-    'KPIFlag','CustomerProviderAssignment','AuditLog'
+    'CustomerNote','KPIFlag','CustomerProviderAssignment','AuditLog'
   ] LOOP
     EXECUTE format('ALTER TABLE %I ENABLE ROW LEVEL SECURITY;', t);
     EXECUTE format('ALTER TABLE %I FORCE ROW LEVEL SECURITY;', t);

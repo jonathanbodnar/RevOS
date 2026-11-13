@@ -25,10 +25,12 @@ import { MergeCustomerButton } from "./merge-customer";
 import { MoveClinicButton } from "./move-clinic";
 import { InactiveToggleButton } from "./inactive-toggle";
 import { CustomerTabs } from "./customer-tabs";
+import { NotesFeed } from "./notes-feed";
 import { InBodyTab } from "./inbody-tab";
 import { ProgramChart, type ChartWeekRow } from "./program-chart";
 import { formatDateOnly, parsePaymentsJson } from "@/lib/csv";
 import { kgToLbs } from "@/lib/inbody-display";
+import { NOTE_MAX_LENGTH, toNoteViews } from "@/lib/customer-notes";
 import {
   programWeekOf,
   weekBounds,
@@ -44,10 +46,10 @@ export default async function CustomerDetailPage({
   searchParams,
 }: {
   params: Promise<{ id: string }>;
-  searchParams: Promise<{ tx?: string }>;
+  searchParams: Promise<{ tx?: string; tab?: string }>;
 }) {
   const { id } = await params;
-  const { tx } = await searchParams;
+  const { tx, tab } = await searchParams;
   const txFilter = TX_FILTERS.includes(tx as TxFilter) ? (tx as TxFilter) : null;
   const { session } = await requireClinicContext();
   const clinicId = session.user.effectiveClinicId as string;
@@ -74,6 +76,11 @@ export default async function CustomerDetailPage({
       careCredits: { orderBy: { collectedOn: "desc" } },
       inbodyTests: { orderBy: [{ testedAt: "desc" }, { createdAt: "desc" }], take: 20 },
       chartWeeks: true,
+      notes: {
+        where: { deletedAt: null },
+        orderBy: { createdAt: "desc" },
+        select: { id: true, body: true, authorId: true, createdAt: true },
+      },
       providerAssignments: { select: { providerId: true } },
     },
   });
@@ -163,6 +170,8 @@ export default async function CustomerDetailPage({
     [customer.firstName, customer.lastName].filter(Boolean).join(" ") ||
     customer.email ||
     "Customer";
+
+  const notes = await toNoteViews(customer.notes, session.user);
 
   const inbodyTests = customer.inbodyTests.map((t) => ({
     id: t.id,
@@ -334,6 +343,15 @@ export default async function CustomerDetailPage({
       </div>
 
       <CustomerTabs
+        initialTab={tab}
+        notesCount={notes.length}
+        notes={
+          <NotesFeed
+            customerId={customer.id}
+            initialNotes={notes}
+            maxLength={NOTE_MAX_LENGTH}
+          />
+        }
         inbodyCount={inbodyTests.length}
         inbody={<InBodyTab tests={inbodyTests} />}
         chart={

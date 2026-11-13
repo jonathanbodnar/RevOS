@@ -30,6 +30,8 @@ erDiagram
     Customer ||--o{ CareCredit : ""
     Customer ||--o{ AdvancedCost : ""
     Customer ||--o{ InBodyTest : ""
+    Customer ||--o{ ChartWeek : ""
+    Customer ||--o{ CustomerNote : ""
 
     PaymentMethod ||--o{ Charge : "funds"
     PaymentMethod ||--o{ Subscription : "funds"
@@ -78,6 +80,13 @@ erDiagram
 | `SavedReport` | Saved report filter config (`filtersJson`) + optional `snapshotJson`. |
 
 Full math in [`reporting.md`](./reporting.md).
+
+### Clinical record
+
+| Model | Purpose |
+| --- | --- |
+| `ChartWeek` | One week of the program chart (scheduled / completed / progress notes), keyed by `(customerId, weekNumber)`. Editing a week overwrites its note. |
+| `CustomerNote` | One entry in the profile's **Notes** feed: `body` (encrypted at rest), `authorId` (no FK), `createdAt` — the date the feed shows. Append-only: never edited; removal sets `deletedAt`/`deletedById` and hides it. Merge and move-clinic carry notes along. Logic in `src/lib/customer-notes.ts`. |
 
 ### Audit & integrations
 
