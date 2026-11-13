@@ -49,9 +49,11 @@ export default async function AdminSubscriptionsPage({
   const { tab: rawTab } = await searchParams;
   const tab: TabId = rawTab && rawTab in TABS ? (rawTab as TabId) : "active";
 
-  const [subs, counts] = await Promise.all([
+  // Subscriptions with no clinic are listed too (see /admin/transactions): they
+  // can't be cancelled until assigned, and hiding them left them unreachable.
+  const [subs, counts, clinics] = await Promise.all([
     prisma.subscription.findMany({
-      where: { clinicId: { not: null }, ...TABS[tab].where },
+      where: TABS[tab].where,
       orderBy: [{ cancelledAt: "desc" }, { nextPaymentOn: "asc" }],
       take: 500,
       include: {
@@ -61,6 +63,7 @@ export default async function AdminSubscriptionsPage({
             firstName: true,
             lastName: true,
             email: true,
+            clinicId: true,
             paymentMethods: {
               where: { isActive: true },
               select: {
@@ -83,11 +86,14 @@ export default async function AdminSubscriptionsPage({
     Promise.all(
       (Object.keys(TABS) as TabId[]).map(async (k) => ({
         k,
-        n: await prisma.subscription.count({
-          where: { clinicId: { not: null }, ...TABS[k].where },
-        }),
+        n: await prisma.subscription.count({ where: TABS[k].where }),
       })),
     ),
+    prisma.clinic.findMany({
+      where: { isActive: true },
+      orderBy: { name: "asc" },
+      select: { id: true, name: true },
+    }),
   ]);
 
   const countBy = Object.fromEntries(counts.map((c) => [c.k, c.n])) as Record<TabId, number>;
@@ -122,7 +128,7 @@ export default async function AdminSubscriptionsPage({
     subs.map((s) => [
       nameOf(s),
       s.customer.email,
-      s.clinic?.name ?? "—",
+      s.clinic?.name ?? "Unassigned",
       csvMoney(s.amountCents),
       s.frequency,
       csvMoney(monthlyCents(s.amountCents, s.frequency)),
@@ -214,7 +220,9 @@ export default async function AdminSubscriptionsPage({
                   <OpenCustomerLink
                     customerId={s.customer.id}
                     clinicId={s.clinic?.id ?? null}
+                    customerClinicId={s.customer.clinicId}
                     name={nameOf(s)}
+                    clinics={clinics}
                   />
                 </td>
                 <td className="text-slate-600">
@@ -226,7 +234,7 @@ export default async function AdminSubscriptionsPage({
                       {s.clinic.name}
                     </Link>
                   ) : (
-                    "—"
+                    <span className="badge-yellow">unassigned</span>
                   )}
                 </td>
                 <td>

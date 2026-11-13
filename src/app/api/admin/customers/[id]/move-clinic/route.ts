@@ -56,10 +56,38 @@ export async function POST(
     return NextResponse.json({ error: "Destination clinic not found" }, { status: 404 });
   }
   if (customer.clinicId === targetClinic.id) {
-    return NextResponse.json(
-      { error: "Patient is already in that clinic." },
-      { status: 400 },
-    );
+    // A returning patient who pays through a global link opened without `?c=`
+    // keeps their clinic, but the new charges/subscription/schedule are stored
+    // with none — out of reach of every clinic page and refund/cancel route.
+    // Attach those here; with nothing to attach this is the no-op it was.
+    const where = { customerId: { equals: id }, clinicId: null };
+    const data = { clinicId: targetClinicId };
+    const [charges, subscriptions, schedules] = await prisma.$transaction([
+      prisma.charge.updateMany({ where, data }),
+      prisma.subscription.updateMany({ where, data }),
+      prisma.paymentSchedule.updateMany({ where, data }),
+    ]);
+    if (charges.count + subscriptions.count + schedules.count === 0) {
+      return NextResponse.json(
+        { error: "Patient is already in that clinic." },
+        { status: 400 },
+      );
+    }
+    await logAudit({
+      actorId: session.user.id,
+      actorRole: session.user.originalRole,
+      clinicId: targetClinic.id,
+      action: "customer.attach_unassigned",
+      targetType: "Customer",
+      targetId: customer.id,
+      metadata: {
+        clinicId: targetClinic.id,
+        charges: charges.count,
+        subscriptions: subscriptions.count,
+        schedules: schedules.count,
+      },
+    });
+    return NextResponse.json({ data: { moved: false, clinicId: targetClinic.id } });
   }
   const fromClinicId = customer.clinicId;
 

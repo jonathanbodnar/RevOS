@@ -36,21 +36,32 @@ export default async function AdminTransactionsPage({
     ? new Date(Date.now() - windowDays * 24 * 60 * 60 * 1000)
     : null;
 
-  const charges = await prisma.charge.findMany({
-    where: {
-      clinicId: { not: null },
-      ...(statusFilter ? { status: statusFilter } : {}),
-      ...(since ? { createdAt: { gte: since } } : {}),
-      ...(followUpFilter ? { followUpStatus: followUpFilter } : {}),
-    },
-    orderBy: { createdAt: "desc" },
-    take: 500,
-    include: {
-      customer: { select: { id: true, firstName: true, lastName: true, email: true } },
-      clinic: { select: { id: true, name: true } },
-      paymentMethod: { select: { sourceType: true, lastDigits: true } },
-    },
-  });
+  // Charges with no clinic are listed too: they come from a global payment
+  // link opened without `?c=`, can't be refunded until assigned, and hiding
+  // them here left them unreachable from anywhere in RevOS.
+  const [charges, clinics] = await Promise.all([
+    prisma.charge.findMany({
+      where: {
+        ...(statusFilter ? { status: statusFilter } : {}),
+        ...(since ? { createdAt: { gte: since } } : {}),
+        ...(followUpFilter ? { followUpStatus: followUpFilter } : {}),
+      },
+      orderBy: { createdAt: "desc" },
+      take: 500,
+      include: {
+        customer: {
+          select: { id: true, firstName: true, lastName: true, email: true, clinicId: true },
+        },
+        clinic: { select: { id: true, name: true } },
+        paymentMethod: { select: { sourceType: true, lastDigits: true } },
+      },
+    }),
+    prisma.clinic.findMany({
+      where: { isActive: true },
+      orderBy: { name: "asc" },
+      select: { id: true, name: true },
+    }),
+  ]);
 
   // One real decline is often stored as two rows (payment-link mints a
   // synthetic id, the webhook writes the real transaction id), so offer to
@@ -74,7 +85,7 @@ export default async function AdminTransactionsPage({
     charges.map((c) => [
       nameOf(c),
       c.customer.email,
-      c.clinic?.name ?? "—",
+      c.clinic?.name ?? "Unassigned",
       csvMoney(c.amountCents),
       formatCardLabel(c.paymentMethod) ?? "",
       c.status,
@@ -212,7 +223,9 @@ export default async function AdminTransactionsPage({
                   <OpenCustomerLink
                     customerId={c.customer.id}
                     clinicId={c.clinic?.id ?? null}
+                    customerClinicId={c.customer.clinicId}
                     name={nameOf(c)}
+                    clinics={clinics}
                   />
                 </td>
                 <td className="text-slate-600">
@@ -224,7 +237,7 @@ export default async function AdminTransactionsPage({
                       {c.clinic.name}
                     </Link>
                   ) : (
-                    "—"
+                    <span className="badge-yellow">unassigned</span>
                   )}
                 </td>
                 <td>{formatMoneyCents(c.amountCents)}</td>

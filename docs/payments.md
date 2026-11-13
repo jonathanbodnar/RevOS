@@ -97,6 +97,8 @@ client.
 | **Save-card link** | Vault a card with no charge via a `save_card` session; saved as new default. | `api/public/save-card/[token]/route.ts`, `api/clinic/customers/[id]/save-card-link/route.ts` |
 | **Master link** | One reusable global link where the *payer* chooses amounts: a down payment (optionally split 50/50, second dated payment) + optional fixed **$250/mo** subscription starting on a chosen date (default +30 days). Care-credit amounts are logged, never charged. | `src/lib/master-link.ts`, `master` branch of `api/public/payment-link/[token]/route.ts` |
 
+A global link opened without `?c=<clinicId>` stores its customer, charges and subscription with **no clinic** (for a returning patient, only the new charges/subscription). Every clinic page and refund/cancel route is clinic-scoped, so those records are unreachable until a super admin assigns a clinic from `/admin/transactions`, `/admin/subscriptions` or `/admin/customers` (they show as *unassigned*).
+
 ### Charge / hold state machine
 
 ```mermaid

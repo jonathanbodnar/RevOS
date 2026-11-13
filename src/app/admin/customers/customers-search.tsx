@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useSession } from "next-auth/react";
 import { useEffect, useRef, useState, useTransition } from "react";
+import { AssignClinic, type ClinicOption } from "./assign-clinic";
 
 type Result = {
   id: string;
@@ -14,7 +15,7 @@ type Result = {
   isActive: boolean;
 };
 
-export function GlobalCustomerSearch() {
+export function GlobalCustomerSearch({ clinics }: { clinics: ClinicOption[] }) {
   const { update } = useSession();
   const router = useRouter();
   const [pending, startTransition] = useTransition();
@@ -47,24 +48,20 @@ export function GlobalCustomerSearch() {
     };
   }, [q]);
 
-  async function openCustomer(r: Result) {
+  async function openCustomer(customerId: string, clinicId: string) {
     setError(null);
-    if (!r.clinicId) {
-      setError("This patient is not assigned to a clinic.");
-      return;
-    }
     const res = await fetch("/api/admin/impersonate/start", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ clinicId: r.clinicId }),
+      body: JSON.stringify({ clinicId }),
     });
     if (!res.ok) {
       setError("Unable to open clinic context for this patient.");
       return;
     }
-    await update({ impersonatingClinicId: r.clinicId });
+    await update({ impersonatingClinicId: clinicId });
     startTransition(() => {
-      router.push(`/clinic/customers/${r.id}`);
+      router.push(`/clinic/customers/${customerId}`);
       router.refresh();
     });
   }
@@ -120,7 +117,9 @@ export function GlobalCustomerSearch() {
             {results.map((r) => (
               <tr key={r.id} className={r.isActive ? undefined : "opacity-60"}>
                 <td className="font-medium text-slate-900">{r.label}</td>
-                <td className="text-slate-600">{r.clinic ?? "—"}</td>
+                <td className="text-slate-600">
+                  {r.clinic ?? <span className="badge-yellow">unassigned</span>}
+                </td>
                 <td className="text-slate-600">{r.email ?? "—"}</td>
                 <td className="text-slate-600">{r.phone ?? "—"}</td>
                 <td>
@@ -129,14 +128,22 @@ export function GlobalCustomerSearch() {
                   </span>
                 </td>
                 <td className="text-right pr-3">
-                  <button
-                    type="button"
-                    className="btn-secondary text-xs"
-                    disabled={pending || !r.clinicId}
-                    onClick={() => openCustomer(r)}
-                  >
-                    Open
-                  </button>
+                  {r.clinicId ? (
+                    <button
+                      type="button"
+                      className="btn-secondary text-xs"
+                      disabled={pending}
+                      onClick={() => openCustomer(r.id, r.clinicId!)}
+                    >
+                      Open
+                    </button>
+                  ) : (
+                    <AssignClinic
+                      customerId={r.id}
+                      clinics={clinics}
+                      onAssigned={(clinicId) => openCustomer(r.id, clinicId)}
+                    />
+                  )}
                 </td>
               </tr>
             ))}
