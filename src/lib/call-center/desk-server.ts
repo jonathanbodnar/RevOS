@@ -522,13 +522,14 @@ export async function buildReport(clinicId: string, now: Date, dayParam?: string
       })
     : [];
   const leadById = new Map(bookedLeads.map((l) => [l.id, l]));
-  const callsToday = await prisma.leadCall.findMany({
-    where: { clinicId, startedAt: { gte: new Date(now.getTime() - 36 * 3600_000) } },
-    select: { startedAt: true, answeredAt: true, bridgedAt: true, endedAt: true, direction: true },
+  // The selected day's window in clinic time (DST-safe: next local midnight).
+  const dayStart = zonedTimeToUtc(`${day}T00:00`, rules.timezone)!;
+  const dayEnd = zonedTimeToUtc(`${addDays(day, 1)}T00:00`, rules.timezone)!;
+  const talked = await prisma.leadCall.findMany({
+    where: { clinicId, startedAt: { gte: dayStart, lt: dayEnd }, bridgedAt: { not: null }, endedAt: { not: null } },
+    select: { bridgedAt: true, endedAt: true },
   });
-  const talkSeconds = callsToday
-    .filter((c) => dayInTz(c.startedAt, rules.timezone) === day && c.bridgedAt && c.endedAt)
-    .reduce((s, c) => s + Math.max(0, (c.endedAt!.getTime() - c.bridgedAt!.getTime()) / 1000), 0);
+  const talkSeconds = talked.reduce((s, c) => s + Math.max(0, (c.endedAt!.getTime() - c.bridgedAt!.getTime()) / 1000), 0);
   return {
     day,
     today,
