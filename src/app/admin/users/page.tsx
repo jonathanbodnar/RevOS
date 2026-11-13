@@ -9,6 +9,7 @@ const ROLE_LABEL: Record<string, string> = {
   CLINIC_ADMIN: "Clinic admin",
   PROVIDER: "Provider",
   BILLING_DEPT: "Billing dept",
+  CALL_AGENT: "Call center",
 };
 
 export default async function AdminUsersPage() {
@@ -24,6 +25,7 @@ export default async function AdminUsersPage() {
         isActive: true,
         clinic: { select: { name: true } },
         _count: { select: { providerAssignments: true } },
+        callCenterAccess: { select: { clinicId: true } },
       },
     }),
     prisma.clinic.findMany({
@@ -38,9 +40,10 @@ export default async function AdminUsersPage() {
       <div>
         <h2 className="text-xl font-semibold text-slate-900">Users</h2>
         <p className="text-sm text-slate-500 mt-0.5">
-          Clinic admins, providers, and the billing department. Providers see
-          only the patients assigned to them; billing sees cross-clinic
-          reporting.
+          Clinic admins, providers, the billing department and the call
+          center. Providers see only the patients assigned to them; billing
+          sees cross-clinic reporting; call center users work leads for the
+          clinics you pick.
         </p>
       </div>
       <UsersClient
@@ -54,6 +57,7 @@ export default async function AdminUsersPage() {
           isActive: u.isActive,
           clinicName: u.clinic?.name ?? null,
           assignmentCount: u._count.providerAssignments,
+          callCenterClinicIds: u.callCenterAccess.map((a) => a.clinicId),
         }))}
       />
     </div>

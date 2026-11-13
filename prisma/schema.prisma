@@ -847,6 +847,10 @@ model LeadCall {
   mode                String    @default("manual")
   /// 1, or 2 for the immediate second dial of a double-dial.
   dialNumber          Int       @default(1)
+  /// The list section the call was placed from (fresh, cycle, callback, …)
+  /// and the confirmation touch, so an auto-dialed no-answer is logged right.
+  kind                String?
+  touch               String?
   /// queued | dialing | answered | bridged | ended | failed
   status              String    @default("queued")
   fromNumber          String?
