@@ -469,7 +469,7 @@ async function onInitiated(p: Payload, st: Record<string, unknown> | null) {
   const setup = await getSetup();
   // A browser phone going live: its call is parked on the credential connection.
   if (p.connection_id && p.connection_id === setup.credentialConnectionId) {
-    const sessionId = header(p, SESSION_HEADER);
+    const sessionId = header(p, SESSION_HEADER) ?? (st?.t === "agent" && typeof st.s === "string" ? st.s : null);
     const s = sessionId ? await prisma.dialerSession.findUnique({ where: { id: sessionId } }) : null;
     if (!s || s.status !== "connecting" || s.agentCallControlId) {
       await deps.telnyx.hangup(p.call_control_id).catch(() => {});

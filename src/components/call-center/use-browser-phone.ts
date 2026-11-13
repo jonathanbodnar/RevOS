@@ -69,7 +69,10 @@ export function useBrowserPhone(onDropped?: () => void) {
           callerNumber: opts.dialTarget,
           audio: true,
           video: false,
+          // The session id rides both as a SIP header and as client state, so
+          // the server can match this leg whichever Telnyx passes through.
           customHeaders: [{ name: opts.header, value: opts.sessionId }],
+          clientState: btoa(JSON.stringify({ t: "agent", s: opts.sessionId })),
           remoteElement: audioRef.current ?? undefined,
         });
       });
