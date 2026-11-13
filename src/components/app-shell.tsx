@@ -14,6 +14,7 @@ export function AppShell({
   session,
   clinicName,
   headerAction,
+  hideChat,
 }: {
   title: string;
   subtitle?: string;
@@ -29,6 +30,8 @@ export function AppShell({
   };
   clinicName?: string;
   headerAction?: React.ReactNode;
+  /** The call desk needs the bottom-right corner; it has no use for the training assistant. */
+  hideChat?: boolean;
 }) {
   const initials = (session.user.name || session.user.email || "?")
     .split(/[\s@.]+/)
@@ -111,7 +114,7 @@ export function AppShell({
         </header>
         <div className="flex-1 px-10 pb-12">{children}</div>
       </main>
-      <ChatDock />
+      {!hideChat && <ChatDock />}
     </div>
   );
 }

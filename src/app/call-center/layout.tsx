@@ -17,9 +17,10 @@ export default async function CallCenterLayout({ children }: { children: React.R
   return (
     <AppShell
       title="Call center"
-      subtitle={isSuper ? "Calls for every clinic, one clinic at a time" : "Pick a clinic to start calling"}
+      subtitle={isSuper ? "Calls for every clinic, one clinic at a time" : "Calls for your clinics, one clinic at a time"}
       nav={nav}
       session={session}
+      hideChat
     >
       {children}
     </AppShell>

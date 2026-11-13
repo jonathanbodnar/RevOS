@@ -106,11 +106,11 @@ export default async function ReportPage({
           <thead>
             <tr>
               <th>Day</th>
-              <th className="text-right">Dials</th>
-              <th className="text-right">People called</th>
-              <th className="text-right">Talked to</th>
-              <th className="text-right">Booked</th>
-              <th className="text-right">Confirmations</th>
+              <th className="!text-right">Dials</th>
+              <th className="!text-right">People called</th>
+              <th className="!text-right">Talked to</th>
+              <th className="!text-right">Booked</th>
+              <th className="!text-right">Confirmations</th>
             </tr>
           </thead>
           <tbody>
