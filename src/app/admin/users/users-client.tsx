@@ -12,12 +12,14 @@ type UserRow = {
   isActive: boolean;
   clinicName: string | null;
   assignmentCount: number;
+  callCenterClinicIds: string[];
 };
 
 const ROLES = [
   { value: "CLINIC_ADMIN", label: "Clinic admin" },
   { value: "PROVIDER", label: "Provider" },
   { value: "BILLING_DEPT", label: "Billing dept" },
+  { value: "CALL_AGENT", label: "Call center" },
 ];
 
 export function UsersClient({
@@ -35,10 +37,13 @@ export function UsersClient({
     password: "",
     role: "CLINIC_ADMIN",
     clinicId: "",
+    clinicIds: [] as string[],
   });
   const [busy, setBusy] = useState(false);
+  const [editing, setEditing] = useState<{ id: string; clinicIds: string[] } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const needsClinic = form.role === "CLINIC_ADMIN" || form.role === "PROVIDER";
+  const isAgent = form.role === "CALL_AGENT";
 
   async function create(e: React.FormEvent) {
     e.preventDefault();
@@ -50,6 +55,7 @@ export function UsersClient({
       body: JSON.stringify({
         ...form,
         clinicId: needsClinic ? form.clinicId : null,
+        clinicIds: isAgent ? form.clinicIds : undefined,
       }),
     });
     setBusy(false);
@@ -58,9 +64,43 @@ export function UsersClient({
       setError(d.error || "Could not create user.");
       return;
     }
-    setForm({ name: "", email: "", password: "", role: "CLINIC_ADMIN", clinicId: "" });
+    setForm({ name: "", email: "", password: "", role: "CLINIC_ADMIN", clinicId: "", clinicIds: [] });
     startTransition(() => router.refresh());
   }
+
+  async function saveAccess() {
+    if (!editing) return;
+    setError(null);
+    const res = await fetch(`/api/admin/users/${editing.id}/call-center`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ clinicIds: editing.clinicIds }),
+    });
+    if (!res.ok) {
+      const d = (await res.json().catch(() => ({}))) as { error?: string };
+      setError(d.error || "Could not save clinics.");
+      return;
+    }
+    setEditing(null);
+    startTransition(() => router.refresh());
+  }
+
+  const clinicChecks = (selected: string[], onChange: (ids: string[]) => void) => (
+    <div className="max-h-44 overflow-y-auto rounded-lg border border-line p-2 space-y-1">
+      {clinics.map((c) => (
+        <label key={c.id} className="flex items-center gap-2 text-sm text-ink px-1 py-0.5">
+          <input
+            type="checkbox"
+            checked={selected.includes(c.id)}
+            onChange={(e) =>
+              onChange(e.target.checked ? [...selected, c.id] : selected.filter((x) => x !== c.id))
+            }
+          />
+          {c.name}
+        </label>
+      ))}
+    </div>
+  );
 
   async function toggleActive(u: UserRow) {
     const res = await fetch(`/api/admin/users/${u.id}`, {
@@ -138,6 +178,12 @@ export function UsersClient({
             </select>
           </div>
         )}
+        {isAgent && (
+          <div>
+            <label className="label">Clinics they call for</label>
+            {clinicChecks(form.clinicIds, (ids) => setForm({ ...form, clinicIds: ids }))}
+          </div>
+        )}
         {error && (
           <div className="text-sm text-red-600 bg-red-50 border border-red-100 rounded-md px-3 py-2">
             {error}
@@ -175,7 +221,35 @@ export function UsersClient({
                       </span>
                     )}
                   </td>
-                  <td className="text-slate-600">{u.clinicName || "—"}</td>
+                  <td className="text-slate-600">
+                    {u.role === "CALL_AGENT" ? (
+                      editing?.id === u.id ? (
+                        <div className="space-y-2 min-w-[220px]">
+                          {clinicChecks(editing.clinicIds, (ids) => setEditing({ id: u.id, clinicIds: ids }))}
+                          <div className="flex gap-2">
+                            <button className="btn-primary !py-1 !px-3 text-xs" onClick={saveAccess} disabled={!editing.clinicIds.length}>
+                              Save
+                            </button>
+                            <button className="btn-ghost !py-1 !px-3 text-xs" onClick={() => setEditing(null)}>
+                              Cancel
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
+                        <button
+                          className="text-left hover:underline"
+                          onClick={() => setEditing({ id: u.id, clinicIds: u.callCenterClinicIds })}
+                        >
+                          {u.callCenterClinicIds.length
+                            ? clinics.filter((c) => u.callCenterClinicIds.includes(c.id)).map((c) => c.name).join(", ")
+                            : "No clinics"}
+                          <span className="text-xs text-slate-400 ml-1">Edit</span>
+                        </button>
+                      )
+                    ) : (
+                      u.clinicName || "—"
+                    )}
+                  </td>
                   <td>
                     <span className={u.isActive ? "badge-green" : "badge-slate"}>
                       {u.isActive ? "active" : "inactive"}

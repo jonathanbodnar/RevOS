@@ -6,6 +6,7 @@ import { logAudit } from "./audit";
 import { securityAlert } from "./security-alert";
 import { decryptSecret } from "./encryption";
 import { verifyTotp } from "./totp";
+import type { AppRole } from "./roles";
 
 // In-process failed-login counter, used only to ALERT on likely brute force —
 // NOT to hard-lock the account. A hard per-email lock would let anyone who
@@ -40,13 +41,13 @@ declare module "next-auth" {
       id: string;
       email: string;
       name?: string | null;
-      role: "SUPER_ADMIN" | "CLINIC_ADMIN" | "PROVIDER" | "BILLING_DEPT";
+      role: AppRole;
       clinicId: string | null;
       // When a super-admin is impersonating, effectiveClinicId is set and
       // originalRole === "SUPER_ADMIN".
       effectiveClinicId: string | null;
       impersonating: boolean;
-      originalRole: "SUPER_ADMIN" | "CLINIC_ADMIN" | "PROVIDER" | "BILLING_DEPT";
+      originalRole: AppRole;
     };
   }
 }
@@ -54,7 +55,7 @@ declare module "next-auth" {
 declare module "next-auth/jwt" {
   interface JWT {
     uid?: string;
-    role?: "SUPER_ADMIN" | "CLINIC_ADMIN" | "PROVIDER" | "BILLING_DEPT";
+    role?: AppRole;
     clinicId?: string | null;
     impersonatingClinicId?: string | null;
   }
@@ -121,7 +122,7 @@ export const authOptions: NextAuthOptions = {
           id: user.id,
           email: user.email,
           name: user.name ?? undefined,
-          role: user.role as "SUPER_ADMIN" | "CLINIC_ADMIN" | "PROVIDER" | "BILLING_DEPT",
+          role: user.role as AppRole,
           clinicId: user.clinicId,
         } as never;
       },
@@ -132,7 +133,7 @@ export const authOptions: NextAuthOptions = {
       if (user) {
         const u = user as unknown as {
           id: string;
-          role: "SUPER_ADMIN" | "CLINIC_ADMIN" | "PROVIDER" | "BILLING_DEPT";
+          role: AppRole;
           clinicId: string | null;
         };
         token.uid = u.id;
@@ -151,7 +152,7 @@ export const authOptions: NextAuthOptions = {
       return token;
     },
     async session({ session, token }): Promise<Session> {
-      const role = (token.role as "SUPER_ADMIN" | "CLINIC_ADMIN" | "PROVIDER" | "BILLING_DEPT") || "CLINIC_ADMIN";
+      const role = (token.role as AppRole) || "CLINIC_ADMIN";
       const ownClinicId = (token.clinicId as string | null) ?? null;
       const impersonating =
         role === "SUPER_ADMIN" && !!token.impersonatingClinicId;

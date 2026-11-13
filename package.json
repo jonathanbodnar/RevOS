@@ -6,7 +6,7 @@
     "dev": "next dev",
     "build": "prisma generate && next build",
     "start": "next start -p ${PORT:-3000}",
-    "test": "tsx --test src/lib/*.test.ts",
+    "test": "tsx --test 'src/lib/**/*.test.ts'",
     "lint": "next lint",
     "db:push": "prisma db push",
     "db:migrate": "prisma migrate dev",
@@ -15,6 +15,7 @@
   },
   "dependencies": {
     "@prisma/client": "^5.22.0",
+    "@telnyx/webrtc": "2.28.2",
     "@types/qrcode": "^1.5.6",
     "bcryptjs": "^2.4.3",
     "clsx": "^2.1.1",
@@ -23,6 +24,7 @@
     "qrcode": "^1.5.4",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
+    "read-excel-file": "9.3.14",
     "zod": "^4.6.5"
   },
   "devDependencies": {
@@ -41,6 +43,8 @@
     "uuid": "^11.1.1",
     "next": {
       "postcss": "$postcss"
-    }
+    },
+    "worker-f": "0.1.21",
+    "graceful-fs": "4.2.11"
   }
 }

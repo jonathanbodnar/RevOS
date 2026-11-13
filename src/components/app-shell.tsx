@@ -3,6 +3,7 @@ import Link from "next/link";
 import { SignOutButton } from "./sign-out";
 import { SidebarNav, type SidebarNavItem } from "./sidebar-nav";
 import { ChatDock } from "./chat-dock";
+import type { AppRole } from "@/lib/roles";
 
 export function AppShell({
   title,
@@ -13,6 +14,7 @@ export function AppShell({
   session,
   clinicName,
   headerAction,
+  hideChat,
 }: {
   title: string;
   subtitle?: string;
@@ -23,11 +25,13 @@ export function AppShell({
     user: {
       email: string;
       name?: string | null;
-      originalRole: "SUPER_ADMIN" | "CLINIC_ADMIN" | "PROVIDER" | "BILLING_DEPT";
+      originalRole: AppRole;
     };
   };
   clinicName?: string;
   headerAction?: React.ReactNode;
+  /** The call desk needs the bottom-right corner; it has no use for the training assistant. */
+  hideChat?: boolean;
 }) {
   const initials = (session.user.name || session.user.email || "?")
     .split(/[\s@.]+/)
@@ -57,7 +61,9 @@ export function AppShell({
             <div className="text-[11px] text-ink-subtle font-medium tracking-wide text-center mt-0.5">
               {session.user.originalRole === "SUPER_ADMIN"
                 ? "Super Admin"
-                : "Clinic"}
+                : session.user.originalRole === "CALL_AGENT"
+                  ? "Call center"
+                  : "Clinic"}
             </div>
           )}
         </div>
@@ -108,7 +114,7 @@ export function AppShell({
         </header>
         <div className="flex-1 px-10 pb-12">{children}</div>
       </main>
-      <ChatDock />
+      {!hideChat && <ChatDock />}
     </div>
   );
 }

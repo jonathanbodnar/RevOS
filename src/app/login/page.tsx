@@ -2,12 +2,12 @@ import Image from "next/image";
 import { getSession } from "@/lib/session";
 import { redirect } from "next/navigation";
 import { LoginForm } from "./login-form";
+import { homePathFor } from "@/lib/roles";
 
 export default async function LoginPage() {
   const session = await getSession();
   if (session?.user) {
-    if (session.user.originalRole === "SUPER_ADMIN") redirect("/admin");
-    redirect("/clinic");
+    redirect(homePathFor(session.user.originalRole));
   }
   return (
     <div className="min-h-screen flex items-center justify-center p-6 bg-surface-base">

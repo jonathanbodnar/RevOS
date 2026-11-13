@@ -51,6 +51,9 @@ Default seeded credentials come from `SUPER_ADMIN_EMAIL` /
 | `NEXT_PUBLIC_FORTIS_ELEMENTS_URL` | Fortis Elements JS SDK URL. |
 | `SUPER_ADMIN_EMAIL` / `SUPER_ADMIN_PASSWORD` | Seed credentials. |
 | `CRON_SECRET` | Bearer token required by the reconciliation cron (route is disabled if unset). |
+| `TELNYX_API_KEY` | Telnyx v2 API key for the call center (Mission Control → API Keys). Use a different key in Dev and production. Without it the desk logs calls only. |
+| `TELNYX_PUBLIC_KEY` | Telnyx account public key (Mission Control → Keys & Credentials). **Required** for `/api/webhooks/telnyx`, which fails closed (503) without it. |
+| `MINDBODY_API_KEY` / `MINDBODY_SOURCE_NAME` / `MINDBODY_SOURCE_PASSWORD` | RevOS's Mindbody developer account, for the clinic CRM connector. Unset = the Mindbody card says it isn't available yet. Read the 48-hour caching clause in [`call-center-import.md`](./call-center-import.md) before setting these. |
 
 `.env` is git-ignored. Never print, commit, or echo it.
 
@@ -76,6 +79,10 @@ See [`payments.md`](./payments.md#reconciliation) for what it does.
 - Register webhook endpoints in LunarPay and LookinBody pointing at
   `/api/webhooks/lunarpay` and `/api/webhooks/inbody` (or the `/webhooks/*`
   aliases).
+- Telnyx webhooks are registered by RevOS itself: Call center → Phone setup →
+  **Set up Telnyx** points them at `${NEXT_PUBLIC_APP_URL}/api/webhooks/telnyx`.
+  Run it once per environment (Dev and production use separate Telnyx objects
+  only if they use separate keys).
 
 ## Security caveats (address before production)
 

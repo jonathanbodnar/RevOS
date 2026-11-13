@@ -122,6 +122,32 @@ Guard legend:
 | PATCH | `/api/clinic/settings` | Clinic-scoped (`getSession`) | Update clinic settings. |
 | POST / DELETE | `/api/clinic/settings/logo` | Clinic-scoped (`getSession`) | Upload / remove clinic logo. |
 
+### `call-center/*` — call center (`SUPER_ADMIN` or `CALL_AGENT` with that clinic)
+Guard: `clinicRoute()` (`src/lib/call-center/route-helpers.ts`) → 401 signed out,
+403 other roles, 404 for a clinic the agent can't work. Pages live under
+`/call-center` (clinic picker), `/call-center/[clinicId]` (Today),
+`/leads`, `/report`, `/import`, `/rules`, and `/call-center/phone-setup` (super admin).
+
+| Method | Path | Purpose |
+| --- | --- | --- |
+| GET | `/api/call-center/[clinicId]/desk` | The day's list, current lead (claimed), tally, rules. `?focus=<leadId>` opens a lead. |
+| GET, POST | `/api/call-center/[clinicId]/leads` | List/search leads; add one. |
+| GET | `/api/call-center/[clinicId]/leads/[leadId]` | Lead detail and history. |
+| POST | `/api/call-center/[clinicId]/leads/[leadId]/outcome` | Log a call result (frees the agent's line; continues auto-dial). |
+| POST | `/api/call-center/[clinicId]/leads/[leadId]/update` | Showed / clinic cancelled / no-show / recycle, status, priority, appointment time. |
+| POST | `/api/call-center/[clinicId]/leads/[leadId]/skip` | Skip for now. |
+| POST | `/api/call-center/[clinicId]/more` | Add 25 new leads to today's list. |
+| GET, PUT | `/api/call-center/[clinicId]/rules` | Read / save the clinic's call rules (audited). |
+| GET | `/api/call-center/[clinicId]/report` | Day tally, booked list, week. |
+| GET, POST | `/api/call-center/[clinicId]/dialer` | Line state (polled; heartbeat) / `start`, `end`, `dial`, `hangup`, `auto`, `pause`. |
+| POST | `/api/call-center/phone/token` | 24-hour Telnyx JWT for the agent's browser phone. |
+| GET, POST | `/api/call-center/admin/telnyx` | Super admin: setup status / create Telnyx objects. |
+| GET, POST | `/api/call-center/admin/numbers` | Super admin: search numbers / buy or attach one for a clinic. |
+| DELETE | `/api/call-center/admin/numbers/[id]` | Super admin: take a number off a clinic (stays in Telnyx). |
+| PUT | `/api/admin/users/[id]/call-center` | Super admin: set a call center user's clinics. |
+
+Import, integration and connect-link routes: [`call-center-import.md`](./call-center-import.md).
+
 ### `public/*` — token-gated (no session)
 | Method | Path | Guard | Purpose |
 | --- | --- | --- | --- |
@@ -135,6 +161,7 @@ Guard legend:
 | --- | --- | --- | --- |
 | POST | `/api/webhooks/lunarpay` | HMAC (`LUNARPAY_WEBHOOK_SECRET`) | Handle payment/charge/subscription/checkout events. |
 | POST | `/api/webhooks/inbody` | Secret header + `Account` match | Ingest a LookinBody scan notification. |
+| POST | `/api/webhooks/telnyx` | Ed25519 signature (`TELNYX_PUBLIC_KEY`, 503 if unset) | Call events for the dialer and the agents' browser phones. |
 
 > `/webhooks/lunarpay` and `/webhooks/inbody` (no `/api` prefix) are **aliases**
 > that re-export `POST` from the `/api/webhooks/*` handlers — same behavior. They
