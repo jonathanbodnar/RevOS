@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { buildDayPlan, dayStats, touchFor, type DayActivity, type QueueLead } from "./queue";
+import { buildDayPlan, callbackWaiting, dayStats, touchFor, type DayActivity, type QueueLead } from "./queue";
 import { DEFAULT_RULES, type CallRulesConfig } from "./rules";
 import { zonedTimeToUtc } from "./time";
 
@@ -46,7 +46,7 @@ test("no list on Sundays or days that aren't calling days", () => {
 });
 
 test("sections are worked in Dial Desk order and each lead appears once", () => {
-  const cb = lead({ id: "cb000000001", stage: "nurture", callbackAt: zonedTimeToUtc(`${DAY}T15:00`, TZ) });
+  const cb = lead({ id: "cb000000001", stage: "nurture", callbackAt: zonedTimeToUtc(`${DAY}T09:30`, TZ) });
   const conf = lead({ id: "cf000000001", stage: "booked", apptAt: zonedTimeToUtc("2026-11-13T11:00", TZ) });
   const reb = lead({ id: "rb000000001", stage: "resched", nextDueDay: DAY });
   const cyc = lead({ id: "cy000000001", stage: "cycle", nextDueDay: "2026-11-10", attempts: 1 });
@@ -113,6 +113,22 @@ test("a lead another agent has open is skipped for the current card", () => {
   assert.equal(mine.current?.leadId, taken.id);
   const expired = buildDayPlan({ leads: [{ ...taken, claimedUntil: new Date(NOW.getTime() - 1) }, free], activities: [], rules: rules(), day: DAY, now: NOW, userId: "me" });
   assert.equal(expired.current?.leadId, taken.id);
+});
+
+test("a call back set for later today stays listed but isn't the current card until its time", () => {
+  const later = lead({ stage: "nurture", callbackAt: zonedTimeToUtc(`${DAY}T14:00`, TZ) });
+  const soon = lead({ stage: "nurture", callbackAt: zonedTimeToUtc(`${DAY}T10:04`, TZ) });
+  const fresh = lead();
+  const plan = buildDayPlan({ leads: [later, fresh], activities: [], rules: rules(), day: DAY, now: NOW });
+  assert.deepEqual(ids(plan, "callback"), [later.id]);
+  assert.equal(plan.current?.leadId, fresh.id);
+  // Within five minutes of its time, it's up.
+  const due = buildDayPlan({ leads: [later, soon, fresh], activities: [], rules: rules(), day: DAY, now: NOW });
+  assert.equal(due.current?.leadId, soon.id);
+  // Nothing else left: the waiting call back is still offered rather than "list done".
+  const only = buildDayPlan({ leads: [later], activities: [], rules: rules(), day: DAY, now: NOW });
+  assert.equal(only.current?.leadId, later.id);
+  assert.equal(callbackWaiting("cycle", later.callbackAt, NOW), false);
 });
 
 test("skip for now moves a lead to the end of the day's order", () => {

@@ -21,11 +21,12 @@ type Row = {
 };
 type Page = { total: number; page: number; perPage: number; rows: Row[]; counts: Record<string, number> };
 
-const short = (iso: string | null) =>
-  iso ? new Date(iso).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) : "—";
+/** In clinic time, like the desk. */
+const short = (iso: string | null, tz: string) =>
+  iso ? new Date(iso).toLocaleString("en-US", { timeZone: tz, month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) : "—";
 
 /** Every lead for this clinic. Click one to open it on the desk. */
-export function LeadsClient({ clinicId }: { clinicId: string }) {
+export function LeadsClient({ clinicId, tz }: { clinicId: string; tz: string }) {
   const base = `/api/call-center/${clinicId}`;
   const [stage, setStage] = useState("all");
   const [q, setQ] = useState("");
@@ -168,9 +169,9 @@ export function LeadsClient({ clinicId }: { clinicId: string }) {
                     <span className={isStage(r.stage) ? STAGE_BADGE[r.stage] : "badge-slate"}>{isStage(r.stage) ? STAGE_LABEL[r.stage] : r.stage}</span>
                   </td>
                   <td className="tabular-nums">{r.attempts}</td>
-                  <td className="text-ink-muted">{short(r.lastCalledAt)}</td>
+                  <td className="text-ink-muted">{short(r.lastCalledAt, tz)}</td>
                   <td className="text-ink-muted">
-                    {r.stage === "nurture" && r.callbackAt ? short(r.callbackAt) : r.stage === "booked" && r.apptAt ? short(r.apptAt) : r.nextDueDay ?? "—"}
+                    {r.stage === "nurture" && r.callbackAt ? short(r.callbackAt, tz) : r.stage === "booked" && r.apptAt ? short(r.apptAt, tz) : r.nextDueDay ?? "—"}
                   </td>
                   <td>{r.consent ? <span className="badge-green">Yes</span> : <span className="text-ink-subtle text-xs">No</span>}</td>
                 </tr>

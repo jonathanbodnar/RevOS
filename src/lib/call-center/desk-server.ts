@@ -11,7 +11,7 @@ import { decryptField, encryptField } from "../encryption";
 import { normalizePhone } from "../phone";
 import { loadRules } from "./access";
 import { applyMark, applyOutcome, applyStage, mmdd, type ActivityDraft, type LeadPatch } from "./outcomes";
-import { buildDayPlan, dayStats, weekMarks, type DayActivity, type DayPlan, type QueueLead } from "./queue";
+import { buildDayPlan, callbackWaiting, dayStats, weekMarks, type DayActivity, type DayPlan, type QueueLead } from "./queue";
 import type { CallRulesConfig } from "./rules";
 import { isStage, leadName, type CallOutcome, type ItemKind, type Mark, type Touch } from "./stages";
 import { addDays, dayInTz, weekDays, zonedTimeToUtc, type Day } from "./time";
@@ -212,7 +212,7 @@ export async function buildDesk(input: {
   focusKind?: "inbound" | null;
 }) {
   const { clinicId, userId, now } = input;
-  const { rules, day, plan, activities, newLeft } = await loadPlan(clinicId, userId, now);
+  const { rules, day, plan, activities, newLeft, leads } = await loadPlan(clinicId, userId, now);
 
   // Current card: an opened/pinned lead, else the first open item we can claim.
   let current: { leadId: string; kind: ItemKind; touch?: Touch } | null = null;
@@ -225,16 +225,16 @@ export async function buildDesk(input: {
           ? { leadId: inPlan.leadId, kind: inPlan.kind, touch: inPlan.touch }
           : { leadId: input.focusLeadId, kind: "manual" };
   } else {
-    for (const s of plan.sections) {
-      for (const it of s.items) {
-        if (it.done || it.claimedByOther) continue;
-        if (await claimLead(it.leadId, userId, now)) {
-          current = { leadId: it.leadId, kind: it.kind, touch: it.touch };
-          break;
-        }
-        it.claimedByOther = true;
+    // In list order, except that call backs set for later today wait for their time.
+    const callbackAt = new Map(leads.map((l) => [l.id, l.callbackAt]));
+    const open = plan.sections.flatMap((s) => s.items).filter((i) => !i.done && !i.claimedByOther);
+    const waiting = (i: (typeof open)[number]) => callbackWaiting(i.kind, callbackAt.get(i.leadId) ?? null, now);
+    for (const it of [...open.filter((i) => !waiting(i)), ...open.filter(waiting)]) {
+      if (await claimLead(it.leadId, userId, now)) {
+        current = { leadId: it.leadId, kind: it.kind, touch: it.touch };
+        break;
       }
-      if (current) break;
+      it.claimedByOther = true;
     }
   }
 

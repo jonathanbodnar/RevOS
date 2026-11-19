@@ -1,6 +1,6 @@
 /** Past imports for a clinic: counts only. Works as a server component. */
 import type { ImportHistoryItem } from "@/lib/call-center/import-server";
-import { formatDate } from "@/lib/format";
+import { formatDateTime } from "@/lib/call-center/time";
 
 const SOURCE_LABEL: Record<string, string> = {
   csv: "CSV",
@@ -24,7 +24,8 @@ function statusBadge(i: ImportHistoryItem, now: number) {
   return <span className="badge-yellow">Running</span>;
 }
 
-export function ImportHistory({ items, now = Date.now() }: { items: ImportHistoryItem[]; now?: number }) {
+/** `tz` is the clinic's time zone: this renders on the server, which runs in UTC. */
+export function ImportHistory({ items, tz, now = Date.now() }: { items: ImportHistoryItem[]; tz: string; now?: number }) {
   if (!items.length) {
     return <div className="card-pad text-sm text-ink-muted">No imports yet.</div>;
   }
@@ -47,7 +48,7 @@ export function ImportHistory({ items, now = Date.now() }: { items: ImportHistor
         <tbody>
           {items.map((i) => (
             <tr key={i.id}>
-              <td className="whitespace-nowrap text-ink-muted text-xs">{formatDate(i.createdAt)}</td>
+              <td className="whitespace-nowrap text-ink-muted text-xs">{formatDateTime(i.createdAt, tz)}</td>
               <td className="max-w-[16rem]">
                 <span className="font-medium">{SOURCE_LABEL[i.source] ?? i.source}</span>
                 {i.fileName && <span className="block text-xs text-ink-subtle truncate">{i.fileName}</span>}

@@ -98,6 +98,14 @@ export function callbackDue(l: QueueLead, day: Day, tz: string): boolean {
   return !!l.nextDueDay && l.nextDueDay <= day && l.lastAttemptDay !== day;
 }
 
+/**
+ * A call back set for later today: it stays on the list, but nobody is put on it
+ * until its time comes (5 minutes' grace). The desk and the auto dialer both use this.
+ */
+export function callbackWaiting(kind: string, callbackAt: Date | null, now: Date): boolean {
+  return kind === "callback" && !!callbackAt && callbackAt.getTime() > now.getTime() + 5 * 60_000;
+}
+
 const dueOn = (l: QueueLead, day: Day) =>
   !!l.nextDueDay && l.nextDueDay <= day && l.lastAttemptDay !== day;
 
@@ -199,7 +207,8 @@ export function buildDayPlan(input: {
   }).filter((s) => s.total > 0);
 
   const freshDone = [...doneBy.values()].filter((d) => d.kind === "fresh").length;
-  const current = order.find((i) => !i.claimedByOther) ?? null;
+  const waiting = (i: QueueItem) => callbackWaiting(i.kind, byId.get(i.leadId)?.callbackAt ?? null, now);
+  const current = order.find((i) => !i.claimedByOther && !waiting(i)) ?? order.find((i) => !i.claimedByOther) ?? null;
   return {
     day,
     off: false,

@@ -1,5 +1,5 @@
 import { headers } from "next/headers";
-import { requireCallCenterClinicPage } from "@/lib/call-center/access";
+import { loadRules, requireCallCenterClinicPage } from "@/lib/call-center/access";
 import { listConnectLinks } from "@/lib/call-center/connect-link";
 import { recentImports } from "@/lib/call-center/import-server";
 import { integrationViews } from "@/lib/crm/integrations";
@@ -21,10 +21,11 @@ export default async function CallCenterImportPage({ params }: { params: Promise
   const h = await headers();
   const host = h.get("x-forwarded-host") ?? h.get("host");
   const origin = host ? `${h.get("x-forwarded-proto") ?? "https"}://${host}` : null;
-  const [imports, integrations, links] = await Promise.all([
+  const [imports, integrations, links, rules] = await Promise.all([
     recentImports(clinic.id),
     integrationViews(clinic.id),
     listConnectLinks(clinic.id, origin),
+    loadRules(clinic.id),
   ]);
 
   return (
@@ -45,7 +46,7 @@ export default async function CallCenterImportPage({ params }: { params: Promise
           <h3 className="section-title">Past imports</h3>
           <p className="section-subtitle">The last 20, newest first.</p>
         </div>
-        <ImportHistory items={imports} />
+        <ImportHistory items={imports} tz={rules.timezone} />
       </section>
 
       <section className="space-y-4">

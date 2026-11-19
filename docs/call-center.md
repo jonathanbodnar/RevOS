@@ -53,7 +53,9 @@ request so several agents (and the auto dialer) share one list:
 "Done" items come from today's `LeadActivity` rows (`kind` = the section).
 "Skip for now" sends a lead to the end of the day. A lead another agent has
 open is skipped for the current card (`Lead.claimedById/claimedUntil`, 3-minute
-claim).
+claim). A call back set for later today stays on the list with its time, but the
+desk and the auto dialer only put someone on it within 5 minutes of that time
+(`callbackWaiting`); if nothing else is left, the desk offers it anyway.
 
 ## What a result does (`outcomes.ts`)
 

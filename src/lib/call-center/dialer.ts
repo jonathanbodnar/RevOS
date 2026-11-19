@@ -34,6 +34,7 @@ import { prisma } from "../prisma";
 import { normalizePhone } from "../phone";
 import { loadRules } from "./access";
 import { claimLead, loadPlan, logOutcome, releaseClaims } from "./desk-server";
+import { callbackWaiting } from "./queue";
 import { checkCallingHours, type CallRulesConfig } from "./rules";
 import { QUEUE_KINDS, type CallOutcome, type ItemKind, type QueueKind, type Touch } from "./stages";
 import { dayInTz } from "./time";
@@ -357,7 +358,7 @@ export async function autoDialNext(sessionId: string): Promise<void> {
   for (const it of items) {
     const lead = byId.get(it.leadId);
     if (!lead) continue;
-    if (it.kind === "callback" && lead.callbackAt && lead.callbackAt.getTime() > now.getTime() + 5 * 60_000) continue;
+    if (callbackWaiting(it.kind, lead.callbackAt, now)) continue;
     const g = await dialGuard(lead, rules, now, true);
     if (!g.ok) {
       if (g.reason.startsWith("No written consent")) skippedConsent++;

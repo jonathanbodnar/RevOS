@@ -658,7 +658,11 @@ function PhoneBar(props: {
 function itemSub(it: Item, l: Summary | undefined, rules: CallRulesConfig, tz: string): string {
   if (!l) return "";
   if (it.kind === "callback") return l.callbackAt ? formatDateTime(l.callbackAt, tz) : "Due today";
-  if (it.kind === "confirm") return `${it.touch ? TOUCH_LABEL[it.touch] : "Confirm"} · ${formatDateTime(l.apptAt, tz)}`;
+  if (it.kind === "confirm") {
+    const label = it.touch ? TOUCH_LABEL[it.touch] : "Confirm";
+    // A confirmation call that ended in a cancel has no appointment any more.
+    return l.apptAt ? `${label} · ${formatDateTime(l.apptAt, tz)}` : label;
+  }
   if (it.kind === "resched") return `Try ${Math.min(l.attempts + 1, rules.rebookAttempts)} of ${rules.rebookAttempts}`;
   if (it.kind === "cycle") return `Try ${l.attempts + 1} of ${rules.maxAttempts}${l.lastAttemptDay ? ` · last ${formatDay(l.lastAttemptDay)}` : ""}`;
   return l.priority ? "Priority" : "New lead";
