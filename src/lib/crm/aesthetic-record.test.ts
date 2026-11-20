@@ -2,7 +2,8 @@
 import { afterEach, beforeEach, mock, test } from "node:test";
 import assert from "node:assert/strict";
 import { http } from "./http";
-import { aestheticRecord, AESTHETIC_RECORD_EXPORT_STEPS } from "./aesthetic-record";
+import { aestheticRecord } from "./aesthetic-record";
+import { guideFor } from "./guides";
 
 let fetches: number;
 beforeEach(() => {
@@ -29,6 +30,6 @@ test("asking for access is recorded as pending with nothing stored and no reques
 
 test("pulling leads explains the spreadsheet route instead", async () => {
   await assert.rejects(aestheticRecord.fetchLeads({}, { limit: 10 }), { name: "CrmError", kind: "unavailable", message: /Export it to Excel/ });
-  assert.ok(AESTHETIC_RECORD_EXPORT_STEPS.some((s) => /Export as Excel/.test(s)));
+  assert.ok(guideFor("aesthetic_record", true).steps.some((s) => /Export as Excel/.test(s.text)));
   assert.equal(fetches, 0);
 });

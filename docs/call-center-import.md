@@ -69,8 +69,20 @@ clinic (`requireCallCenterClinicPage`).
 Below the import are three more sections:
 
 - **Past imports**: the last 20, with counts.
-- **Clinic CRM**: one card each for Zenoti, Mindbody and Aesthetic Record,
-  with Connect, Sync now and Disconnect.
+- **Clinic CRM**: first "Which one does your clinic use?" with the Zenoti,
+  Mindbody and Aesthetic Record logos. Picking one opens its card, with
+  Connect, Sync now and Disconnect. A CRM that's connected (or being
+  connected) opens straight away; "Pick a different CRM" goes back.
+  - Next to the CRM's name is a **How to find …** button, then its status
+    badge. The button opens step-by-step help: numbered steps, menu paths as
+    chips, the vendor's own guide linked, and room for a screenshot per step.
+    Content is in `src/lib/crm/guides.ts`.
+  - Mindbody shows **How to export your clients** until it can be connected.
+  - Logos (`public/crm/`) are the vendors' own, used only to show which CRM
+    is which. Mindbody's API terms add its Branding Requirements once RevOS
+    is a Mindbody developer.
+  - Screenshots: none yet (they need a login to each CRM). Put them in
+    `public/crm/guides/` and set `image` on the step.
 - **Clinic link**: make, copy or turn off the link.
 
 ### Clinic connect link (`/connect/<token>`)
@@ -78,8 +90,8 @@ Below the import are three more sections:
 This page is RevOS-branded and shows the clinic's name. It has no app shell
 and needs no login. It is marked `noindex`.
 
-- **Connect your CRM.** The same three cards. After a CRM connects, the page
-  pulls the leads straight away.
+- **Connect your CRM.** The same picker, card and step-by-step help. After a
+  CRM connects, the page pulls the leads straight away.
 - **Upload a spreadsheet.** The same import flow, simplified:
   - Columns are matched automatically. **Fix columns** opens the pickers and
     the header row choice.
@@ -263,9 +275,13 @@ OAuth flow.
 
 **Clinic setup:**
 
-1. In Zenoti, go to Configuration, then Integrations, then Apps, and click
-   **Add**.
-2. Create a backend app with read access to guests and centers.
+The card's **How to find your API key** walks through it (from Zenoti's
+"Create the backend app and generate a new API key" page):
+
+1. At the organization level, Configuration, then Integrations, then Apps,
+   then **Add**.
+2. Name it RevOS, Login User Type Employee, Source App Client App, then tick
+   the guest and center groups under APIKEY Groups.
 3. Click **Generate API Key** and paste the key on the card.
 
 **Requests:**

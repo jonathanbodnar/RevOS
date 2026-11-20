@@ -168,7 +168,6 @@ export const zenoti: CrmAdapter = {
       label: "API key",
       type: "password",
       placeholder: "Paste your Zenoti API key",
-      help: "In Zenoti: Configuration, then Integrations, then Apps. Add a backend app with read access to guests and centers, then Generate API Key.",
     },
   ],
   connect,

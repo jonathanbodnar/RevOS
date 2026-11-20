@@ -6,17 +6,10 @@
  * for reading a clinic's clients or leads out. So connecting only records that
  * the clinic asked (status "pending"), and the card tells them to ask
  * Aesthetic Record support for an API key for RevOS, and to export their
- * client list to Excel and upload it meanwhile. No endpoints are called.
+ * client list to Excel and upload it meanwhile (the steps are in guides.ts).
+ * No endpoints are called.
  */
 import { CrmError, type ConnectOutcome, type CrmAdapter } from "./types";
-
-/** Export steps as Aesthetic Record's help center gives them. */
-export const AESTHETIC_RECORD_EXPORT_STEPS = [
-  "In Aesthetic Record, open Clients (or Patients).",
-  "Click + and pick the columns to include (name, phone, email).",
-  "Click Import/Export, then Export as Excel.",
-  "Upload that file below.",
-];
 
 async function connect(): Promise<ConnectOutcome> {
   return { status: "pending", credentials: null, accountLabel: null, externalId: null, step: { kind: "requested" } };

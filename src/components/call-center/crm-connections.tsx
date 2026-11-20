@@ -1,17 +1,19 @@
 "use client";
 
 /**
- * CRM connection cards (Zenoti, Mindbody, Aesthetic Record) for the staff
- * Import page and the clinic connect link. Connecting can take steps (pick a
- * center, approve RevOS in Mindbody); "Sync now" pulls leads in batches until
- * the CRM has no more. Credentials are typed here and sent once; the server
- * never sends them back.
+ * CRM connection for the staff Import page and the clinic connect link. The
+ * clinic first picks which CRM it uses (Zenoti, Mindbody, Aesthetic Record),
+ * then gets that one card, with a "How to find …" button for step-by-step help.
+ * Connecting can take steps (pick a center, approve RevOS in Mindbody); "Sync
+ * now" pulls leads in batches until the CRM has no more. Credentials are typed
+ * here and sent once; the server never sends them back.
  */
-import { useState } from "react";
+import { Fragment, useEffect, useState } from "react";
+import Image from "next/image";
 import { useRouter } from "next/navigation";
 import type { IntegrationView } from "@/lib/crm/integrations";
-import type { ConnectStep } from "@/lib/crm/types";
-import { AESTHETIC_RECORD_EXPORT_STEPS } from "@/lib/crm/aesthetic-record";
+import type { ConnectStep, CrmProvider } from "@/lib/crm/types";
+import { CRM_LOGOS, guideFor, pickerHint, type CrmGuide } from "@/lib/crm/guides";
 import { formatDateTime } from "@/lib/call-center/time";
 
 type Mode = "staff" | "link";
@@ -39,11 +41,139 @@ export function CrmConnections({
   /** The clinic's time zone, so the server and the browser print the same times. */
   tz: string;
 }) {
+  // A clinic uses one CRM: open the one already connected (or being
+  // connected), otherwise ask which one they use.
+  const inUse = integrations.find((i) => i.status === "connected" || i.status === "pending" || i.status === "error");
+  const [picked, setPicked] = useState<CrmProvider | null>(inUse?.provider ?? null);
+  const view = picked ? integrations.find((i) => i.provider === picked) : undefined;
+  if (!view) return <CrmPicker mode={mode} integrations={integrations} onPick={setPicked} />;
   return (
-    <div className="grid lg:grid-cols-3 gap-4">
-      {integrations.map((i) => (
-        <CrmCard key={i.provider} mode={mode} base={base} view={i} tz={tz} />
-      ))}
+    <div className="max-w-xl space-y-3">
+      <button type="button" className="btn-link text-sm" onClick={() => setPicked(null)}>
+        ← Pick a different CRM
+      </button>
+      <CrmCard key={view.provider} mode={mode} base={base} view={view} tz={tz} />
+    </div>
+  );
+}
+
+function CrmPicker({
+  mode,
+  integrations,
+  onPick,
+}: {
+  mode: Mode;
+  integrations: IntegrationView[];
+  onPick: (p: CrmProvider) => void;
+}) {
+  return (
+    <div className="space-y-3">
+      <p className="text-sm font-medium text-ink">
+        {mode === "link" ? "Which one does your clinic use?" : "Which CRM does this clinic use?"}
+      </p>
+      <div className="grid sm:grid-cols-3 gap-4">
+        {integrations.map((i) => {
+          const logo = CRM_LOGOS[i.provider];
+          return (
+            <button
+              key={i.provider}
+              type="button"
+              onClick={() => onPick(i.provider)}
+              className="card-pad text-left flex flex-col gap-4 transition hover:border-neutral-400 hover:shadow-sm"
+            >
+              <span className="h-10 flex items-center">
+                <Image
+                  src={logo.src}
+                  alt={i.label}
+                  width={logo.width}
+                  height={logo.height}
+                  unoptimized
+                  className={`${logo.size} w-auto object-contain object-left`}
+                />
+              </span>
+              <span className="text-sm text-ink-muted">{pickerHint(i.provider, !i.unavailable)}</span>
+              {i.status === "connected" && <span className="badge-green self-start">Connected</span>}
+            </button>
+          );
+        })}
+      </div>
+      <p className="text-xs text-ink-subtle">Not one of these? Upload a spreadsheet instead.</p>
+    </div>
+  );
+}
+
+/** Numbered steps for finding a key or exporting a list, with menu paths and screenshots. */
+function GuideDialog({ guide, onClose }: { guide: CrmGuide; onClose: () => void }) {
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="crm-guide-title"
+      className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/40 p-4 sm:items-center"
+      onClick={onClose}
+    >
+      <div className="card my-8 w-full max-w-2xl" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-start justify-between gap-4 border-b border-line px-6 pb-4 pt-5">
+          <div>
+            <h2 id="crm-guide-title" className="text-lg font-semibold text-ink">
+              {guide.title}
+            </h2>
+            <p className="mt-1 text-sm text-ink-muted">{guide.intro}</p>
+          </div>
+          <button type="button" className="btn-ghost !py-1.5" onClick={onClose}>
+            Close
+          </button>
+        </div>
+        <ol className="space-y-5 px-6 py-5">
+          {guide.steps.map((s, i) => (
+            <li key={i} className="flex gap-4">
+              <span className="grid h-7 w-7 shrink-0 place-items-center rounded-full bg-brand-900 text-sm font-semibold text-white">
+                {i + 1}
+              </span>
+              <div className="min-w-0 flex-1 space-y-2 pt-0.5">
+                <p className="text-sm text-ink">{s.text}</p>
+                {s.path && (
+                  <p className="flex flex-wrap items-center gap-1.5 text-xs">
+                    {s.path.map((p, j) => (
+                      <Fragment key={p}>
+                        {j > 0 && <span className="text-ink-subtle">›</span>}
+                        <span className="rounded-md border border-line bg-surface-base px-2 py-0.5 font-medium text-ink">{p}</span>
+                      </Fragment>
+                    ))}
+                  </p>
+                )}
+                {s.image && (
+                  // Screenshots are plain files under /public/crm/guides.
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img src={s.image.src} alt={s.image.alt} className="w-full rounded-lg border border-line" />
+                )}
+              </div>
+            </li>
+          ))}
+        </ol>
+        {(guide.note || guide.source) && (
+          <div className="space-y-1.5 px-6 pb-2 text-xs text-ink-muted">
+            {guide.note && <p>{guide.note}</p>}
+            {guide.source && (
+              <a href={guide.source.url} target="_blank" rel="noopener noreferrer" className="underline underline-offset-2">
+                {guide.source.label} ↗
+              </a>
+            )}
+          </div>
+        )}
+        <div className="px-6 pb-6 pt-3">
+          <button type="button" className="btn-primary" onClick={onClose}>
+            Got it
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
@@ -62,6 +192,7 @@ function CrmCard({ mode, base, view: fromServer, tz }: { mode: Mode; base: strin
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [sync, setSync] = useState<SyncState | null>(null);
+  const [guideOpen, setGuideOpen] = useState(false);
   const status = view.status;
   const badge = STATUS_BADGE[status];
   const isAR = view.provider === "aesthetic_record";
@@ -197,14 +328,7 @@ function CrmCard({ mode, base, view: fromServer, tz }: { mode: Mode; base: strin
             {busy ? "Saving…" : "I want this connected"}
           </button>
         )}
-        <div>
-          <p className="font-medium text-ink">Until then, upload your client list:</p>
-          <ol className="list-decimal pl-5 mt-1 space-y-0.5">
-            {AESTHETIC_RECORD_EXPORT_STEPS.map((s) => (
-              <li key={s}>{s}</li>
-            ))}
-          </ol>
-        </div>
+        <p>Until then, export your client list and upload it on this page.</p>
       </div>
     );
   } else if (view.unavailable) {
@@ -308,11 +432,18 @@ function CrmCard({ mode, base, view: fromServer, tz }: { mode: Mode; base: strin
     );
   }
 
+  const guide = guideFor(view.provider, !view.unavailable);
+  const comingSoon = !!view.unavailable && !isAR;
   return (
     <div className="card-pad flex flex-col">
-      <div className="flex items-start justify-between gap-3">
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
         <h3 className="section-title">{view.label}</h3>
-        {!(view.unavailable && !isAR) && <span className={badge.cls}>{isAR && status === "pending" ? "Requested" : badge.label}</span>}
+        <button type="button" className="btn-secondary !px-3 !py-1 text-xs" onClick={() => setGuideOpen(true)}>
+          {guide.button}
+        </button>
+        <span className={comingSoon ? "badge-slate" : badge.cls}>
+          {comingSoon ? "Coming soon" : isAR && status === "pending" ? "Requested" : badge.label}
+        </span>
       </div>
       {body}
       {sync && (
@@ -327,6 +458,7 @@ function CrmCard({ mode, base, view: fromServer, tz }: { mode: Mode; base: strin
       {status === "connected" && view.lastError && !error && (
         <p className="mt-3 text-xs text-red-600">Last sync: {view.lastError}</p>
       )}
+      {guideOpen && <GuideDialog guide={guide} onClose={() => setGuideOpen(false)} />}
     </div>
   );
 }
