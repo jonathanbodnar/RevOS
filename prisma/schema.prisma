@@ -19,17 +19,20 @@ enum Role {
   // Cross-clinic billing team: reporting, payouts, advanced costs. No clinic
   // or user management, no impersonation.
   BILLING_DEPT
+  // Call center agent: works leads in /call-center for the clinics listed in
+  // CallCenterAccess. No patients, billing or clinic settings.
+  CALL_AGENT
 }
 
 model User {
-  id           String   @id @default(cuid())
-  email        String   @unique
-  passwordHash String
-  name         String?
-  role         Role
-  clinicId     String?
-  clinic       Clinic?  @relation(fields: [clinicId], references: [id], onDelete: SetNull)
-  isActive     Boolean  @default(true)
+  id               String   @id @default(cuid())
+  email            String   @unique
+  passwordHash     String
+  name             String?
+  role             Role
+  clinicId         String?
+  clinic           Clinic?  @relation(fields: [clinicId], references: [id], onDelete: SetNull)
+  isActive         Boolean  @default(true)
   // Optional TOTP MFA. Secrets stored encrypted; only enforced at login when
   // mfaEnabled is true (so a half-finished enrollment can't lock anyone out).
   // Enrollment writes mfaPendingSecret; verifying a code promotes it to the
@@ -37,13 +40,19 @@ model User {
   // already-active factor.
   mfaSecret        String?
   mfaPendingSecret String?
-  mfaEnabled       Boolean @default(false)
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  mfaEnabled       Boolean  @default(false)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
 
   providerAssignments CustomerProviderAssignment[] @relation("ProviderAssignments")
   learningProgress    LearningProgress[]
   chatLogs            ChatLog[]
+
+  // Call center: which clinics a CALL_AGENT works, and their Telnyx browser
+  // phone (an on-demand telephony credential; the JWT is minted per session).
+  callCenterAccess   CallCenterAccess[]
+  telnyxCredentialId String?
+  telnyxSipUsername  String?
 
   @@index([clinicId])
 }
@@ -103,6 +112,15 @@ model Clinic {
   chartWeeks       ChartWeek[]
   kpis             KPI[]
   kpiFlags         KPIFlag[]
+
+  // Call center
+  leads            Lead[]
+  callRules        CallRules?
+  phoneNumbers     ClinicPhoneNumber[]
+  callCenterAccess CallCenterAccess[]
+  leadImports      LeadImport[]
+  integrations     ClinicIntegration[]
+  connectLinks     ClinicConnectLink[]
 }
 
 // Sales implementors. Customers are attributed to an implementor either via
@@ -165,6 +183,7 @@ model Customer {
   chartWeeks          ChartWeek[]
   providerAssignments CustomerProviderAssignment[]
   kpiFlags            KPIFlag[]
+  leads               Lead[]
 
   @@index([clinicId])
   @@index([email])
@@ -379,9 +398,9 @@ model Subscription {
   // declines, which silently ends recurring revenue with nothing in the UI to
   // distinguish it from a deliberate cancellation. Recorded here rather than
   // left in AuditLog metadata so lost revenue is actually listable.
-  cancelledAt          DateTime?
-  cancelReason         String? // manual | auto_failed | webhook
-  consecutiveFailures  Int? // declines before LunarPay gave up (auto_failed)
+  cancelledAt         DateTime?
+  cancelReason        String? // manual | auto_failed | webhook
+  consecutiveFailures Int? // declines before LunarPay gave up (auto_failed)
 
   // Set when this subscription replaces one that died. LunarPay cannot un-cancel
   // (its cancel is a DELETE), so "restarting" always mints a new subscription —
@@ -700,6 +719,338 @@ model InBodyDevice {
   lastSeenAt DateTime?
   createdAt  DateTime  @default(now())
   updatedAt  DateTime  @updatedAt
+
+  @@index([clinicId])
+}
+
+// ============================================================================
+// Call center (RevOS 2.0). Leads are people a clinic wants called before they
+// are patients. The call center works them from /call-center, one clinic at a
+// time, with the Dial Desk's rules (see src/lib/call-center/). Calls go through
+// Telnyx: the agent's browser phone stays on one parked line and RevOS dials
+// each lead and bridges them in (src/lib/call-center/dialer.ts).
+// ============================================================================
+
+/// A person to call for one clinic. One row per (clinic, phone).
+model Lead {
+  id       String @id @default(cuid())
+  clinicId String
+  clinic   Clinic @relation(fields: [clinicId], references: [id], onDelete: Cascade)
+
+  firstName String?
+  lastName  String?
+  /// 10 digits (US). The dedupe key and the number we dial.
+  phone     String
+  email     String?
+
+  /// new | cycle | nurture | booked | resched | handed | showed | lost | dnq | dnc
+  /// (the Dial Desk stages; labels live in src/lib/call-center/stages.ts).
+  stage      String  @default("new")
+  priority   Boolean @default(false)
+  lostReason String?
+
+  /// No-answer tries in the current cycle. Talking to them resets it.
+  attempts        Int       @default(0)
+  dials           Int       @default(0)
+  lastCalledAt    DateTime?
+  /// Clinic-local calendar days (YYYY-MM-DD), exactly like the Dial Desk.
+  lastAttemptDay  String?
+  nextDueDay      String?
+  callbackAt      DateTime?
+  apptAt          DateTime?
+  /// Confirmation calls done for the current appointment (clinic-local days).
+  confirm48Day    String?
+  confirm24Day    String?
+  confirmDayOfDay String?
+  confirmedAt     DateTime?
+  /// Not reached on the appointment day: the clinic front desk should text.
+  needsTextDay    String?
+  /// "Skip for now": sorts the lead to the end of that day's list.
+  skippedAt       DateTime?
+
+  /// Latest note, encrypted (free-text PHI).
+  lastNote String?
+
+  /// Prior express written consent to be called with a dialer (Florida and
+  /// Oklahoma require it for automated dialing). Auto-dial only calls leads
+  /// with this set unless the clinic's rules say otherwise.
+  consentAt     DateTime?
+  consentSource String?
+
+  /// csv | xlsx | zenoti | mindbody | aesthetic_record | manual | inbound
+  source       String?
+  /// Marketing source from the clinic's list ("Facebook", "Website", …).
+  leadSource   String?
+  externalId   String?
+  /// The clinic's own status text at import time (sheet or CRM).
+  sourceStatus String?
+  importId     String?
+  import       LeadImport? @relation(fields: [importId], references: [id], onDelete: SetNull)
+
+  /// Set once the lead is (or becomes) a patient in this clinic.
+  customerId String?
+  customer   Customer? @relation(fields: [customerId], references: [id], onDelete: SetNull)
+
+  /// Soft claim so two agents, or the auto dialer, never call the same person
+  /// at once. Expires on its own.
+  claimedById  String?
+  claimedUntil DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  activities LeadActivity[]
+  calls      LeadCall[]
+
+  @@unique([clinicId, phone])
+  @@index([clinicId, stage])
+  @@index([clinicId, nextDueDay])
+  @@index([customerId])
+}
+
+/// Every logged call result or status change on a lead (the Dial Desk history).
+model LeadActivity {
+  id          String    @id @default(cuid())
+  leadId      String
+  lead        Lead      @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  clinicId    String
+  userId      String?
+  at          DateTime  @default(now())
+  /// Clinic-local day of `at` (YYYY-MM-DD): keys the day's list and the report.
+  day         String
+  /// callback | confirm | resched | cycle | fresh | manual | inbound | mark | import
+  kind        String
+  /// na | vm | book | cb | ni | dnq | dnc | conf | cna | resch | cancel | note |
+  /// showed | cancelled | noshow | recycle | stage | missed | imported
+  outcome     String
+  /// d2 | d1 | d0 on confirmation calls (48-hour, 24-hour, morning-of).
+  touch       String?
+  /// Callback or appointment time this entry set.
+  scheduledAt DateTime?
+  /// Encrypted.
+  note        String?
+  callId      String?
+
+  @@index([leadId, at])
+  @@index([clinicId, day])
+}
+
+/// One phone call placed or received through Telnyx.
+model LeadCall {
+  id                  String    @id @default(cuid())
+  clinicId            String
+  leadId              String?
+  lead                Lead?     @relation(fields: [leadId], references: [id], onDelete: SetNull)
+  userId              String?
+  sessionId           String?
+  /// outbound | inbound
+  direction           String    @default("outbound")
+  /// manual | auto
+  mode                String    @default("manual")
+  /// 1, or 2 for the immediate second dial of a double-dial.
+  dialNumber          Int       @default(1)
+  /// The list section the call was placed from (fresh, cycle, callback, …)
+  /// and the confirmation touch, so an auto-dialed no-answer is logged right.
+  kind                String?
+  touch               String?
+  /// queued | dialing | answered | bridged | ended | failed
+  status              String    @default("queued")
+  fromNumber          String?
+  toNumber            String
+  telnyxCallControlId String?   @unique
+  telnyxCallLegId     String?
+  telnyxCallSessionId String?
+  /// human | machine | not_sure | silence | fax_detected (answering machine detection)
+  amdResult           String?
+  hangupCause         String?
+  /// Result logged for this call (na, vm, book, …).
+  outcome             String?
+  error               String?
+  startedAt           DateTime  @default(now())
+  answeredAt          DateTime?
+  bridgedAt           DateTime?
+  endedAt             DateTime?
+
+  @@index([clinicId, startedAt])
+  @@index([leadId, startedAt])
+  @@index([sessionId])
+}
+
+/// An agent's live phone line on the desk. One open session per agent.
+model DialerSession {
+  id                 String    @id @default(cuid())
+  clinicId           String
+  userId             String
+  /// manual | auto
+  mode               String    @default("manual")
+  /// connecting | ready | dialing | connected | wrapup | paused | ended
+  status             String    @default("connecting")
+  /// The agent's parked browser leg. Leads are bridged onto it.
+  agentCallControlId String?   @unique
+  currentCallId      String?
+  currentLeadId      String?
+  lastError          String?
+  startedAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+  endedAt            DateTime?
+
+  @@index([userId, status])
+  @@index([clinicId, status])
+}
+
+/// Per-clinic calling rules, edited on the call center's Rules page.
+/// Defaults match the Dial Desk prototype.
+model CallRules {
+  clinicId            String   @id
+  clinic              Clinic   @relation(fields: [clinicId], references: [id], onDelete: Cascade)
+  timezone            String   @default("America/Chicago")
+  dailyTarget         Int      @default(200)
+  maxAttempts         Int      @default(4)
+  /// Work days between no-answer tries.
+  spacingDays         Int      @default(2)
+  /// 0 = Sunday … 6 = Saturday. Sunday is never a calling day.
+  workDays            Int[]    @default([1, 2, 3, 4, 5])
+  freshDays           Int[]    @default([2, 3, 4, 5])
+  /// New leads kept on the list each fresh day even when follow-ups pile up.
+  freshFloor          Int      @default(40)
+  /// Minutes after midnight, clinic time.
+  callStartMinute     Int      @default(540)
+  callEndMinute       Int      @default(1140)
+  /// Florida and Oklahoma cap sales calls at 3 per person per 24 hours.
+  maxCallsPer24h      Int      @default(3)
+  doubleDial          Boolean  @default(true)
+  rebookAttempts      Int      @default(3)
+  /// Days before "unable to contact" leads go back to new (0 = never).
+  recycleDays         Int      @default(0)
+  confirm48h          Boolean  @default(true)
+  confirm24h          Boolean  @default(true)
+  confirmDayOf        Boolean  @default(true)
+  ringSeconds         Int      @default(25)
+  /// Auto-dial: hang up on answering machines instead of connecting them.
+  skipVoicemail       Boolean  @default(false)
+  /// Auto-dial only leads with written consent on file.
+  autoDialConsentOnly Boolean  @default(true)
+  updatedById         String?
+  updatedAt           DateTime @updatedAt
+}
+
+/// Extra new leads pulled onto one clinic's list for one day ("Add 25 new leads").
+model CallDay {
+  clinicId   String
+  day        String
+  extraFresh Int    @default(0)
+
+  @@id([clinicId, day])
+}
+
+/// A Telnyx number that calls go out from (and patients call back) for a clinic.
+model ClinicPhoneNumber {
+  id             String   @id @default(cuid())
+  clinicId       String
+  clinic         Clinic   @relation(fields: [clinicId], references: [id], onDelete: Cascade)
+  /// +1XXXXXXXXXX
+  e164           String   @unique
+  telnyxNumberId String?
+  label          String?
+  isDefault      Boolean  @default(true)
+  createdAt      DateTime @default(now())
+
+  @@index([clinicId])
+}
+
+/// Which clinics a CALL_AGENT may work. Super admins see every clinic.
+model CallCenterAccess {
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  clinicId  String
+  clinic    Clinic   @relation(fields: [clinicId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  @@id([userId, clinicId])
+  @@index([clinicId])
+}
+
+/// The Telnyx objects RevOS created for itself (one row, id "default").
+/// The API key and webhook public key stay in env vars.
+model CallCenterSettings {
+  id                           String   @id @default("default")
+  telnyxOutboundVoiceProfileId String?
+  telnyxCallControlAppId       String?
+  telnyxCredentialConnectionId String?
+  webhookUrl                   String?
+  updatedAt                    DateTime @updatedAt
+}
+
+/// One import of leads into a clinic (a file upload or a CRM pull).
+model LeadImport {
+  id          String    @id @default(cuid())
+  clinicId    String
+  clinic      Clinic    @relation(fields: [clinicId], references: [id], onDelete: Cascade)
+  /// csv | xlsx | zenoti | mindbody | aesthetic_record
+  source      String
+  fileName    String?
+  /// staff | clinic_link
+  via         String    @default("staff")
+  createdById String?
+  linkId      String?
+  rowsTotal   Int       @default(0)
+  created     Int       @default(0)
+  updated     Int       @default(0)
+  skipped     Int       @default(0)
+  invalid     Int       @default(0)
+  /// Rows that matched an existing patient.
+  patients    Int       @default(0)
+  /// Column and status mapping used (no row data).
+  mapping     Json?
+  /// running | done | failed
+  status      String    @default("running")
+  error       String?
+  createdAt   DateTime  @default(now())
+  finishedAt  DateTime?
+
+  leads Lead[]
+
+  @@index([clinicId, createdAt])
+}
+
+/// A clinic's connection to its own CRM (Zenoti, Mindbody, Aesthetic Record).
+model ClinicIntegration {
+  id           String    @id @default(cuid())
+  clinicId     String
+  clinic       Clinic    @relation(fields: [clinicId], references: [id], onDelete: Cascade)
+  /// zenoti | mindbody | aesthetic_record
+  provider     String
+  /// pending | connected | error | disconnected
+  status       String    @default("pending")
+  /// Encrypted JSON: API keys, site ids, tokens. Never sent to the browser.
+  credentials  String?
+  /// Non-secret identity shown in the UI (center name, site id).
+  accountLabel String?
+  externalId   String?
+  /// staff | clinic_link
+  connectedVia String?
+  lastSyncAt   DateTime?
+  lastError    String?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  @@unique([clinicId, provider])
+}
+
+/// The one-page link a clinic gets to connect its CRM and upload lead files.
+model ClinicConnectLink {
+  id          String    @id @default(cuid())
+  clinicId    String
+  clinic      Clinic    @relation(fields: [clinicId], references: [id], onDelete: Cascade)
+  /// sha256 of the token, used for lookup.
+  tokenHash   String    @unique
+  /// The token itself, encrypted, so staff can copy the link again.
+  tokenEnc    String
+  createdById String?
+  expiresAt   DateTime?
+  revokedAt   DateTime?
+  lastUsedAt  DateTime?
+  createdAt   DateTime  @default(now())
 
   @@index([clinicId])
 }

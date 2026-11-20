@@ -43,6 +43,8 @@ RevOS/
 │   ├── payments.md          LunarPay client, Fortis tokenization, charges/subs/schedules/holds/links
 │   ├── reporting.md         Revenue-share math (the clinic-balance formula lives here)
 │   ├── inbody.md            InBody ingestion, phone auto-pairing, admin tooling
+│   ├── call-center.md       Call desk, call rules, Telnyx dialer (RevOS 2.0)
+│   ├── call-center-import.md  Lead import, clinic connect link, CRM connectors
 │   ├── operations.md        Env vars, commands, cron, deploy, security caveats
 │   └── glossary.md          Domain vocabulary (down payment, care credit, master link, …)
 ├── prisma/
@@ -71,6 +73,11 @@ RevOS/
    balance RevOS owes each clinic. See [`docs/reporting.md`](./docs/reporting.md).
 4. **InBody** — `src/lib/inbody*.ts` ingest LookinBody webhooks and auto-pair
    scans to customers by normalized phone. See [`docs/inbody.md`](./docs/inbody.md).
+5. **Call center** — `src/lib/call-center/` works each clinic's leads (the Dial
+   Desk's list and rules, server-side) and places calls through Telnyx (browser
+   phone on a parked line, leads bridged in; manual and progressive auto-dial).
+   `CALL_AGENT` users see only their clinics. See
+   [`docs/call-center.md`](./docs/call-center.md).
 
 ## 5. `src/lib/` cheat-sheet (where server logic lives)
 
@@ -92,6 +99,10 @@ RevOS/
 | `implementor.ts` | Resolve/create sales implementor by name for attribution. |
 | `inbody.ts` / `inbody-ingest.ts` / `inbody-display.ts` | InBody API client, ingestion, display formatting. |
 | `audit.ts` | `logAudit()` — writes `AuditLog` rows; never throws. |
+| `call-center/queue.ts` / `outcomes.ts` | The day's call list and what each call result does (pure; Dial Desk port). |
+| `call-center/desk-server.ts` | Loads a clinic's day, writes results (encrypted notes), leads list, report. |
+| `call-center/dialer.ts` / `telnyx.ts` | Telnyx dialer state machine + webhook handling; REST client + Ed25519 webhook check. |
+| `call-center/access.ts` / `rules.ts` / `time.ts` | Call-center guards, per-clinic rules, clinic-local time helpers. |
 | `csv.ts` / `format.ts` / `phone.ts` | CSV building, money/date formatting, phone normalization. |
 
 ## 6. Conventions & invariants (do not break these)
@@ -119,6 +130,11 @@ RevOS/
   context (refunds, delete/merge customer, remove/reassign card, cancel/reschedule
   subscription or schedule, care-credit edits) via `requireSuperAdminClinicApi`.
 - **Audit everything sensitive** with `logAudit()`.
+- **Call center: every dial is re-checked on the server** (calling hours in
+  clinic time, never Sunday, do-not-call, the per-person 24-hour cap, written
+  consent for auto-dial, the lead claim). Auto-dial stays progressive (one call
+  per agent) so nobody who answers is left on silence. Don't move these checks
+  to the browser.
 
 ## 7. Setup & common commands
 

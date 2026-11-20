@@ -9,13 +9,16 @@
  *  - PROVIDER     — their clinic, but ONLY their assigned customers; charting,
  *    InBody, payment links, saving cards. No refunds/deletes (those already
  *    require super admin).
+ *  - CALL_AGENT   — the call center: works leads in /call-center for the
+ *    clinics in CallCenterAccess. No patients, billing or settings.
  */
 
 export type AppRole =
   | "SUPER_ADMIN"
   | "CLINIC_ADMIN"
   | "PROVIDER"
-  | "BILLING_DEPT";
+  | "BILLING_DEPT"
+  | "CALL_AGENT";
 
 export type SessionUser = {
   id: string;
@@ -32,6 +35,13 @@ export function isProviderRole(role: string): boolean {
 export function isBillingRole(role: string): boolean {
   return role === "BILLING_DEPT";
 }
+/** Where each role lands after sign-in. */
+export function homePathFor(role: string | null | undefined): string {
+  if (role === "SUPER_ADMIN" || role === "BILLING_DEPT") return "/admin";
+  if (role === "CALL_AGENT") return "/call-center";
+  return "/clinic";
+}
+
 /** Can this role open the /admin area at all (super admin or billing)? */
 export function canAccessAdmin(role: string): boolean {
   return role === "SUPER_ADMIN" || role === "BILLING_DEPT";

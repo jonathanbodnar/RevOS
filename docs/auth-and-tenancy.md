@@ -15,9 +15,16 @@ Prisma enum `Role`:
   data, run reports, and *impersonate* any clinic. Seeded by `prisma/seed.ts`.
 - **`CLINIC_ADMIN`** — belongs to one `Clinic` (`user.clinicId`). Scoped to that
   clinic's workspace.
+- **`PROVIDER`** — one clinic, only their assigned patients (`src/lib/roles.ts`).
+- **`BILLING_DEPT`** — cross-clinic reporting and payouts in `/admin`.
+- **`CALL_AGENT`** — the call center. No `clinicId`; works the clinics listed in
+  `CallCenterAccess` at `/call-center` and nothing else. See
+  [`call-center.md`](./call-center.md).
 
-Additional roles (`PROVIDER`, `BILLING_DEPT`) are roadmap only — see
-`FUTURE_SCOPE.md` §1.
+Where each role lands after sign-in: `homePathFor()` in `src/lib/roles.ts`
+(super admin and billing → `/admin`, call center → `/call-center`, others →
+`/clinic`). `requireClinicContext` sends roles without a clinic to their own home
+instead of `/login` (which looped).
 
 ## Session shape
 

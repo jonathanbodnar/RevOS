@@ -1,6 +1,7 @@
 import { getServerSession } from "next-auth";
 import { redirect } from "next/navigation";
 import { authOptions } from "./auth";
+import { homePathFor } from "./roles";
 
 export async function getSession() {
   return getServerSession(authOptions);
@@ -34,8 +35,11 @@ export async function requireClinicContext() {
   const session = await requireSession();
   const clinicId = session.user.effectiveClinicId;
   if (!clinicId) {
-    // super-admin not impersonating — send to the admin home
-    if (session.user.originalRole === "SUPER_ADMIN") redirect("/admin");
+    // No clinic on the session: send roles that live elsewhere (super admin
+    // not impersonating, billing, call center) to their own home. Sending
+    // them to /login looped, because /login bounces signed-in users to /clinic.
+    const home = homePathFor(session.user.originalRole);
+    if (home !== "/clinic") redirect(home);
     redirect("/login");
   }
   return { session, clinicId: clinicId as string };

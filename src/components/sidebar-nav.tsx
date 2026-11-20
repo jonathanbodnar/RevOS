@@ -46,7 +46,7 @@ export function SidebarNav({ items }: { items: SidebarNavItem[] }) {
  * every page would also light up "Overview".
  */
 function isActive(pathname: string, href: string): boolean {
-  const exactRoots = ["/admin", "/clinic"];
+  const exactRoots = ["/admin", "/clinic", "/call-center"];
   if (exactRoots.includes(href)) return pathname === href;
   return pathname === href || pathname.startsWith(href + "/");
 }

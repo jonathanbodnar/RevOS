@@ -130,6 +130,7 @@ Every third party that can see PHI needs a signed BAA before go-live:
 | InBody / LookinBody | Patient phone + body metrics | BAA with the vendor. |
 | Failed-payment webhook receiver (Zapier) | Nothing by default now (ids + link only) | Keep PII off it, or sign a BAA and set `FAILED_PAYMENT_WEBHOOK_INCLUDE_PII=true`. |
 | LLM backend (if chat AI enabled) | The user's typed question | Use a BAA-covered model backend only. |
+| Telnyx (call center) | Lead names never; phone numbers, call audio in transit, caller ID and call metadata | Request Telnyx's BAA (sales@telnyx.com); Telnyx only signs above a spend threshold. Until then: no call recording, and texts carry no treatment details. |
 
 ## 8. Audit (built)
 
