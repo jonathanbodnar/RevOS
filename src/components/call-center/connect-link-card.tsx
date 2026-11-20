@@ -8,11 +8,12 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { CopyButton } from "@/components/copy-button";
 import type { ConnectLinkView } from "@/lib/call-center/connect-link";
-import { formatDate } from "@/lib/format";
+import { formatDateTime } from "@/lib/call-center/time";
 
 const DAY_CHOICES = [7, 30, 90];
 
-export function ConnectLinkCard({ clinicId, links }: { clinicId: string; links: ConnectLinkView[] }) {
+/** `tz` is the clinic's time zone, so the server and the browser print the same times. */
+export function ConnectLinkCard({ clinicId, links, tz }: { clinicId: string; links: ConnectLinkView[]; tz: string }) {
   const router = useRouter();
   const [days, setDays] = useState(30);
   const [busy, setBusy] = useState(false);
@@ -77,8 +78,8 @@ export function ConnectLinkCard({ clinicId, links }: { clinicId: string; links: 
             <CopyButton value={url} />
           </div>
           <p className="text-xs text-ink-subtle">
-            {expiresAt ? `Works until ${formatDate(expiresAt)}.` : "Works until turned off."}
-            {live?.lastUsedAt && !fresh ? ` Last opened ${formatDate(live.lastUsedAt)}.` : ""}
+            {expiresAt ? `Works until ${formatDateTime(expiresAt, tz)}.` : "Works until turned off."}
+            {live?.lastUsedAt && !fresh ? ` Last opened ${formatDateTime(live.lastUsedAt, tz)}.` : ""}
           </p>
         </div>
       ) : liveId ? (

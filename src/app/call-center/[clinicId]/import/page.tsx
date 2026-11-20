@@ -54,7 +54,7 @@ export default async function CallCenterImportPage({ params }: { params: Promise
           <h3 className="section-title">Clinic CRM</h3>
           <p className="section-subtitle">Connect {clinic.name}&apos;s CRM to pull leads in. Sync again any time.</p>
         </div>
-        <CrmConnections mode="staff" base={`/api/call-center/${clinic.id}/integrations`} integrations={integrations} />
+        <CrmConnections mode="staff" base={`/api/call-center/${clinic.id}/integrations`} integrations={integrations} tz={rules.timezone} />
       </section>
 
       <section className="space-y-4">
@@ -62,7 +62,7 @@ export default async function CallCenterImportPage({ params }: { params: Promise
           <h3 className="section-title">Clinic link</h3>
           <p className="section-subtitle">Let the clinic connect its CRM or upload leads without a login.</p>
         </div>
-        <ConnectLinkCard clinicId={clinic.id} links={links} />
+        <ConnectLinkCard clinicId={clinic.id} links={links} tz={rules.timezone} />
       </section>
     </div>
   );

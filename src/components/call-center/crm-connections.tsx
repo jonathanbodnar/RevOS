@@ -12,7 +12,7 @@ import { useRouter } from "next/navigation";
 import type { IntegrationView } from "@/lib/crm/integrations";
 import type { ConnectStep } from "@/lib/crm/types";
 import { AESTHETIC_RECORD_EXPORT_STEPS } from "@/lib/crm/aesthetic-record";
-import { formatDate } from "@/lib/format";
+import { formatDateTime } from "@/lib/call-center/time";
 
 type Mode = "staff" | "link";
 
@@ -30,16 +30,19 @@ export function CrmConnections({
   mode,
   base,
   integrations,
+  tz,
 }: {
   mode: Mode;
   /** …/integrations API base for this clinic or link. */
   base: string;
   integrations: IntegrationView[];
+  /** The clinic's time zone, so the server and the browser print the same times. */
+  tz: string;
 }) {
   return (
     <div className="grid lg:grid-cols-3 gap-4">
       {integrations.map((i) => (
-        <CrmCard key={i.provider} mode={mode} base={base} view={i} />
+        <CrmCard key={i.provider} mode={mode} base={base} view={i} tz={tz} />
       ))}
     </div>
   );
@@ -47,7 +50,7 @@ export function CrmConnections({
 
 type SyncState = { running: boolean; pulled: number; added: number; updated: number; invalid: number; done: boolean };
 
-function CrmCard({ mode, base, view: fromServer }: { mode: Mode; base: string; view: IntegrationView }) {
+function CrmCard({ mode, base, view: fromServer, tz }: { mode: Mode; base: string; view: IntegrationView; tz: string }) {
   const router = useRouter();
   // The newest view: from a connect response, until the page refresh catches up.
   const [latest, setLatest] = useState<IntegrationView | null>(null);
@@ -186,7 +189,7 @@ function CrmCard({ mode, base, view: fromServer }: { mode: Mode; base: string; v
         </p>
         {status === "pending" ? (
           <p className="text-ink">
-            Request noted{view.updatedAt ? ` on ${formatDate(view.updatedAt)}` : ""}. We&apos;ll connect it as soon as
+            Request noted{view.updatedAt ? ` on ${formatDateTime(view.updatedAt, tz)}` : ""}. We&apos;ll connect it as soon as
             Aesthetic Record allows it.
           </p>
         ) : (
@@ -281,7 +284,7 @@ function CrmCard({ mode, base, view: fromServer }: { mode: Mode; base: string; v
         <p className="text-sm text-ink">
           {view.accountLabel || view.label}
           <span className="block text-xs text-ink-subtle">
-            {view.lastSyncAt ? `Last synced ${formatDate(view.lastSyncAt)}` : "Not synced yet"}
+            {view.lastSyncAt ? `Last synced ${formatDateTime(view.lastSyncAt, tz)}` : "Not synced yet"}
           </span>
         </p>
         <div className="flex flex-wrap gap-2">

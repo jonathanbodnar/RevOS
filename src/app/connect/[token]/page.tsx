@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import Image from "next/image";
+import { loadRules } from "@/lib/call-center/access";
 import { findConnectLink, EXPIRED_MESSAGE, touchConnectLink } from "@/lib/call-center/connect-link";
 import { integrationViews } from "@/lib/crm/integrations";
 import { ImportFlow } from "@/components/call-center/import-flow";
@@ -44,7 +45,7 @@ export default async function ConnectPage({ params }: { params: Promise<{ token:
     );
   }
   await touchConnectLink(found.link.id);
-  const integrations = await integrationViews(found.clinic.id);
+  const [integrations, rules] = await Promise.all([integrationViews(found.clinic.id), loadRules(found.clinic.id)]);
   const base = `/api/public/connect/${token}`;
 
   return (
@@ -61,7 +62,7 @@ export default async function ConnectPage({ params }: { params: Promise<{ token:
           <h2 className="section-title">Connect your CRM</h2>
           <p className="section-subtitle">RevOS pulls your leads in and keeps them up to date.</p>
         </div>
-        <CrmConnections mode="link" base={`${base}/integrations`} integrations={integrations} />
+        <CrmConnections mode="link" base={`${base}/integrations`} integrations={integrations} tz={rules.timezone} />
       </section>
 
       <section className="space-y-4 mt-12">
@@ -77,7 +78,7 @@ export default async function ConnectPage({ params }: { params: Promise<{ token:
       <p className="text-xs text-ink-subtle text-center mt-12">
         This page only sends information to RevOS. It never shows your leads or patients.
         {found.link.expiresAt
-          ? ` The link works until ${found.link.expiresAt.toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" })}.`
+          ? ` The link works until ${found.link.expiresAt.toLocaleDateString("en-US", { timeZone: rules.timezone, month: "long", day: "numeric", year: "numeric" })}.`
           : ""}
       </p>
     </Shell>
